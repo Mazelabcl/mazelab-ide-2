@@ -382,7 +382,7 @@ window.Mazelab.Modules.ImportModule = (function () {
 
             var sn = (row.serviceNames || '').trim();
             if (sn) {
-                sn.split(/[,;\/]/).forEach(function (s) {
+                sn.split(/[,;\/+]/).forEach(function (s) {
                     var name = s.trim();
                     if (name && !serviceNames.has(name.toLowerCase())) {
                         serviceNames.add(name.toLowerCase());

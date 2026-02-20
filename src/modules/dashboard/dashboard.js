@@ -238,13 +238,25 @@ window.Mazelab.Modules.DashboardModule = (function () {
             '</div>';
 
         // Top 5 Servicios by usage count
+        // Soporta serviceIds (array, ventas creadas en plataforma)
+        // y serviceNames (string CSV, ventas importadas) separados por ,;/+
         var serviceCounts = {};
         salesForRankings.forEach(function (s) {
-            var ids = s.serviceIds || s.service_ids || s.servicios || [];
-            if (!Array.isArray(ids)) return;
-            ids.forEach(function (sid) {
-                serviceCounts[sid] = (serviceCounts[sid] || 0) + 1;
-            });
+            var ids = s.serviceIds || s.service_ids || [];
+            if (Array.isArray(ids) && ids.length > 0) {
+                ids.forEach(function (sid) {
+                    serviceCounts[sid] = (serviceCounts[sid] || 0) + 1;
+                });
+            } else {
+                // Fallback: parsear serviceNames string del CSV
+                var namesStr = s.serviceNames || s.servicenames || s.servicios || '';
+                if (typeof namesStr === 'string' && namesStr.trim()) {
+                    namesStr.split(/[,;\/+]/).forEach(function (n) {
+                        var name = n.trim();
+                        if (name) serviceCounts[name] = (serviceCounts[name] || 0) + 1;
+                    });
+                }
+            }
         });
 
         // Build a lookup map for service names
