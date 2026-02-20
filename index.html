@@ -1,0 +1,74 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Mazelab IDE</title>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="src/styles/theme.css">
+    <link rel="stylesheet" href="src/styles/layout.css">
+    <link rel="stylesheet" href="src/styles/components.css">
+</head>
+<body>
+    <div class="app-container">
+        <aside class="sidebar">
+            <div class="sidebar-header">
+                <h1>MAZELAB</h1>
+                <div class="subtitle">Internal OS</div>
+            </div>
+            <nav class="sidebar-nav">
+                <div class="nav-section">
+                    <div class="nav-section-title">Principal</div>
+                    <div class="nav-item active" data-route="dashboard">
+                        <span class="nav-icon">&#9632;</span>
+                        <span>Dashboard</span>
+                    </div>
+                    <div class="nav-item" data-route="sales">
+                        <span class="nav-icon">&#9733;</span>
+                        <span>Ventas</span>
+                    </div>
+                </div>
+                <div class="nav-section">
+                    <div class="nav-section-title">Finanzas</div>
+                    <div class="nav-item" data-route="finance">
+                        <span class="nav-icon">&#9830;</span>
+                        <span>CXC</span>
+                    </div>
+                    <div class="nav-item" data-route="payables">
+                        <span class="nav-icon">&#9679;</span>
+                        <span>CXP</span>
+                    </div>
+                </div>
+                <div class="nav-section">
+                    <div class="nav-section-title">Sistema</div>
+                    <div class="nav-item" data-route="import">
+                        <span class="nav-icon">&#8593;</span>
+                        <span>Importar</span>
+                    </div>
+                    <div class="nav-item" data-route="settings">
+                        <span class="nav-icon">&#9881;</span>
+                        <span>Configurar</span>
+                    </div>
+                </div>
+            </nav>
+        </aside>
+        <main class="main-content">
+            <div id="app-content"></div>
+        </main>
+    </div>
+
+    <div id="modal-container"></div>
+
+    <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+    <script src="src/shared/supabase.js"></script>
+    <script src="src/shared/storage.js"></script>
+    <script src="src/shared/data-service.js"></script>
+    <script src="src/modules/dashboard/dashboard.js"></script>
+    <script src="src/modules/sales/sales.js"></script>
+    <script src="src/modules/finance/finance.js"></script>
+    <script src="src/modules/payables/payables.js"></script>
+    <script src="src/modules/settings/settings.js"></script>
+    <script src="src/modules/import/import.js"></script>
+    <script src="src/app.js"></script>
+</body>
+</html>

@@ -1,0 +1,9 @@
+cliente,evento,servicios,fecha_evento,monto_venta,estado,jornadas,ejecutivo,comentarios,devolucion
+Banco Andino S.A.,Lanzamiento Tarjeta Visa,Ambientación,07/01/2025,4500000,realizada,1,Fernanda Soto,Evento en Santiago Centro,0
+Farmacorp Chile,Convención Médica Nacional,Montaje / Sonido,20/03/2025,8200000,realizada,2,Marcelo Reyes,Requirió back-up de sonido,0
+Retail Sur Ltda.,Apertura Tienda Valdivia,Ambientación / Recepción,15/02/2025,2900000,realizada,1,Fernanda Soto,,0
+Minera Pacífico,Aniversario Corporativo 10 Años,Montaje / Catering,05/06/2025,12000000,realizada,1,Marcelo Reyes,Cliente VIP — atención preferente,0
+Universidad Central,Graduación Facultad Medicina,Ambientación / Sonido,25/10/2024,3100000,realizada,1,Andrea Muñoz,Evento masivo 800 personas,0
+Constructora Nova,Cena Fin de Año,Catering,12/12/2024,5600000,realizada,1,Fernanda Soto,Se devolvió parte del catering,850000
+TechStart Chile,Demo Day Startups,Sonido / Iluminación,14/08/2025,1800000,realizada,1,Andrea Muñoz,Cliente nuevo — potencial recurrente,0
+Grupo Retail Andes,Capacitación Nacional Staff,Montaje,28/11/2025,6700000,pendiente,3,Marcelo Reyes,Pendiente confirmar fechas exactas,0

@@ -1,0 +1,11 @@
+cliente,evento,tipo documento cxc,nro_factura,mes_emision,monto facturado,monto pagado,fecha_evento,estado,comentarios
+Banco Andino S.A.,Lanzamiento Tarjeta Visa,F,F-001245,01/2025,4500000,4500000,07/01/2025,pagada,Pagado completo en una cuota
+Farmacorp Chile,Convención Médica Nacional,F,F-001380,03/2025,8200000,3000000,20/03/2025,pendiente,Abono inicial del 36% — saldo pendiente
+Retail Sur Ltda.,Apertura Tienda Valdivia,F,F-001290,02/2025,2900000,0,15/02/2025,pendiente,Sin pagos — contactar gerencia
+Minera Pacífico,Aniversario Corporativo 10 Años,F,F-001520,06/2025,12000000,0,05/06/2025,pendiente,Factura a plazo 60 días según contrato
+Universidad Central,Graduación Facultad Medicina,F,F-001105,10/2025,3100000,0,25/10/2024,pendiente,Reclaman ajuste de precio — en negociación
+Constructora Nova,Cena Fin de Año,F,F-001155,12/2025,4750000,0,12/12/2024,pendiente,Monto ajustado por devolución catering
+TechStart Chile,Demo Day Startups,E,,08/2025,1800000,1800000,14/08/2025,pagada,Exenta IVA — pagado al contado
+Grupo Retail Andes,Capacitación Nacional Staff,F,,11/2025,6700000,0,28/11/2025,pendiente,Sin facturar aún — cliente no ha enviado OC
+Banco Andino S.A.,Lanzamiento Tarjeta Visa,NC,NC-00045,02/2025,450000,0,07/01/2025,,Nota de crédito por descuento acordado
+Farmacorp Chile,Convención Médica Nacional,F,F-001381,04/2025,0,0,20/03/2025,anulada,Factura anulada — se reemitirá con datos correctos

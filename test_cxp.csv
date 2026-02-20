@@ -1,0 +1,9 @@
+beneficiario,evento,cliente,concepto,documento,valor_pago,monto_pagado,fecha_evento,estado_cxp,comentarios
+Carlos Mendoza,Lanzamiento Tarjeta Visa,Banco Andino S.A.,Animador de eventos,bh,320000,320000,07/01/2025,pagado,Pagado con retención BH 14.5%
+Sonido Profesional Ltda.,Convención Médica Nacional,Farmacorp Chile,Arriendo equipo de sonido,factura,890000,890000,20/03/2025,pagado,Factura N-3345 cancelada
+Decoraciones Premium,Convención Médica Nacional,Farmacorp Chile,Decoración y flores,factura,450000,0,20/03/2025,pendiente,Proveedor envió factura con error — reemitiendo
+Rosa Vega,Apertura Tienda Valdivia,Retail Sur Ltda.,Recepcionista freelance,bh,180000,0,15/02/2025,pendiente,Enviar pago viernes 31-Ene-2025
+Catering del Sur S.A.,Cena Fin de Año,Constructora Nova,Servicio de catering,factura,3200000,0,12/12/2024,pendiente,Servicio parcial — monto ajustado
+Diego Torres,Aniversario Corporativo 10 Años,Minera Pacífico,DJ Set 6 horas,bh,550000,0,05/06/2025,pendiente,Evento futuro — pago aún no generado
+Iluminación Total Ltda.,Demo Day Startups,TechStart Chile,Iluminación escénica,factura,620000,0,14/08/2025,pendiente,Cotización aprobada — pendiente factura
+Ana Carrasco,Graduación Facultad Medicina,Universidad Central,Coordinadora de ceremonias,bh,280000,0,25/10/2024,pendiente,Buscar datos bancarios del beneficiario
