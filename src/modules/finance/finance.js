@@ -19,10 +19,15 @@ window.Mazelab.Modules.FinanceModule = (function () {
     }
 
     function getMontoFacturado(r) {
+        // Solo leer monto facturado real — NO caer en getMonto/montoNeto.
+        // Si no hay factura, devuelve 0 → getRealTimeStatus lo detecta como pendiente_factura.
         if (r.montoFacturado !== undefined && r.montoFacturado !== null && r.montoFacturado !== '') {
             return Number(r.montoFacturado) || 0;
         }
-        return getMonto(r);
+        if (r.invoicedAmount !== undefined && r.invoicedAmount !== null && r.invoicedAmount !== '') {
+            return Number(r.invoicedAmount) || 0;
+        }
+        return 0;
     }
 
     function getTotalPagado(r) {
@@ -122,8 +127,10 @@ window.Mazelab.Modules.FinanceModule = (function () {
         if (r.status === 'pendiente_factura') return 'pendiente_factura';
         // 5. montoFacturado <= 0
         if (getMontoFacturado(r) <= 0) return 'pendiente_factura';
-        // 6. Pending states — vencimiento desde mes de emisión de factura
-        if (r.status === 'pendiente' || r.status === 'por_vencer' || !r.status || r.status === '') {
+        // 6. Pending / overdue states — recalculate dynamically from billingMonth
+        if (r.status === 'pendiente' || r.status === 'pendiente_pago' ||
+            r.status === 'vencida_30' || r.status === 'vencida_60' || r.status === 'vencida_90' ||
+            r.status === 'por_vencer' || !r.status || r.status === '') {
             var pagado = getTotalPagado(r);
             var montoTotal = r.tipoDoc === 'E' ? getMonto(r) : (getMontoFacturado(r) * 1.19);
             if (pagado >= montoTotal) return 'pagada';
