@@ -306,8 +306,94 @@ window.Mazelab.Modules.DashboardModule = (function () {
                 servicesCardHTML +
             '</div>';
 
-        return kpiHTML + chartHTML + rankingsHTML;
+        // ---- IVA estimado del mes actual ----
+
+        var ivaHTML = buildIVACard(receivables, payables);
+
+        return kpiHTML + chartHTML + ivaHTML + rankingsHTML;
     }
+
+    // Normaliza billingMonth (DD/MM/YYYY o YYYY-MM-DD o MM/YYYY) a 'YYYY-MM'
+    function toMonthKey(dateStr) {
+        if (!dateStr) return null;
+        var s = String(dateStr).trim();
+        // YYYY-MM-DD
+        if (/^\d{4}-\d{2}-\d{2}$/.test(s)) return s.substring(0, 7);
+        // DD/MM/YYYY
+        var dmy = s.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
+        if (dmy) return dmy[3] + '-' + dmy[2].padStart(2, '0');
+        // YYYY-MM
+        if (/^\d{4}-\d{2}$/.test(s)) return s;
+        // MM/YYYY
+        var my = s.match(/^(\d{1,2})\/(\d{4})$/);
+        if (my) return my[2] + '-' + my[1].padStart(2, '0');
+        return null;
+    }
+
+    function getBHRetentionRate(dateStr) {
+        if (!dateStr) return 0.1525;
+        var year = new Date(dateStr).getFullYear();
+        return year <= 2024 ? 0.145 : 0.1525;
+    }
+
+    function buildIVACard(receivables, payables) {
+        var now = new Date();
+        var thisMonth = now.getFullYear() + '-' + String(now.getMonth() + 1).padStart(2, '0');
+        var lastMonth = (function () {
+            var d = new Date(now.getFullYear(), now.getMonth() - 1, 1);
+            return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0');
+        })();
+        var months = [thisMonth, lastMonth];
+        var labels = { [thisMonth]: 'Este mes', [lastMonth]: 'Mes pasado (declaraci\u00f3n pendiente)' };
+
+        var data = {};
+        months.forEach(function (m) { data[m] = { ivaDebito: 0, ivaCredito: 0, retencionBH: 0 }; });
+
+        // IVA Débito: facturas emitidas (CXC facturadas, excluir NC y E)
+        receivables.forEach(function (r) {
+            var tipo = (r.tipoDoc || '').toUpperCase();
+            if (tipo === 'NC' || tipo === 'E') return;
+            var mk = toMonthKey(r.billingMonth);
+            if (!mk || !data[mk]) return;
+            data[mk].ivaDebito += (Number(r.invoicedAmount || r.montoNeto) || 0) * 0.19;
+        });
+
+        // IVA Crédito y Retención BH: de CXP
+        payables.forEach(function (p) {
+            var dt = (p.docType || '').toLowerCase();
+            var mk = toMonthKey(p.billingDate || p.eventDate);
+            if (!mk || !data[mk]) return;
+            if (dt === 'factura') {
+                data[mk].ivaCredito += (Number(p.amount) || 0) * 0.19;
+            } else if (dt === 'bh') {
+                var rate = getBHRetentionRate(p.billingDate || p.eventDate);
+                data[mk].retencionBH += (Number(p.amount) || 0) * rate;
+            }
+        });
+
+        var cards = months.map(function (m) {
+            var d = data[m];
+            var deb  = Math.round(d.ivaDebito);
+            var cred = Math.round(d.ivaCredito);
+            var ret  = Math.round(d.retencionBH);
+            var neto = deb - cred + ret;
+            var color = neto > 0 ? 'var(--danger)' : 'var(--success)';
+            return '<div class="card" style="flex:1">' +
+                '<div class="card-header"><span class="card-title">IVA ' + labels[m] + '</span></div>' +
+                '<table style="width:100%;font-size:13px;border-collapse:collapse">' +
+                '<tr><td style="padding:5px 0;color:var(--text-secondary)">D\u00e9bito fiscal (ventas)</td><td class="text-right" style="font-weight:600">' + formatCLP(deb) + '</td></tr>' +
+                '<tr><td style="padding:5px 0;color:var(--text-secondary)">Cr\u00e9dito fiscal (compras)</td><td class="text-right" style="font-weight:600;color:var(--success)">- ' + formatCLP(cred) + '</td></tr>' +
+                '<tr><td style="padding:5px 0;color:var(--text-secondary)">Retenci\u00f3n BH</td><td class="text-right" style="font-weight:600">' + formatCLP(ret) + '</td></tr>' +
+                '<tr style="border-top:2px solid var(--border)"><td style="padding:8px 0;font-weight:700">IVA Neto estimado</td><td class="text-right" style="font-weight:700;font-size:15px;color:' + color + '">' + formatCLP(neto) + '</td></tr>' +
+                '</table>' +
+                '<div style="font-size:11px;color:var(--text-muted);margin-top:8px">IVA ventas - IVA compras + Ret. BH. No incluye PPM.</div>' +
+                '</div>';
+        }).join('');
+
+        return '<div style="margin-bottom:var(--space-md)">' +
+            '<div style="font-size:13px;font-weight:600;color:var(--text-secondary);margin-bottom:var(--space-sm)">Estimaci\u00f3n de IVA mensual</div>' +
+            '<div style="display:flex;gap:var(--space-md)">' + cards + '</div>' +
+            '</div>';
 
     // --------------- init ---------------
 

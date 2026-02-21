@@ -36,8 +36,10 @@ window.Mazelab.Modules.ImportModule = (function () {
         costAmount: ['costo_evento','costo','cost'],
         utility: ['utilidad','utility','profit'],
         vendorName: ['beneficiario','proveedor','vendor','vendorname'],
-        docType: ['tipo_de_costo','tipo_documento','document_type','documento'],
-        docNumber: ['documento','numero_documento','doc_number','valor_documento'],
+        eventId: ['id_venta','sale_id','eventid'],
+        billingDate: ['fecha_emision','fecha_doc','emision','billing_date','fecha emision'],
+        docType: ['tipo_de_costo','tipo_documento','document_type'],
+        docNumber: ['num_doc','documento','numero_documento','doc_number','valor_documento'],
         paymentAmount: ['valor_pago','payment_amount'],
         paidAmount: ['monto_pagado','paid_amount'],
         pendingAmount: ['monto_pendiente','pending_amount'],
@@ -295,29 +297,69 @@ window.Mazelab.Modules.ImportModule = (function () {
         return rec;
     }
 
+    function normalizePayableDocType(val) {
+        var s = (val || '').trim().toLowerCase();
+        if (s === 'bh') return 'bh';
+        if (s === 'f' || s === 'factura' || s === 'boleta') return 'factura';
+        if (s === 'e' || s === 'exenta' || s === 'exento') return 'exenta';
+        if (s === 'invoice') return 'invoice';
+        return s || 'ninguno';
+    }
+
     function buildPayableRecord(row) {
-        // valor_pago → paymentAmount (lo que realmente pagamos, con IVA si aplica)
-        // valor_documento → docNumber (valor bruto del documento)
-        // estado_cxp → paymentStatus → guardamos como status (campo estándar)
-        var amount = parseAmount(row.paymentAmount || row.docNumber);
+        // Monto bruto del documento (valor_pago en CSV)
+        var amount = parseAmount(row.paymentAmount) || parseAmount(row.amount);
         var amountPaid = parseAmount(row.paidAmount || row.amountPaid);
         var rawStatus = (row.paymentStatus || row.status || 'pendiente').toLowerCase().trim();
-        // Normaliza valores del CSV chileno
-        var status = (rawStatus === 'pagado') ? 'pagada' : rawStatus;
-        return {
+        var isPaid = rawStatus === 'pagado' || rawStatus === 'pagada';
+
+        // Categoría: si id_venta es 0/vacío/VARIOS → general, si no → evento
+        var eventIdRaw = (row.eventId || '').toString().trim();
+        var isGeneralEvent = !eventIdRaw || eventIdRaw === '0' ||
+            eventIdRaw.toLowerCase() === 'varios' ||
+            eventIdRaw.toLowerCase() === 'general';
+        var category = isGeneralEvent ? 'general' : 'evento';
+
+        // billingDate: fecha emisión del doc; fallback a eventDate
+        var billingDate = parseDate(row.billingDate) || parseDate(row.eventDate) || '';
+
+        var rec = {
             id: generateId(),
-            vendorName: row.vendorName || '',
-            eventName: row.eventName || '',
+            eventId: isGeneralEvent ? '' : eventIdRaw,
+            category: category,
             clientName: row.clientName || '',
+            eventName: row.eventName || '',
+            eventDate: parseDate(row.eventDate),
+            billingDate: billingDate,
             concept: row.concept || '',
-            docType: row.docType || '',
-            amount: amount,        // campo estándar leído por dashboard y payables
-            amountPaid: amountPaid,
-            status: status,        // campo estándar leído por dashboard y payables
-            eventDate: parseDate(row.eventDate),   // necesario para calcDueDate() en CXP
-            paymentDate: parseDate(row.paymentDate),
-            comments: row.comments || ''
+            vendorName: row.vendorName || '',
+            docType: normalizePayableDocType(row.tipoDoc || row.docType),
+            docNumber: row.docNumber || '',
+            amount: amount,
+            status: isPaid ? 'pagada' : 'pendiente',
+            comments: row.comments || '',
+            payments: []
         };
+
+        // Inicializar payments[] si hay monto pagado
+        if (amountPaid > 0) {
+            rec.payments = [{
+                id: generateId(),
+                amount: amountPaid,
+                date: parseDate(row.paymentDate || row.eventDate) || new Date().toISOString().substring(0, 10),
+                method: 'importado'
+            }];
+        } else if (isPaid && amount > 0) {
+            // Estado pagado pero sin monto_pagado → asumir pago completo
+            rec.payments = [{
+                id: generateId(),
+                amount: amount,
+                date: new Date().toISOString().substring(0, 10),
+                method: 'importado'
+            }];
+        }
+
+        return rec;
     }
 
     function buildClientRecord(row) {

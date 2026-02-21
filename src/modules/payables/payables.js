@@ -1,11 +1,14 @@
 window.Mazelab.Modules.PayablesModule = (function () {
+
     // ── State ──────────────────────────────────────────────────────────
     let payables = [];
-    let staffList = [];
-    let currentView = 'lista'; // 'lista' | 'agrupada'
+    let currentView = 'lista';        // 'lista' | 'agrupada'
+    let currentCategory = 'todos';    // 'todos' | 'evento' | 'general'
     let editingId = null;
+    let abonoTargetId = null;
 
     // ── Helpers ────────────────────────────────────────────────────────
+
     function formatCLP(n) {
         if (n == null || isNaN(n)) return '$0';
         var num = Math.round(Number(n));
@@ -17,32 +20,28 @@ window.Mazelab.Modules.PayablesModule = (function () {
         return (num < 0 ? '-' : '') + '$' + parts.join('.');
     }
 
-    function daysSince(dateStr) {
-        if (!dateStr) return 0;
-        var d = new Date(dateStr);
-        var now = new Date();
-        return Math.floor((now - d) / (1000 * 60 * 60 * 24));
-    }
-
-    function getBHRetention(dateStr) {
+    // Retención BH configurable por año (SII Chile)
+    function getBHRetentionRate(dateStr) {
         if (!dateStr) return 0.1525;
         var year = new Date(dateStr).getFullYear();
-        if (year <= 2024) return 0.145;
-        return 0.1525; // 2025-2026+
+        return year <= 2024 ? 0.145 : 0.1525; // 14.5% ≤2024, 15.25% 2025+
     }
 
     function docTypeLabel(t) {
-        var map = { bh: 'BH', factura: 'Factura', invoice: 'Invoice', ninguno: 'Ninguno' };
-        return map[t] || t || '-';
+        var s = (t || '').toLowerCase().trim();
+        return ({ bh: 'BH', factura: 'Factura', exenta: 'F. Exenta', invoice: 'Invoice', ninguno: '-' }[s]) || t || '-';
     }
 
-    // Returns the first Friday on or after (eventDate + 30 days)
+    function isBH(p)      { return (p.docType || '').toLowerCase() === 'bh'; }
+    function isFactura(p) { return (p.docType || '').toLowerCase() === 'factura'; }
+
+    // Primer viernes >= eventDate + 30 días
     function calcDueDate(dateStr) {
         if (!dateStr) return null;
         var d = new Date(dateStr);
         if (isNaN(d.getTime())) return null;
         d.setDate(d.getDate() + 30);
-        var dow = d.getDay(); // 0=Dom … 5=Vie … 6=Sab
+        var dow = d.getDay();
         if (dow !== 5) d.setDate(d.getDate() + ((5 - dow + 7) % 7));
         return d;
     }
@@ -54,79 +53,125 @@ window.Mazelab.Modules.PayablesModule = (function () {
                d.getFullYear();
     }
 
-    // Returns due-date info for a payable record
-    function getDueDateInfo(p) {
-        if (p.status === 'pagada') return { status: 'pagada', label: '-', rowStyle: '', cellStyle: '' };
-        var dateStr = p.eventEndDate || p.eventDate;
-        var dueDate = calcDueDate(dateStr);
-        if (!dueDate) return { status: 'sin_fecha', dueDate: null, label: 'Sin fecha evento', rowStyle: '', cellStyle: 'color:var(--text-muted)' };
+    function todayStr() { return new Date().toISOString().substring(0, 10); }
 
-        var today = new Date(); today.setHours(0, 0, 0, 0);
-        var diffDays = Math.floor((dueDate - today) / 86400000);
-        var label = formatDateShort(dueDate);
+    function generateId() { return Date.now().toString(36) + '-' + Math.random().toString(36).substring(2, 9); }
 
-        if (diffDays < 0) {
-            return { status: 'vencido', dueDate: dueDate, diffDays: diffDays,
-                label: label + ' · VENCIDO',
-                rowStyle: 'background:rgba(239,68,68,0.07)',
-                cellStyle: 'color:var(--danger);font-weight:600' };
+    // ── Payment array helpers ──────────────────────────────────────────
+
+    function getTotalPagado(p) {
+        if (p.payments && Array.isArray(p.payments) && p.payments.length > 0) {
+            return p.payments.reduce(function (s, pay) { return s + (Number(pay.amount) || 0); }, 0);
         }
-        if (diffDays === 0) {
-            return { status: 'hoy', dueDate: dueDate, diffDays: 0,
-                label: label + ' · HOY',
-                rowStyle: 'background:rgba(239,68,68,0.07)',
-                cellStyle: 'color:var(--danger);font-weight:700' };
-        }
-        if (diffDays <= 7) {
-            return { status: 'proximo', dueDate: dueDate, diffDays: diffDays,
-                label: label + ' · ' + diffDays + 'd',
-                rowStyle: 'background:rgba(245,158,11,0.06)',
-                cellStyle: 'color:var(--warning);font-weight:600' };
-        }
-        return { status: 'pendiente', dueDate: dueDate, diffDays: diffDays,
-            label: label,
-            rowStyle: '', cellStyle: 'color:var(--text-secondary)' };
+        return Number(p.amountPaid) || 0;
     }
 
-    function getVendors() {
-        return staffList.filter(function (s) {
-            var t = (s.type || s.tipo || '').toLowerCase();
-            return t.indexOf('proveedor') !== -1 || t.indexOf('freelancer') !== -1;
-        });
+    function getPendiente(p) {
+        return Math.max(0, (Number(p.amount) || 0) - getTotalPagado(p));
+    }
+
+    function getStatusDerived(p) {
+        var pagado = getTotalPagado(p);
+        var amount = Number(p.amount) || 0;
+        if (amount > 0 && pagado >= amount) return 'pagada';
+        if (pagado > 0) return 'parcial';
+        return p.status || 'pendiente';
+    }
+
+    // ── Due date info ──────────────────────────────────────────────────
+
+    function getDueDateInfo(p) {
+        if (getStatusDerived(p) === 'pagada') return { status: 'pagada', label: '-', rowStyle: '', cellStyle: '' };
+        var dueDate = calcDueDate(p.eventDate);
+        if (!dueDate) return { status: 'sin_fecha', label: 'Sin fecha', rowStyle: '', cellStyle: 'color:var(--text-muted)' };
+        var today = new Date(); today.setHours(0, 0, 0, 0);
+        var diff = Math.floor((dueDate - today) / 86400000);
+        var label = formatDateShort(dueDate);
+        if (diff < 0)  return { status: 'vencido',  label: label + ' \u00b7 VENCIDO', rowStyle: 'background:rgba(239,68,68,0.07)', cellStyle: 'color:var(--danger);font-weight:600' };
+        if (diff === 0) return { status: 'hoy',     label: label + ' \u00b7 HOY',     rowStyle: 'background:rgba(239,68,68,0.07)', cellStyle: 'color:var(--danger);font-weight:700' };
+        if (diff <= 7) return { status: 'proximo',  label: label + ' \u00b7 ' + diff + 'd', rowStyle: 'background:rgba(245,158,11,0.06)', cellStyle: 'color:var(--warning);font-weight:600' };
+        return { status: 'pendiente', label: label, rowStyle: '', cellStyle: 'color:var(--text-secondary)' };
+    }
+
+    // ── Category filter ────────────────────────────────────────────────
+
+    function getFilteredPayables() {
+        if (currentCategory === 'evento')  return payables.filter(function (p) { return p.category === 'evento'; });
+        if (currentCategory === 'general') return payables.filter(function (p) { return !p.category || p.category === 'general'; });
+        return payables;
+    }
+
+    // ── Documento info sub-row ─────────────────────────────────────────
+
+    function docInfoHTML(p) {
+        var lines = [];
+        if (isBH(p)) {
+            var rate = getBHRetentionRate(p.billingDate || p.eventDate);
+            var amount = Number(p.amount) || 0;
+            var ret  = Math.round(amount * rate);
+            var neto = amount - ret;
+            lines.push('Neto proveedor: ' + formatCLP(neto) + ' \u00b7 Retenci\u00f3n ' + (rate * 100).toFixed(2) + '%: ' + formatCLP(ret));
+        }
+        if (isFactura(p)) {
+            lines.push('IVA cr\u00e9dito: ' + formatCLP(Math.round((Number(p.amount) || 0) * 0.19)));
+        }
+        if (!lines.length) return '';
+        return '<div style="font-size:11px;color:var(--text-muted);margin-top:2px">' + lines.join(' \u00b7 ') + '</div>';
     }
 
     // ── KPIs ───────────────────────────────────────────────────────────
+
     function computeKPIs() {
-        var totalPendiente = 0;
-        var vencidoCount = 0, vencidoSum = 0;
-        var proximoCount = 0, proximoSum = 0;
-        var vendorsSet = {};
+        var filtered = getFilteredPayables();
+        var totalPendiente = 0, vencidoCount = 0, vencidoSum = 0, proximoCount = 0, proximoSum = 0;
+        var vendorsSet = {}, totalRetencion = 0, totalIVACredito = 0;
 
-        payables.forEach(function (p) {
-            if (p.status !== 'pendiente') return;
-            var pending = (Number(p.amount) || 0) - (Number(p.amountPaid) || 0);
+        filtered.forEach(function (p) {
+            var st = getStatusDerived(p);
+            if (st === 'pagada') return;
+            var pending = getPendiente(p);
             totalPendiente += pending;
-
             var di = getDueDateInfo(p);
-            if (di.status === 'vencido' || di.status === 'hoy') {
-                vencidoCount++;
-                vencidoSum += pending;
-            } else if (di.status === 'proximo') {
-                proximoCount++;
-                proximoSum += pending;
-            }
+            if (di.status === 'vencido' || di.status === 'hoy') { vencidoCount++; vencidoSum += pending; }
+            else if (di.status === 'proximo') { proximoCount++; proximoSum += pending; }
             if (p.vendorName) vendorsSet[p.vendorName] = true;
+            if (isBH(p)) totalRetencion += (Number(p.amount) || 0) * getBHRetentionRate(p.billingDate || p.eventDate);
+            if (isFactura(p)) totalIVACredito += (Number(p.amount) || 0) * 0.19;
         });
 
         return {
             totalPendiente: totalPendiente,
             vencidoCount: vencidoCount, vencidoSum: vencidoSum,
             proximoCount: proximoCount, proximoSum: proximoSum,
-            proveedoresCount: Object.keys(vendorsSet).length
+            proveedoresCount: Object.keys(vendorsSet).length,
+            totalRetencion: Math.round(totalRetencion),
+            totalIVACredito: Math.round(totalIVACredito)
         };
     }
 
-    // ── Render ─────────────────────────────────────────────────────────
+    function renderKPIs() {
+        var k = computeKPIs();
+        var cards = [
+            kpiCard('danger', 'Total Pendiente', formatCLP(k.totalPendiente), ''),
+            kpiCard('danger', 'Vencidos', k.vencidoCount, formatCLP(k.vencidoSum)),
+            kpiCard('warning', 'Pr\u00f3ximos \u22647d', k.proximoCount, formatCLP(k.proximoSum)),
+            kpiCard('info', 'Proveedores', k.proveedoresCount, '')
+        ];
+        if (k.totalRetencion > 0) cards.push(kpiCard('warning', 'Retenci\u00f3n BH pendiente', formatCLP(k.totalRetencion), 'SII mes en curso'));
+        if (k.totalIVACredito > 0) cards.push(kpiCard('success', 'IVA Cr\u00e9dito Fiscal', formatCLP(k.totalIVACredito), 'Facturas pendientes'));
+        return cards.join('\n');
+    }
+
+    function kpiCard(color, label, value, sub) {
+        return '<div class="kpi-card ' + color + '">' +
+               '<div class="kpi-label">' + label + '</div>' +
+               '<div class="kpi-value">' + value + '</div>' +
+               (sub ? '<div class="kpi-sub">' + sub + '</div>' : '') +
+               '</div>';
+    }
+
+    // ── Render skeleton ────────────────────────────────────────────────
+
     function render() {
         return [
             '<div class="content-header">',
@@ -136,294 +181,286 @@ window.Mazelab.Modules.PayablesModule = (function () {
             '<div class="content-body" id="payables-body">',
             '  <div class="kpi-grid" id="payables-kpis"></div>',
             '  <div class="toolbar">',
-            '    <div class="toggle-group" id="payables-toggle">',
-            '      <button class="toggle-option active" data-view="lista">Vista Lista</button>',
-            '      <button class="toggle-option" data-view="agrupada">Vista Agrupada</button>',
+            '    <div class="toggle-group" id="payables-category-toggle">',
+            '      <button class="toggle-option active" data-cat="todos">Todos</button>',
+            '      <button class="toggle-option" data-cat="evento">Por Evento</button>',
+            '      <button class="toggle-option" data-cat="general">Gastos Generales</button>',
+            '    </div>',
+            '    <div class="toggle-group" id="payables-view-toggle">',
+            '      <button class="toggle-option active" data-view="lista">Lista</button>',
+            '      <button class="toggle-option" data-view="agrupada">Agrupada</button>',
             '    </div>',
             '  </div>',
             '  <div id="payables-content"></div>',
             '</div>',
-            renderModal()
+            renderEditModal(),
+            renderAbonoModal()
         ].join('\n');
     }
 
-    function renderKPIs() {
-        var k = computeKPIs();
-        return [
-            '<div class="kpi-card danger">',
-            '  <div class="kpi-label">Total Pendiente</div>',
-            '  <div class="kpi-value">' + formatCLP(k.totalPendiente) + '</div>',
-            '</div>',
-            '<div class="kpi-card danger">',
-            '  <div class="kpi-label">Vencidos (Viernes pasados)</div>',
-            '  <div class="kpi-value">' + k.vencidoCount + '</div>',
-            '  <div class="kpi-sub">' + formatCLP(k.vencidoSum) + '</div>',
-            '</div>',
-            '<div class="kpi-card warning">',
-            '  <div class="kpi-label">Pr\u00f3ximos a vencer (\u22647d)</div>',
-            '  <div class="kpi-value">' + k.proximoCount + '</div>',
-            '  <div class="kpi-sub">' + formatCLP(k.proximoSum) + '</div>',
-            '</div>',
-            '<div class="kpi-card info">',
-            '  <div class="kpi-label">Proveedores por Pagar</div>',
-            '  <div class="kpi-value">' + k.proveedoresCount + '</div>',
-            '</div>'
-        ].join('\n');
-    }
+    // ── List view ──────────────────────────────────────────────────────
 
-    function draftBadge(p) {
-        return p.isDraft ? ' <span class="badge badge-secondary" style="font-size:10px">Borrador</span>' : '';
-    }
-
-    // ── Lista view ─────────────────────────────────────────────────────
     function renderListView() {
-        if (payables.length === 0) {
-            return '<div class="empty-state"><div class="empty-icon">&#128203;</div><p>No hay costos registrados.</p></div>';
-        }
+        var filtered = getFilteredPayables();
+        if (!filtered.length) return '<div class="empty-state"><div class="empty-icon">&#128203;</div><p>No hay costos registrados.</p></div>';
 
-        var rows = payables.map(function (p) {
-            var pending = (Number(p.amount) || 0) - (Number(p.amountPaid) || 0);
-            var badgeClass = p.status === 'pagada' ? 'badge-success' : 'badge-warning';
-            var statusLabel = p.status === 'pagada' ? 'Pagada' : 'Pendiente';
-            var docLabel = docTypeLabel(p.docType) + (p.docNumber ? ' #' + p.docNumber : '');
-            var eventLabel = (p.eventName || '-') + (p.eventDate ? ' <span style="color:var(--text-muted);font-size:11px">(' + p.eventDate + ')</span>' : '');
+        var rows = filtered.map(function (p) {
+            var st = getStatusDerived(p);
+            var pending = getPendiente(p);
+            var bClass = { pagada: 'badge-success', parcial: 'badge-info', pendiente: 'badge-warning' }[st] || 'badge-warning';
+            var stLabel = { pagada: 'Pagada', parcial: 'Parcial', pendiente: 'Pendiente' }[st] || st;
             var di = getDueDateInfo(p);
+            var catBadge = p.category === 'general' ? ' <span class="badge badge-secondary" style="font-size:10px">General</span>' : '';
+            var docStr = docTypeLabel(p.docType) + (p.docNumber ? ' #' + p.docNumber : '');
+            var eventCell = (p.eventName || '-') + catBadge + (p.eventDate ? '<div style="font-size:11px;color:var(--text-muted)">' + p.eventDate + '</div>' : '');
+            var abonarBtn = st !== 'pagada' ? '<button class="btn btn-sm btn-success payable-abonar" data-id="' + p.id + '">Pagar</button>' : '';
 
-            return [
-                '<tr style="' + di.rowStyle + '">',
-                '  <td>' + (p.clientName || '-') + '</td>',
-                '  <td>' + eventLabel + '</td>',
-                '  <td>' + (p.concept || '-') + draftBadge(p) + '</td>',
-                '  <td>' + (p.vendorName || '<span style="color:var(--text-muted)">Sin asignar</span>') + '</td>',
-                '  <td>' + docLabel + '</td>',
-                '  <td class="text-right">' + formatCLP(p.amount) + '</td>',
-                '  <td class="text-right">' + formatCLP(pending) + '</td>',
-                '  <td style="white-space:nowrap;' + di.cellStyle + '">' + di.label + '</td>',
-                '  <td><span class="badge ' + badgeClass + '">' + statusLabel + '</span></td>',
-                '  <td>',
-                '    <div class="flex gap-sm">',
-                '      <button class="btn-icon payable-edit" data-id="' + p.id + '" title="Editar">&#9998;</button>',
-                p.status === 'pendiente'
-                    ? '      <button class="btn btn-sm btn-success payable-mark-paid" data-id="' + p.id + '">Pagar</button>'
-                    : '',
-                '      <button class="btn-icon payable-delete" data-id="' + p.id + '" title="Eliminar">&#128465;</button>',
-                '    </div>',
-                '  </td>',
-                '</tr>'
-            ].join('\n');
-        }).join('\n');
+            return '<tr style="' + di.rowStyle + '">' +
+                '<td>' + (p.clientName || '-') + '</td>' +
+                '<td>' + eventCell + '</td>' +
+                '<td>' + (p.concept || '-') + '</td>' +
+                '<td>' + (p.vendorName || '<span style="color:var(--text-muted)">-</span>') + '</td>' +
+                '<td>' + docStr + docInfoHTML(p) + '</td>' +
+                '<td class="text-right">' + formatCLP(p.amount) + '</td>' +
+                '<td class="text-right" style="' + (pending > 0 ? 'color:var(--danger)' : '') + '">' + formatCLP(pending) + '</td>' +
+                '<td style="white-space:nowrap;' + di.cellStyle + '">' + di.label + '</td>' +
+                '<td><span class="badge ' + bClass + '">' + stLabel + '</span></td>' +
+                '<td><div class="flex gap-sm">' +
+                '  <button class="btn-icon payable-edit" data-id="' + p.id + '" title="Editar">&#9998;</button>' +
+                abonarBtn +
+                '  <button class="btn-icon payable-delete" data-id="' + p.id + '" title="Eliminar">&#128465;</button>' +
+                '</div></td>' +
+                '</tr>';
+        }).join('');
 
-        return [
-            '<div style="overflow-x:auto">',
-            '<table class="data-table">',
-            '<thead><tr>',
-            '  <th>Cliente</th><th>Evento</th><th>Concepto</th><th>Proveedor</th>',
-            '  <th>Documento</th><th class="text-right">Monto</th>',
-            '  <th class="text-right">Pendiente</th><th>Fecha Pago (Vie +30d)</th><th>Estado</th><th>Acciones</th>',
-            '</tr></thead>',
-            '<tbody>',
-            rows,
-            '</tbody>',
-            '</table>',
-            '</div>'
-        ].join('\n');
+        return '<div style="overflow-x:auto"><table class="data-table">' +
+            '<thead><tr>' +
+            '<th>Cliente</th><th>Evento / Descripci\u00f3n</th><th>Concepto</th><th>Proveedor</th>' +
+            '<th>Documento</th><th class="text-right">Monto</th><th class="text-right">Pendiente</th>' +
+            '<th>Fecha Pago</th><th>Estado</th><th>Acciones</th>' +
+            '</tr></thead><tbody>' + rows + '</tbody></table></div>';
     }
 
-    // ── Agrupada view (por Evento) ─────────────────────────────────────
+    // ── Grouped view ───────────────────────────────────────────────────
+
     function renderGroupedView() {
+        var filtered = getFilteredPayables();
+        if (!filtered.length) return '<div class="empty-state"><div class="empty-icon">&#128203;</div><p>No hay costos registrados.</p></div>';
+
         var groups = {};
-        payables.forEach(function (p) {
-            var key = (p.eventName || 'Sin evento') + (p.eventDate ? ' — ' + p.eventDate : '');
-            if (!groups[key]) groups[key] = { eventName: p.eventName || 'Sin evento', eventDate: p.eventDate || '', items: [] };
+        filtered.forEach(function (p) {
+            var key = (p.category === 'general')
+                ? '__general__'
+                : (p.eventName || 'Sin evento') + '||' + (p.eventDate || '');
+            if (!groups[key]) groups[key] = {
+                isGeneral: p.category === 'general',
+                eventName: (p.category === 'general') ? 'Gastos Generales' : (p.eventName || 'Sin evento'),
+                eventDate: p.eventDate || '',
+                clientName: p.clientName || '',
+                items: []
+            };
             groups[key].items.push(p);
         });
 
-        var keys = Object.keys(groups).sort();
-        if (keys.length === 0) {
-            return '<div class="empty-state"><div class="empty-icon">&#128203;</div><p>No hay costos registrados.</p></div>';
-        }
-
-        return keys.map(function (key) {
+        return Object.keys(groups).sort().map(function (key) {
             var grp = groups[key];
-            var items = grp.items;
-            var pendingItems = items.filter(function (p) { return p.status === 'pendiente'; });
-            var totalPending = pendingItems.reduce(function (s, p) {
-                return s + ((Number(p.amount) || 0) - (Number(p.amountPaid) || 0));
-            }, 0);
-            var clientLabel = items[0] && items[0].clientName ? ' · ' + items[0].clientName : '';
+            var totalPending = grp.items.reduce(function (s, p) { return s + (getStatusDerived(p) !== 'pagada' ? getPendiente(p) : 0); }, 0);
+            var clientLabel = grp.clientName ? ' \u00b7 ' + grp.clientName : '';
+            var dateLabel = grp.eventDate ? ' <span style="font-size:12px;color:var(--text-muted)">' + grp.eventDate + clientLabel + '</span>' : '';
 
-            var rows = items.map(function (p) {
-                var pending = (Number(p.amount) || 0) - (Number(p.amountPaid) || 0);
-                var badgeClass = p.status === 'pagada' ? 'badge-success' : 'badge-warning';
-                var statusLabel = p.status === 'pagada' ? 'Pagada' : 'Pendiente';
-                var vendorCell = p.vendorName || '<span style="color:var(--text-muted)">Sin asignar</span>';
+            var rows = grp.items.map(function (p) {
+                var st = getStatusDerived(p);
+                var pending = getPendiente(p);
+                var bClass = { pagada: 'badge-success', parcial: 'badge-info', pendiente: 'badge-warning' }[st] || 'badge-warning';
+                var stLabel = { pagada: 'Pagada', parcial: 'Parcial', pendiente: 'Pendiente' }[st] || st;
                 var di = getDueDateInfo(p);
-                return [
-                    '<tr style="' + di.rowStyle + '">',
-                    '  <td>' + (p.concept || '-') + draftBadge(p) + '</td>',
-                    '  <td>' + vendorCell + '</td>',
-                    '  <td>' + docTypeLabel(p.docType) + '</td>',
-                    '  <td class="text-right">' + formatCLP(p.amount) + '</td>',
-                    '  <td class="text-right">' + formatCLP(pending) + '</td>',
-                    '  <td style="white-space:nowrap;' + di.cellStyle + '">' + di.label + '</td>',
-                    '  <td><span class="badge ' + badgeClass + '">' + statusLabel + '</span></td>',
-                    '  <td>',
-                    '    <div class="flex gap-sm">',
-                    '      <button class="btn-icon payable-edit" data-id="' + p.id + '" title="Editar">&#9998;</button>',
-                    p.status === 'pendiente'
-                        ? '      <button class="btn btn-sm btn-success payable-mark-paid" data-id="' + p.id + '">Pagar</button>'
-                        : '',
-                    '      <button class="btn-icon payable-delete" data-id="' + p.id + '" title="Eliminar">&#128465;</button>',
-                    '    </div>',
-                    '  </td>',
-                    '</tr>'
-                ].join('\n');
-            }).join('\n');
+                var docStr = docTypeLabel(p.docType) + (p.docNumber ? ' #' + p.docNumber : '');
+                var abonarBtn = st !== 'pagada' ? '<button class="btn btn-sm btn-success payable-abonar" data-id="' + p.id + '">Pagar</button>' : '';
 
-            return [
-                '<div class="card" style="margin-bottom:var(--space-md)">',
-                '  <div class="card-header">',
-                '    <div>',
-                '      <span class="card-title">' + grp.eventName + '</span>',
-                '      <span style="font-size:12px;color:var(--text-muted);margin-left:8px">' + (grp.eventDate || '') + clientLabel + '</span>',
-                '    </div>',
-                '    <div>',
-                '      <span style="font-size:12px;color:var(--text-muted);margin-right:12px">' + pendingItems.length + ' pendientes</span>',
-                '      <span class="text-danger" style="font-weight:700">' + formatCLP(totalPending) + '</span>',
-                '    </div>',
-                '  </div>',
-                '  <table class="data-table">',
-                '    <thead><tr>',
-                '      <th>Concepto</th><th>Proveedor</th><th>Doc</th>',
-                '      <th class="text-right">Monto</th><th class="text-right">Pendiente</th>',
-                '      <th>Fecha Pago</th><th>Estado</th><th>Acciones</th>',
-                '    </tr></thead>',
-                '    <tbody>' + rows + '</tbody>',
-                '  </table>',
-                '</div>'
-            ].join('\n');
-        }).join('\n');
+                return '<tr style="' + di.rowStyle + '">' +
+                    '<td>' + (p.concept || '-') + '</td>' +
+                    '<td>' + (p.vendorName || '-') + '</td>' +
+                    '<td>' + docStr + docInfoHTML(p) + '</td>' +
+                    '<td class="text-right">' + formatCLP(p.amount) + '</td>' +
+                    '<td class="text-right" style="' + (pending > 0 ? 'color:var(--danger)' : '') + '">' + formatCLP(pending) + '</td>' +
+                    '<td style="white-space:nowrap;' + di.cellStyle + '">' + di.label + '</td>' +
+                    '<td><span class="badge ' + bClass + '">' + stLabel + '</span></td>' +
+                    '<td><div class="flex gap-sm">' +
+                    '<button class="btn-icon payable-edit" data-id="' + p.id + '">&#9998;</button>' +
+                    abonarBtn +
+                    '<button class="btn-icon payable-delete" data-id="' + p.id + '">&#128465;</button>' +
+                    '</div></td></tr>';
+            }).join('');
+
+            return '<div class="card" style="margin-bottom:var(--space-md)">' +
+                '<div class="card-header">' +
+                '  <div><span class="card-title">' + grp.eventName + '</span>' + dateLabel + '</div>' +
+                '  <span class="text-danger" style="font-weight:700">' + formatCLP(totalPending) + ' pendiente</span>' +
+                '</div>' +
+                '<table class="data-table"><thead><tr>' +
+                '<th>Concepto</th><th>Proveedor</th><th>Documento</th>' +
+                '<th class="text-right">Monto</th><th class="text-right">Pendiente</th>' +
+                '<th>Fecha Pago</th><th>Estado</th><th>Acciones</th>' +
+                '</tr></thead><tbody>' + rows + '</tbody></table></div>';
+        }).join('');
     }
 
-    // ── Modal ──────────────────────────────────────────────────────────
-    function renderModal() {
+    // ── Edit Modal ─────────────────────────────────────────────────────
+
+    function renderEditModal() {
         return [
             '<div class="modal-overlay" id="payable-modal">',
-            '  <div class="modal">',
-            '    <div class="modal-header">',
-            '      <h3 id="payable-modal-title">Nuevo Costo</h3>',
-            '      <button class="modal-close" id="payable-modal-close">&times;</button>',
-            '    </div>',
-            '    <form id="payable-form">',
-            '      <div class="form-row">',
-            '        <div class="form-group">',
-            '          <label>Nombre del Evento</label>',
-            '          <input type="text" class="form-control" id="pay-eventName" required>',
-            '        </div>',
-            '        <div class="form-group">',
-            '          <label>Fecha del Evento</label>',
-            '          <input type="date" class="form-control" id="pay-eventDate">',
-            '        </div>',
+            '<div class="modal">',
+            '  <div class="modal-header">',
+            '    <h3 id="payable-modal-title">Nuevo Costo</h3>',
+            '    <button class="modal-close" id="payable-modal-close">&times;</button>',
+            '  </div>',
+            '  <form id="payable-form">',
+            '    <div class="form-row">',
+            '      <div class="form-group">',
+            '        <label>Categor\u00eda</label>',
+            '        <select class="form-control" id="pay-category">',
+            '          <option value="evento">Por Evento</option>',
+            '          <option value="general">Gasto General</option>',
+            '        </select>',
             '      </div>',
             '      <div class="form-group">',
-            '        <label>Nombre del Cliente</label>',
+            '        <label>Tipo de Documento</label>',
+            '        <select class="form-control" id="pay-docType">',
+            '          <option value="bh">BH</option>',
+            '          <option value="factura">Factura</option>',
+            '          <option value="exenta">F. Exenta</option>',
+            '          <option value="invoice">Invoice</option>',
+            '          <option value="ninguno">Sin documento</option>',
+            '        </select>',
+            '      </div>',
+            '    </div>',
+            '    <div class="form-row">',
+            '      <div class="form-group">',
+            '        <label>Evento / Descripci\u00f3n</label>',
+            '        <input type="text" class="form-control" id="pay-eventName">',
+            '      </div>',
+            '      <div class="form-group" id="pay-clientName-group">',
+            '        <label>Cliente</label>',
             '        <input type="text" class="form-control" id="pay-clientName">',
             '      </div>',
+            '    </div>',
+            '    <div class="form-row">',
+            '      <div class="form-group">',
+            '        <label>Fecha del Evento <span style="color:var(--text-muted);font-weight:400">(para calcular fecha pago)</span></label>',
+            '        <input type="date" class="form-control" id="pay-eventDate">',
+            '      </div>',
+            '      <div class="form-group">',
+            '        <label>Fecha Emisi\u00f3n Documento <span style="color:var(--text-muted);font-weight:400">(BH / Factura)</span></label>',
+            '        <input type="date" class="form-control" id="pay-billingDate">',
+            '      </div>',
+            '    </div>',
+            '    <div class="form-row">',
             '      <div class="form-group">',
             '        <label>Concepto</label>',
             '        <input type="text" class="form-control" id="pay-concept" required>',
             '      </div>',
-            '      <div class="form-row">',
-            '        <div class="form-group">',
-            '          <label>Proveedor</label>',
-            '          <select class="form-control" id="pay-vendorId"></select>',
-            '        </div>',
-            '        <div class="form-group">',
-            '          <label>Monto (Bruto)</label>',
-            '          <input type="number" class="form-control" id="pay-amount" min="0" step="1" required>',
-            '        </div>',
+            '      <div class="form-group">',
+            '        <label>Proveedor / Beneficiario</label>',
+            '        <input type="text" class="form-control" id="pay-vendorName">',
             '      </div>',
-            '      <div class="form-row">',
-            '        <div class="form-group">',
-            '          <label>Tipo de Documento</label>',
-            '          <select class="form-control" id="pay-docType">',
-            '            <option value="bh">BH</option>',
-            '            <option value="factura">Factura</option>',
-            '            <option value="invoice">Invoice</option>',
-            '            <option value="ninguno">Ninguno</option>',
-            '          </select>',
-            '        </div>',
-            '        <div class="form-group">',
-            '          <label>N\u00b0 de Documento</label>',
-            '          <input type="text" class="form-control" id="pay-docNumber">',
-            '        </div>',
+            '    </div>',
+            '    <div class="form-row">',
+            '      <div class="form-group">',
+            '        <label>N\u00b0 de Documento</label>',
+            '        <input type="text" class="form-control" id="pay-docNumber">',
             '      </div>',
             '      <div class="form-group">',
-            '        <label>Fecha de Pago Estimada <span style="font-weight:400;color:var(--text-muted)">(primer viernes \u226530d desde evento)</span></label>',
-            '        <div id="pay-due-date-display" style="padding:var(--space-sm) 0;font-weight:600;font-size:15px">-</div>',
+            '        <label>Monto Bruto</label>',
+            '        <input type="number" class="form-control" id="pay-amount" min="0" step="1" required>',
             '      </div>',
-            '      <div class="form-actions">',
-            '        <button type="button" class="btn btn-secondary" id="payable-cancel">Cancelar</button>',
-            '        <button type="submit" class="btn btn-primary" id="payable-save">Guardar</button>',
-            '      </div>',
-            '    </form>',
+            '    </div>',
+            '    <div id="pay-doc-preview" style="display:none;background:var(--bg-tertiary);border-radius:8px;padding:10px 14px;margin-bottom:var(--space-md);font-size:13px;line-height:1.8"></div>',
+            '    <div class="form-group">',
+            '      <label>Comentarios</label>',
+            '      <textarea class="form-control" id="pay-comments" rows="2" style="resize:vertical"></textarea>',
+            '    </div>',
+            '    <div class="form-group">',
+            '      <label>Fecha de Pago Estimada <span style="font-weight:400;color:var(--text-muted)">(primer viernes \u226530d desde evento)</span></label>',
+            '      <div id="pay-due-date-display" style="padding:var(--space-sm) 0;font-weight:600;font-size:15px">-</div>',
+            '    </div>',
+            '    <div class="form-actions">',
+            '      <button type="button" class="btn btn-secondary" id="payable-cancel">Cancelar</button>',
+            '      <button type="submit" class="btn btn-primary">Guardar</button>',
+            '    </div>',
+            '  </form>',
+            '</div>',
+            '</div>'
+        ].join('\n');
+    }
+
+    // ── Abono Modal ────────────────────────────────────────────────────
+
+    function renderAbonoModal() {
+        return [
+            '<div class="modal-overlay" id="payable-abono-modal">',
+            '<div class="modal">',
+            '  <div class="modal-header">',
+            '    <h3>Registrar Pago</h3>',
+            '    <button class="modal-close" id="abono-close">&times;</button>',
             '  </div>',
+            '  <div id="abono-summary" style="background:var(--bg-tertiary);border-radius:8px;padding:10px 14px;margin-bottom:var(--space-md);font-size:13px;line-height:1.8"></div>',
+            '  <div id="abono-payments-list" style="margin-bottom:var(--space-md)"></div>',
+            '  <form id="abono-form">',
+            '    <div class="form-row">',
+            '      <div class="form-group">',
+            '        <label>Monto a pagar</label>',
+            '        <input type="number" class="form-control" id="abono-amount" min="1" step="1">',
+            '      </div>',
+            '      <div class="form-group">',
+            '        <label>Fecha</label>',
+            '        <input type="date" class="form-control" id="abono-date">',
+            '      </div>',
+            '    </div>',
+            '    <div class="form-row">',
+            '      <div class="form-group">',
+            '        <label>M\u00e9todo</label>',
+            '        <select class="form-control" id="abono-method">',
+            '          <option value="transferencia">Transferencia</option>',
+            '          <option value="efectivo">Efectivo</option>',
+            '          <option value="cheque">Cheque</option>',
+            '          <option value="otro">Otro</option>',
+            '        </select>',
+            '      </div>',
+            '      <div class="form-group" style="display:flex;align-items:flex-end">',
+            '        <button type="button" class="btn btn-secondary" id="abono-fill-total" style="width:100%">Pagar total pendiente</button>',
+            '      </div>',
+            '    </div>',
+            '    <div class="form-actions">',
+            '      <button type="button" class="btn btn-secondary" id="abono-cancel">Cancelar</button>',
+            '      <button type="submit" class="btn btn-primary">Guardar Pago</button>',
+            '    </div>',
+            '  </form>',
+            '</div>',
             '</div>'
         ].join('\n');
     }
 
     // ── Data loading ───────────────────────────────────────────────────
+
     async function loadData() {
         try {
             payables = await window.Mazelab.DataService.getAll('payables') || [];
-            staffList = await window.Mazelab.DataService.getAll('staff') || [];
         } catch (e) {
             console.warn('PayablesModule: Error loading data', e);
             payables = [];
-            staffList = [];
         }
     }
 
     function refreshView() {
-        var kpiContainer = document.getElementById('payables-kpis');
-        if (kpiContainer) kpiContainer.innerHTML = renderKPIs();
-
-        var contentContainer = document.getElementById('payables-content');
-        if (contentContainer) {
-            contentContainer.innerHTML = currentView === 'lista' ? renderListView() : renderGroupedView();
-        }
-
+        var kpi = document.getElementById('payables-kpis');
+        if (kpi) kpi.innerHTML = renderKPIs();
+        var content = document.getElementById('payables-content');
+        if (content) content.innerHTML = currentView === 'lista' ? renderListView() : renderGroupedView();
         bindTableActions();
     }
 
-    // ── Modal helpers ──────────────────────────────────────────────────
-    function openModal(payable) {
-        editingId = payable ? payable.id : null;
-        var title = document.getElementById('payable-modal-title');
-        if (title) title.textContent = payable ? 'Editar Costo' : 'Nuevo Costo';
-
-        populateVendorDropdown();
-
-        document.getElementById('pay-eventName').value = payable ? (payable.eventName || '') : '';
-        document.getElementById('pay-clientName').value = payable ? (payable.clientName || '') : '';
-        document.getElementById('pay-eventDate').value = payable ? (payable.eventDate || payable.eventEndDate || '') : '';
-        document.getElementById('pay-concept').value = payable ? (payable.concept || '') : '';
-        document.getElementById('pay-vendorId').value = payable ? (payable.vendorId || '') : '';
-        document.getElementById('pay-amount').value = payable ? (payable.amount || '') : '';
-        document.getElementById('pay-docType').value = payable ? (payable.docType || 'bh') : 'bh';
-        document.getElementById('pay-docNumber').value = payable ? (payable.docNumber || '') : '';
-
-        updateDueDateDisplay();
-
-        // Live update due date when event date changes
-        var eventDateInput = document.getElementById('pay-eventDate');
-        if (eventDateInput) {
-            eventDateInput.onchange = updateDueDateDisplay;
-        }
-
-        var modal = document.getElementById('payable-modal');
-        if (modal) modal.classList.add('active');
-    }
+    // ── Edit Modal helpers ─────────────────────────────────────────────
 
     function updateDueDateDisplay() {
         var display = document.getElementById('pay-due-date-display');
@@ -431,204 +468,296 @@ window.Mazelab.Modules.PayablesModule = (function () {
         var dateStr = (document.getElementById('pay-eventDate') || {}).value;
         var dueDate = calcDueDate(dateStr);
         if (!dueDate) { display.textContent = '-'; display.style.color = ''; return; }
-
         var today = new Date(); today.setHours(0, 0, 0, 0);
-        var diffDays = Math.floor((dueDate - today) / 86400000);
-        var label = 'Viernes ' + formatDateShort(dueDate);
-        if (diffDays < 0) {
-            label += ' (vencido hace ' + Math.abs(diffDays) + ' días)';
-            display.style.color = 'var(--danger)';
-        } else if (diffDays === 0) {
-            label += ' (¡HOY!)';
-            display.style.color = 'var(--danger)';
-        } else if (diffDays <= 7) {
-            label += ' (en ' + diffDays + ' días)';
-            display.style.color = 'var(--warning)';
-        } else {
-            label += ' (en ' + diffDays + ' días)';
-            display.style.color = 'var(--text-primary)';
-        }
+        var diff = Math.floor((dueDate - today) / 86400000);
+        var label = 'Viernes ' + formatDateShort(dueDate) + ' (en ' + diff + 'd)';
+        if (diff < 0)  { label = 'Viernes ' + formatDateShort(dueDate) + ' (vencido hace ' + Math.abs(diff) + 'd)'; display.style.color = 'var(--danger)'; }
+        else if (diff === 0) { label = 'Viernes ' + formatDateShort(dueDate) + ' (\u00a1HOY!)'; display.style.color = 'var(--danger)'; }
+        else { display.style.color = diff <= 7 ? 'var(--warning)' : 'var(--text-primary)'; }
         display.textContent = label;
     }
 
-    function closeModal() {
+    function updateDocPreview() {
+        var preview = document.getElementById('pay-doc-preview');
+        if (!preview) return;
+        var docType = (document.getElementById('pay-docType') || {}).value || '';
+        var amount = Number((document.getElementById('pay-amount') || {}).value) || 0;
+        var billingDate = (document.getElementById('pay-billingDate') || {}).value
+                       || (document.getElementById('pay-eventDate') || {}).value || '';
+
+        if (docType === 'bh' && amount > 0) {
+            var rate = getBHRetentionRate(billingDate);
+            var ret  = Math.round(amount * rate);
+            var neto = amount - ret;
+            preview.style.display = 'block';
+            preview.innerHTML = '\u24d8 BH &middot; Retenci\u00f3n ' + (rate * 100).toFixed(2) + '%: <strong>' + formatCLP(ret) + '</strong>' +
+                '<br>Neto a transferir al proveedor: <strong>' + formatCLP(neto) + '</strong>' +
+                '<br><span style="color:var(--text-muted);font-size:11px">La retenci\u00f3n queda en tu cuenta para pagar al SII.</span>';
+        } else if (docType === 'factura' && amount > 0) {
+            preview.style.display = 'block';
+            preview.innerHTML = '\u24d8 Factura &middot; IVA cr\u00e9dito fiscal (19%): <strong>' + formatCLP(Math.round(amount * 0.19)) + '</strong>' +
+                '<br><span style="color:var(--text-muted);font-size:11px">Este IVA se descuenta de tu d\u00e9bito fiscal del mes.</span>';
+        } else {
+            preview.style.display = 'none';
+        }
+    }
+
+    function openEditModal(payable) {
+        editingId = payable ? payable.id : null;
+        var title = document.getElementById('payable-modal-title');
+        if (title) title.textContent = payable ? 'Editar Costo' : 'Nuevo Costo';
+
+        document.getElementById('pay-category').value   = payable ? (payable.category   || 'evento') : 'evento';
+        document.getElementById('pay-docType').value    = payable ? (payable.docType     || 'bh')     : 'bh';
+        document.getElementById('pay-eventName').value  = payable ? (payable.eventName   || '')       : '';
+        document.getElementById('pay-clientName').value = payable ? (payable.clientName  || '')       : '';
+        document.getElementById('pay-eventDate').value  = payable ? (payable.eventDate   || '')       : '';
+        document.getElementById('pay-billingDate').value = payable ? (payable.billingDate || '')      : '';
+        document.getElementById('pay-concept').value    = payable ? (payable.concept     || '')       : '';
+        document.getElementById('pay-vendorName').value = payable ? (payable.vendorName  || '')       : '';
+        document.getElementById('pay-docNumber').value  = payable ? (payable.docNumber   || '')       : '';
+        document.getElementById('pay-amount').value     = payable ? (payable.amount      || '')       : '';
+        document.getElementById('pay-comments').value   = payable ? (payable.comments    || '')       : '';
+
+        updateDueDateDisplay();
+        updateDocPreview();
+
+        ['pay-eventDate', 'pay-billingDate'].forEach(function (id) {
+            var el = document.getElementById(id);
+            if (el) { el.onchange = function () { updateDueDateDisplay(); updateDocPreview(); }; }
+        });
+        var dtSel = document.getElementById('pay-docType');
+        if (dtSel) dtSel.onchange = updateDocPreview;
+        var amtEl = document.getElementById('pay-amount');
+        if (amtEl) amtEl.oninput = updateDocPreview;
+
+        var modal = document.getElementById('payable-modal');
+        if (modal) modal.classList.add('active');
+    }
+
+    function closeEditModal() {
         var modal = document.getElementById('payable-modal');
         if (modal) modal.classList.remove('active');
         editingId = null;
     }
 
-    function populateVendorDropdown() {
-        var select = document.getElementById('pay-vendorId');
-        if (!select) return;
-        var vendors = getVendors();
-        var options = '<option value="">-- Seleccionar Proveedor --</option>';
-        vendors.forEach(function (v) {
-            var name = v.name || v.nombre || '';
-            var id = v.id || '';
-            options += '<option value="' + id + '">' + name + '</option>';
-        });
-        select.innerHTML = options;
+    // ── Abono Modal helpers ────────────────────────────────────────────
+
+    function openAbonoModal(id) {
+        abonoTargetId = id;
+        var p = payables.find(function (x) { return x.id === id; });
+        if (!p) return;
+        refreshAbonoContent(p);
+        var modal = document.getElementById('payable-abono-modal');
+        if (modal) modal.classList.add('active');
     }
 
-    // ── Save / Actions ─────────────────────────────────────────────────
+    function closeAbonoModal() {
+        var modal = document.getElementById('payable-abono-modal');
+        if (modal) modal.classList.remove('active');
+        abonoTargetId = null;
+    }
+
+    function refreshAbonoContent(p) {
+        var pending = getPendiente(p);
+        var docStr = docTypeLabel(p.docType) + (p.docNumber ? ' #' + p.docNumber : '');
+
+        // Summary block
+        var summaryEl = document.getElementById('abono-summary');
+        if (summaryEl) {
+            var bhLine = '';
+            if (isBH(p)) {
+                var rate = getBHRetentionRate(p.billingDate || p.eventDate);
+                var netoProv = Math.round((Number(p.amount) || 0) * (1 - rate));
+                bhLine = '<br><strong>Neto a transferir al proveedor: ' + formatCLP(netoProv) + '</strong>' +
+                         ' (retenci\u00f3n ' + (rate * 100).toFixed(2) + '% queda en tu cuenta para SII)';
+            }
+            summaryEl.innerHTML =
+                '<strong>' + (p.vendorName || 'Sin proveedor') + '</strong> &middot; ' + (p.eventName || 'Sin evento') +
+                '<br>Documento: ' + docStr +
+                ' &middot; Total: ' + formatCLP(p.amount) +
+                ' &middot; Pagado: ' + formatCLP(getTotalPagado(p)) +
+                ' &middot; <strong style="color:var(--danger)">Pendiente: ' + formatCLP(pending) + '</strong>' +
+                bhLine;
+        }
+
+        // Payments list
+        var listEl = document.getElementById('abono-payments-list');
+        if (listEl) {
+            var payments = p.payments || [];
+            if (!payments.length) {
+                listEl.innerHTML = '<p style="color:var(--text-muted);font-size:13px">Sin pagos registrados.</p>';
+            } else {
+                var rows = payments.map(function (pay, i) {
+                    return '<div style="display:flex;align-items:center;gap:12px;padding:6px 0;border-bottom:1px solid var(--border)">' +
+                        '<span style="flex:1;font-size:13px">' + (pay.date || '-') + ' &middot; ' + (pay.method || '-') + '</span>' +
+                        '<strong>' + formatCLP(pay.amount) + '</strong>' +
+                        '<button class="btn-icon abono-del-pay" data-idx="' + i + '" title="Eliminar">&#128465;</button>' +
+                        '</div>';
+                }).join('');
+                listEl.innerHTML = '<div style="font-size:13px;font-weight:600;color:var(--text-secondary);margin-bottom:4px">Pagos registrados:</div>' + rows;
+                listEl.querySelectorAll('.abono-del-pay').forEach(function (btn) {
+                    btn.addEventListener('click', function () { deletePayment(abonoTargetId, Number(btn.dataset.idx)); });
+                });
+            }
+        }
+
+        // Pre-fill amount input
+        var amountEl = document.getElementById('abono-amount');
+        if (amountEl) amountEl.value = pending > 0 ? Math.round(pending) : '';
+        var dateEl = document.getElementById('abono-date');
+        if (dateEl) dateEl.value = todayStr();
+
+        // Fill-total button
+        var fillBtn = document.getElementById('abono-fill-total');
+        if (fillBtn) {
+            fillBtn.onclick = function () {
+                var pNow = payables.find(function (x) { return x.id === abonoTargetId; });
+                var am = document.getElementById('abono-amount');
+                if (am && pNow) am.value = Math.round(getPendiente(pNow));
+            };
+        }
+    }
+
+    async function deletePayment(payableId, idx) {
+        var p = payables.find(function (x) { return x.id === payableId; });
+        if (!p || !p.payments) return;
+        var updated = p.payments.filter(function (_, i) { return i !== idx; });
+        try {
+            await window.Mazelab.DataService.update('payables', payableId, { payments: updated });
+            await loadData();
+            var fresh = payables.find(function (x) { return x.id === payableId; });
+            if (fresh) refreshAbonoContent(fresh);
+            refreshView();
+        } catch (err) { console.error('PayablesModule: deletePayment error', err); }
+    }
+
+    async function handleAbonoSave(e) {
+        e.preventDefault();
+        if (!abonoTargetId) return;
+        var p = payables.find(function (x) { return x.id === abonoTargetId; });
+        if (!p) return;
+        var amount = Number(document.getElementById('abono-amount').value) || 0;
+        if (amount <= 0) { alert('Ingresa un monto v\u00e1lido.'); return; }
+        var date   = document.getElementById('abono-date').value || todayStr();
+        var method = document.getElementById('abono-method').value || 'transferencia';
+        var newPayments = (p.payments || []).concat([{ id: generateId(), amount: amount, date: date, method: method }]);
+        try {
+            await window.Mazelab.DataService.update('payables', abonoTargetId, { payments: newPayments });
+            await loadData();
+            var fresh = payables.find(function (x) { return x.id === abonoTargetId; });
+            if (fresh) refreshAbonoContent(fresh);
+            refreshView();
+        } catch (err) { console.error('PayablesModule: handleAbonoSave error', err); alert('Error al guardar el pago.'); }
+    }
+
+    // ── Save ───────────────────────────────────────────────────────────
+
     async function handleSave(e) {
         e.preventDefault();
-
-        var vendorSelect = document.getElementById('pay-vendorId');
-        var vendorId = vendorSelect.value;
-        var vendorName = '';
-        if (vendorId) {
-            var selectedOption = vendorSelect.options[vendorSelect.selectedIndex];
-            vendorName = selectedOption ? selectedOption.textContent : '';
-        }
-
-        var amount = Number(document.getElementById('pay-amount').value) || 0;
-        var docType = document.getElementById('pay-docType').value;
-        var eventDate = document.getElementById('pay-eventDate').value;
-
-        // Calculate BH retention if applicable
-        if (docType === 'bh') {
-            getBHRetention(eventDate); // still used for reference; amount stored gross
-        }
-
         var record = {
-            eventName: document.getElementById('pay-eventName').value.trim(),
-            eventDate: eventDate,
-            eventEndDate: eventDate,   // keep both fields in sync for legacy compat
-            clientName: document.getElementById('pay-clientName').value.trim(),
-            concept: document.getElementById('pay-concept').value.trim(),
-            vendorId: vendorId,
-            vendorName: vendorName,
-            amount: amount,
-            amountPaid: 0,
-            docType: docType,
-            docNumber: document.getElementById('pay-docNumber').value.trim(),
-            status: 'pendiente'
+            category:    document.getElementById('pay-category').value    || 'evento',
+            docType:     document.getElementById('pay-docType').value     || 'bh',
+            eventName:   document.getElementById('pay-eventName').value.trim(),
+            clientName:  document.getElementById('pay-clientName').value.trim(),
+            eventDate:   document.getElementById('pay-eventDate').value,
+            billingDate: document.getElementById('pay-billingDate').value,
+            concept:     document.getElementById('pay-concept').value.trim(),
+            vendorName:  document.getElementById('pay-vendorName').value.trim(),
+            docNumber:   document.getElementById('pay-docNumber').value.trim(),
+            amount:      Number(document.getElementById('pay-amount').value) || 0,
+            comments:    document.getElementById('pay-comments').value.trim(),
+            status:      'pendiente'
         };
-
         try {
             if (editingId) {
-                // Preserve existing amountPaid and status on edit
                 var existing = payables.find(function (p) { return p.id === editingId; });
-                if (existing) {
-                    record.amountPaid = existing.amountPaid;
-                    record.status = existing.status;
-                    record.isDraft = false; // editing a draft confirms it
-                    record.sourceType = existing.sourceType;
-                }
+                record.payments = existing ? (existing.payments || []) : [];
                 await window.Mazelab.DataService.update('payables', editingId, record);
             } else {
+                record.payments = [];
                 await window.Mazelab.DataService.create('payables', record);
             }
-
-            closeModal();
+            closeEditModal();
             await loadData();
             refreshView();
-        } catch (err) {
-            console.error('PayablesModule: Save error', err);
-            alert('Error al guardar el costo.');
-        }
-    }
-
-    async function markAsPaid(id) {
-        var payable = payables.find(function (p) { return p.id === id; });
-        if (!payable) return;
-        try {
-            await window.Mazelab.DataService.update('payables', id, {
-                status: 'pagada',
-                amountPaid: payable.amount
-            });
-            await loadData();
-            refreshView();
-        } catch (err) {
-            console.error('PayablesModule: Mark paid error', err);
-        }
+        } catch (err) { console.error('PayablesModule: Save error', err); alert('Error al guardar el costo.'); }
     }
 
     async function deletePayable(id) {
-        if (!confirm('¿Eliminar este costo? Esta acción no se puede deshacer.')) return;
+        if (!confirm('\u00bfEliminar este costo? Esta acci\u00f3n no se puede deshacer.')) return;
         try {
             await window.Mazelab.DataService.remove('payables', id);
             await loadData();
             refreshView();
-        } catch (err) {
-            console.error('PayablesModule: Delete error', err);
-        }
+        } catch (err) { console.error('PayablesModule: Delete error', err); }
     }
 
-    // ── Table action binding ───────────────────────────────────────────
+    // ── Bind table actions ─────────────────────────────────────────────
+
     function bindTableActions() {
         document.querySelectorAll('.payable-edit').forEach(function (btn) {
             btn.addEventListener('click', function () {
                 var p = payables.find(function (x) { return String(x.id) === String(btn.dataset.id); });
-                if (p) openModal(p);
+                if (p) openEditModal(p);
             });
         });
-
-        document.querySelectorAll('.payable-mark-paid').forEach(function (btn) {
-            btn.addEventListener('click', function () {
-                markAsPaid(btn.dataset.id);
-            });
+        document.querySelectorAll('.payable-abonar').forEach(function (btn) {
+            btn.addEventListener('click', function () { openAbonoModal(btn.dataset.id); });
         });
-
         document.querySelectorAll('.payable-delete').forEach(function (btn) {
-            btn.addEventListener('click', function () {
-                deletePayable(btn.dataset.id);
-            });
+            btn.addEventListener('click', function () { deletePayable(btn.dataset.id); });
         });
     }
 
     // ── Init ───────────────────────────────────────────────────────────
+
     async function init() {
         await loadData();
         refreshView();
 
-        // New button
+        // New record button
         var btnNew = document.getElementById('payables-btn-new');
-        if (btnNew) {
-            btnNew.addEventListener('click', function () {
-                openModal(null);
-            });
-        }
+        if (btnNew) btnNew.addEventListener('click', function () { openEditModal(null); });
 
-        // Toggle view
-        var toggleGroup = document.getElementById('payables-toggle');
-        if (toggleGroup) {
-            toggleGroup.querySelectorAll('.toggle-option').forEach(function (btn) {
+        // Category toggle
+        var catToggle = document.getElementById('payables-category-toggle');
+        if (catToggle) {
+            catToggle.querySelectorAll('.toggle-option').forEach(function (btn) {
                 btn.addEventListener('click', function () {
-                    currentView = btn.dataset.view;
-                    toggleGroup.querySelectorAll('.toggle-option').forEach(function (b) {
-                        b.classList.toggle('active', b.dataset.view === currentView);
-                    });
+                    currentCategory = btn.dataset.cat;
+                    catToggle.querySelectorAll('.toggle-option').forEach(function (b) { b.classList.toggle('active', b.dataset.cat === currentCategory); });
                     refreshView();
                 });
             });
         }
 
-        // Modal close
-        var modalClose = document.getElementById('payable-modal-close');
-        if (modalClose) {
-            modalClose.addEventListener('click', closeModal);
-        }
-        var cancelBtn = document.getElementById('payable-cancel');
-        if (cancelBtn) {
-            cancelBtn.addEventListener('click', closeModal);
-        }
-
-        // Click overlay to close
-        var overlay = document.getElementById('payable-modal');
-        if (overlay) {
-            overlay.addEventListener('click', function (e) {
-                if (e.target === overlay) closeModal();
+        // View toggle
+        var viewToggle = document.getElementById('payables-view-toggle');
+        if (viewToggle) {
+            viewToggle.querySelectorAll('.toggle-option').forEach(function (btn) {
+                btn.addEventListener('click', function () {
+                    currentView = btn.dataset.view;
+                    viewToggle.querySelectorAll('.toggle-option').forEach(function (b) { b.classList.toggle('active', b.dataset.view === currentView); });
+                    refreshView();
+                });
             });
         }
 
-        // Form submit
-        var form = document.getElementById('payable-form');
-        if (form) {
-            form.addEventListener('submit', handleSave);
-        }
+        // Edit modal events
+        var el;
+        el = document.getElementById('payable-modal-close'); if (el) el.addEventListener('click', closeEditModal);
+        el = document.getElementById('payable-cancel');       if (el) el.addEventListener('click', closeEditModal);
+        el = document.getElementById('payable-modal');        if (el) el.addEventListener('click', function (e) { if (e.target === el) closeEditModal(); });
+        el = document.getElementById('payable-form');         if (el) el.addEventListener('submit', handleSave);
+
+        // Abono modal events
+        el = document.getElementById('abono-close');              if (el) el.addEventListener('click', closeAbonoModal);
+        el = document.getElementById('abono-cancel');             if (el) el.addEventListener('click', closeAbonoModal);
+        el = document.getElementById('payable-abono-modal');      if (el) el.addEventListener('click', function (e) { if (e.target === el) closeAbonoModal(); });
+        el = document.getElementById('abono-form');               if (el) el.addEventListener('submit', handleAbonoSave);
     }
 
     return { render: render, init: init };
+
 })();
