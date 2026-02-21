@@ -394,6 +394,7 @@ window.Mazelab.Modules.DashboardModule = (function () {
             '<div style="font-size:13px;font-weight:600;color:var(--text-secondary);margin-bottom:var(--space-sm)">Estimaci\u00f3n de IVA mensual</div>' +
             '<div style="display:flex;gap:var(--space-md)">' + cards + '</div>' +
             '</div>';
+    }
 
     // --------------- init ---------------
 
