@@ -69,33 +69,44 @@ window.Mazelab.Modules.DashboardModule = (function () {
         });
 
         // CXC - Por Cobrar
+        // Usa monto IVA-inclusive menos pagos registrados (igual que módulo CXC)
         var totalCXC = 0;
         var countCXC = 0;
         receivables.forEach(function (r) {
             var st = (r.status || '').toLowerCase();
             var tipo = (r.tipoDoc || r.tipo_doc || '').toUpperCase();
-            if ((st === 'pendiente' || st === 'pendiente_pago' || st === 'pendiente_factura' || st === 'facturada' || st === 'vencida_30' || st === 'vencida_60' || st === 'vencida_90') && tipo !== 'NC') {
-                // montoNeto = campo nativo; invoicedAmount = campo de importación CSV; monto_venta = auto-creado desde venta
-                totalCXC += Number(r.montoNeto || r.monto_neto || r.invoicedAmount || r.monto_venta || r.amount || 0);
-                countCXC++;
+            if (st === 'pagada' || st === 'anulada' || tipo === 'NC') return;
+            if (st === 'pendiente' || st === 'pendiente_pago' || st === 'pendiente_factura' ||
+                st === 'facturada' || st === 'vencida_30' || st === 'vencida_60' || st === 'vencida_90') {
+                var neto = Number(r.montoNeto || r.monto_neto || r.invoicedAmount || r.monto_venta || r.amount) || 0;
+                var totalOwed = (tipo === 'E') ? neto : neto * 1.19;
+                var paid = 0;
+                if (r.payments && Array.isArray(r.payments)) {
+                    paid = r.payments.reduce(function (s, p) { return s + (Number(p.amount) || 0); }, 0);
+                }
+                var pending = Math.max(0, totalOwed - paid);
+                if (pending > 0) { totalCXC += pending; countCXC++; }
             }
         });
 
-        // CXP - Por Pagar
-        // Soporta tanto el campo estándar 'status'/'amount'
-        // como los nombres legacy 'paymentStatus'/'costAmount' para data ya importada
+        // CXP - Por Pagar (payments-aware: descuenta pagos ya registrados)
         var totalCXP = 0;
         var countCXP = 0;
         payables.forEach(function (p) {
             var st = (p.status || p.paymentStatus || '').toLowerCase();
-            if (st === 'pendiente') {
-                totalCXP += Number(p.amount || p.costAmount || p.monto || 0);
-                countCXP++;
+            if (st === 'pagada') return;
+            var amount = Number(p.amount || p.costAmount || p.monto) || 0;
+            var paid = 0;
+            if (p.payments && Array.isArray(p.payments)) {
+                paid = p.payments.reduce(function (s, pay) { return s + (Number(pay.amount) || 0); }, 0);
+            } else {
+                paid = Number(p.amountPaid) || 0;
             }
+            var pending = Math.max(0, amount - paid);
+            if (pending > 0) { totalCXP += pending; countCXP++; }
         });
 
         // Eventos con Problemas
-        // Un evento tiene problema si: hasIssue=true O refundAmount > 0 (devolucion en vendidos.csv)
         var issueCount = 0;
         var refundTotal = 0;
         sales.forEach(function (s) {
@@ -106,8 +117,10 @@ window.Mazelab.Modules.DashboardModule = (function () {
             }
         });
 
-        // Margen Estimado
-        var margen = totalVentas - totalCXP;
+        // Margen Histórico: Ventas - Costos directos registrados en ventas
+        var totalCostos = 0;
+        sales.forEach(function (s) { totalCostos += Number(s.costAmount || 0); });
+        var margen = totalVentas - totalCostos;
 
         // ---- KPI row HTML ----
         var kpiHTML = '' +
@@ -133,9 +146,9 @@ window.Mazelab.Modules.DashboardModule = (function () {
                     '<div class="kpi-sub">Devoluciones: ' + formatCLP(refundTotal) + '</div>' +
                 '</div>' +
                 '<div class="kpi-card ' + (margen >= 0 ? 'success' : 'danger') + '">' +
-                    '<div class="kpi-label">Margen Estimado</div>' +
+                    '<div class="kpi-label">Margen Hist\u00f3rico</div>' +
                     '<div class="kpi-value ' + (margen >= 0 ? 'text-success' : 'text-danger') + '">' + formatCLP(margen) + '</div>' +
-                    '<div class="kpi-sub">Ventas - CXP pendiente</div>' +
+                    '<div class="kpi-sub">Ventas - costos directos</div>' +
                 '</div>' +
             '</div>';
 

@@ -6,6 +6,8 @@ window.Mazelab.Modules.SalesModule = (function () {
     let currentFilter = 'todas';
     let searchQuery = '';
     let editingId = null;
+    let sortCol = null;
+    let sortDir = 'asc';
 
     function formatCLP(amount) {
         if (amount == null || isNaN(amount)) return '$0';
@@ -57,12 +59,8 @@ window.Mazelab.Modules.SalesModule = (function () {
     }
 
     function getFilteredSales() {
-        return sales.filter(sale => {
-            // Status filter — use effectiveStatus so auto-realizada events are filtered correctly
-            if (currentFilter !== 'todas' && getEffectiveStatus(sale) !== currentFilter) {
-                return false;
-            }
-            // Search filter
+        let list = sales.filter(sale => {
+            if (currentFilter !== 'todas' && getEffectiveStatus(sale) !== currentFilter) return false;
             if (searchQuery) {
                 const q = searchQuery.toLowerCase();
                 const clientName = (sale.clientName || getClientName(sale.clientId)).toLowerCase();
@@ -72,12 +70,28 @@ window.Mazelab.Modules.SalesModule = (function () {
             }
             return true;
         });
+        if (sortCol) {
+            list = list.slice().sort((a, b) => {
+                let av = a[sortCol], bv = b[sortCol];
+                if (sortCol === 'margin') { av = (a.amount || 0) - (a.costAmount || 0); bv = (b.amount || 0) - (b.costAmount || 0); }
+                const aNum = Number(av), bNum = Number(bv);
+                if (!isNaN(aNum) && !isNaN(bNum)) return sortDir === 'asc' ? aNum - bNum : bNum - aNum;
+                return sortDir === 'asc' ? String(av || '').localeCompare(String(bv || '')) : String(bv || '').localeCompare(String(av || ''));
+            });
+        }
+        return list;
+    }
+
+    function sortTh(label, col) {
+        const active = sortCol === col;
+        const arrow = active ? (sortDir === 'asc' ? ' ▲' : ' ▼') : ' ↕';
+        return `<th class="sortable-th" data-sort="${col}" style="cursor:pointer;white-space:nowrap">${label}<span style="opacity:${active ? 1 : 0.25};font-size:10px">${arrow}</span></th>`;
     }
 
     function renderTableRows() {
         const filtered = getFilteredSales();
         if (filtered.length === 0) {
-            return '<tr><td colspan="8" style="text-align:center;padding:2rem;color:#888;">No se encontraron ventas</td></tr>';
+            return '<tr><td colspan="10" style="text-align:center;padding:2rem;color:#888;">No se encontraron ventas</td></tr>';
         }
         return filtered.map(sale => {
             const clientName = sale.clientName || getClientName(sale.clientId);
@@ -85,24 +99,23 @@ window.Mazelab.Modules.SalesModule = (function () {
             const effectiveStatus = getEffectiveStatus(sale);
             const badgeClass = getStatusBadgeClass(effectiveStatus);
             const statusLabel = effectiveStatus ? effectiveStatus.charAt(0).toUpperCase() + effectiveStatus.slice(1) : '';
-            const formattedAmount = formatCLP(sale.amount);
-            const eventDate = sale.eventDate || '';
+            const cost = Number(sale.costAmount) || 0;
+            const margin = (Number(sale.amount) || 0) - cost;
+            const marginClass = margin >= 0 ? 'text-success' : 'text-danger';
             return `
                 <tr data-id="${sale.id}">
                     <td>${clientName}</td>
                     <td>${serviceNames}</td>
                     <td>${sale.eventName || ''}</td>
                     <td>${sale.jornadas != null ? sale.jornadas : ''}</td>
-                    <td>${formattedAmount}</td>
-                    <td>${eventDate}</td>
+                    <td>${formatCLP(sale.amount)}</td>
+                    <td>${cost > 0 ? formatCLP(cost) : '<span style="color:var(--text-muted)">-</span>'}</td>
+                    <td class="${marginClass}">${cost > 0 ? formatCLP(margin) : '<span style="color:var(--text-muted)">-</span>'}</td>
+                    <td>${sale.eventDate || ''}</td>
                     <td><span class="${badgeClass}">${statusLabel}</span></td>
                     <td>
-                        <button class="btn-icon btn-edit-sale" data-id="${sale.id}" title="Editar">
-                            <i class="icon-edit">&#9998;</i>
-                        </button>
-                        <button class="btn-icon btn-delete-sale" data-id="${sale.id}" title="Eliminar">
-                            <i class="icon-delete">&#128465;</i>
-                        </button>
+                        <button class="btn-icon btn-edit-sale" data-id="${sale.id}" title="Editar">&#9998;</button>
+                        <button class="btn-icon btn-delete-sale" data-id="${sale.id}" title="Eliminar">&#128465;</button>
                     </td>
                 </tr>`;
         }).join('');
@@ -127,17 +140,7 @@ window.Mazelab.Modules.SalesModule = (function () {
                 </div>
             </div>
             <table class="data-table" id="sales-table">
-                <thead>
-                    <tr>
-                        <th>Cliente</th>
-                        <th>Servicios</th>
-                        <th>Evento</th>
-                        <th>Jornadas</th>
-                        <th>Monto</th>
-                        <th>Fecha</th>
-                        <th>Estado</th>
-                        <th>Acciones</th>
-                    </tr>
+                <thead id="sales-thead">
                 </thead>
                 <tbody id="sales-table-body">
                 </tbody>
@@ -275,11 +278,35 @@ window.Mazelab.Modules.SalesModule = (function () {
         }
     }
 
+    function renderTableHeader() {
+        return `<tr>
+            ${sortTh('Cliente', 'clientName')}
+            <th>Servicios</th>
+            ${sortTh('Evento', 'eventName')}
+            ${sortTh('Jornadas', 'jornadas')}
+            ${sortTh('Monto', 'amount')}
+            ${sortTh('Costo', 'costAmount')}
+            ${sortTh('Margen', 'margin')}
+            ${sortTh('Fecha', 'eventDate')}
+            <th>Estado</th>
+            <th>Acciones</th>
+        </tr>`;
+    }
+
     function refreshTable() {
+        const thead = document.getElementById('sales-thead');
+        if (thead) thead.innerHTML = renderTableHeader();
         const tbody = document.getElementById('sales-table-body');
-        if (tbody) {
-            tbody.innerHTML = renderTableRows();
-        }
+        if (tbody) tbody.innerHTML = renderTableRows();
+        // Bind sort headers
+        document.querySelectorAll('#sales-table .sortable-th').forEach(th => {
+            th.addEventListener('click', () => {
+                const col = th.dataset.sort;
+                if (sortCol === col) { sortDir = sortDir === 'asc' ? 'desc' : 'asc'; }
+                else { sortCol = col; sortDir = 'asc'; }
+                refreshTable();
+            });
+        });
     }
 
     function openModal(sale) {

@@ -4,6 +4,9 @@ window.Mazelab.Modules.PayablesModule = (function () {
     let payables = [];
     let currentView = 'lista';        // 'lista' | 'agrupada'
     let currentCategory = 'todos';    // 'todos' | 'evento' | 'general'
+    let searchQuery = '';
+    let sortCol = null;
+    let sortDir = 'asc';
     let editingId = null;
     let abonoTargetId = null;
 
@@ -96,9 +99,32 @@ window.Mazelab.Modules.PayablesModule = (function () {
     // ── Category filter ────────────────────────────────────────────────
 
     function getFilteredPayables() {
-        if (currentCategory === 'evento')  return payables.filter(function (p) { return p.category === 'evento'; });
-        if (currentCategory === 'general') return payables.filter(function (p) { return !p.category || p.category === 'general'; });
-        return payables;
+        var list = payables;
+        if (currentCategory === 'evento')  list = list.filter(function (p) { return p.category === 'evento'; });
+        if (currentCategory === 'general') list = list.filter(function (p) { return !p.category || p.category === 'general'; });
+        if (searchQuery) {
+            var q = searchQuery.toLowerCase();
+            list = list.filter(function (p) {
+                return [p.clientName, p.eventName, p.concept, p.vendorName, p.docNumber].join(' ').toLowerCase().includes(q);
+            });
+        }
+        if (sortCol) {
+            list = list.slice().sort(function (a, b) {
+                var av = sortCol === 'pending' ? getPendiente(a) : (a[sortCol] || 0);
+                var bv = sortCol === 'pending' ? getPendiente(b) : (b[sortCol] || 0);
+                var an = Number(av), bn = Number(bv);
+                if (!isNaN(an) && !isNaN(bn)) return sortDir === 'asc' ? an - bn : bn - an;
+                return sortDir === 'asc' ? String(av).localeCompare(String(bv)) : String(bv).localeCompare(String(av));
+            });
+        }
+        return list;
+    }
+
+    function sortTh(label, col) {
+        var active = sortCol === col;
+        var arrow = active ? (sortDir === 'asc' ? ' \u25b2' : ' \u25bc') : ' \u2195';
+        return '<th class="payable-sort-th" data-sort="' + col + '" style="cursor:pointer;white-space:nowrap">' +
+               label + '<span style="opacity:' + (active ? 1 : 0.25) + ';font-size:10px">' + arrow + '</span></th>';
     }
 
     // ── Documento info sub-row ─────────────────────────────────────────
@@ -181,6 +207,7 @@ window.Mazelab.Modules.PayablesModule = (function () {
             '<div class="content-body" id="payables-body">',
             '  <div class="kpi-grid" id="payables-kpis"></div>',
             '  <div class="toolbar">',
+            '    <input type="text" id="payables-search" class="form-control" placeholder="Buscar proveedor, evento, concepto..." style="max-width:280px">',
             '    <div class="toggle-group" id="payables-category-toggle">',
             '      <button class="toggle-option active" data-cat="todos">Todos</button>',
             '      <button class="toggle-option" data-cat="evento">Por Evento</button>',
@@ -233,11 +260,17 @@ window.Mazelab.Modules.PayablesModule = (function () {
                 '</tr>';
         }).join('');
 
-        return '<div style="overflow-x:auto"><table class="data-table">' +
+        return '<div style="overflow-x:auto"><table class="data-table" id="payables-list-table">' +
             '<thead><tr>' +
-            '<th>Cliente</th><th>Evento / Descripci\u00f3n</th><th>Concepto</th><th>Proveedor</th>' +
-            '<th>Documento</th><th class="text-right">Monto</th><th class="text-right">Pendiente</th>' +
-            '<th>Fecha Pago</th><th>Estado</th><th>Acciones</th>' +
+            sortTh('Cliente', 'clientName') +
+            sortTh('Evento / Descripci\u00f3n', 'eventName') +
+            sortTh('Concepto', 'concept') +
+            sortTh('Proveedor', 'vendorName') +
+            '<th>Documento</th>' +
+            sortTh('Monto', 'amount') +
+            sortTh('Pendiente', 'pending') +
+            sortTh('Fecha Pago', 'eventDate') +
+            '<th>Estado</th><th>Acciones</th>' +
             '</tr></thead><tbody>' + rows + '</tbody></table></div>';
     }
 
@@ -695,7 +728,30 @@ window.Mazelab.Modules.PayablesModule = (function () {
 
     // ── Bind table actions ─────────────────────────────────────────────
 
+    function bindSortAndSearch() {
+        var searchEl = document.getElementById('payables-search');
+        if (searchEl && !searchEl._bound) {
+            searchEl._bound = true;
+            searchEl.addEventListener('input', function () {
+                searchQuery = this.value.trim();
+                refreshView();
+                // restore focus after re-render
+                var el = document.getElementById('payables-search');
+                if (el) { el.value = searchQuery; el.focus(); }
+            });
+        }
+        document.querySelectorAll('#payables-list-table .payable-sort-th').forEach(function (th) {
+            th.addEventListener('click', function () {
+                var col = th.dataset.sort;
+                if (sortCol === col) { sortDir = sortDir === 'asc' ? 'desc' : 'asc'; }
+                else { sortCol = col; sortDir = 'asc'; }
+                refreshView();
+            });
+        });
+    }
+
     function bindTableActions() {
+        bindSortAndSearch();
         document.querySelectorAll('.payable-edit').forEach(function (btn) {
             btn.addEventListener('click', function () {
                 var p = payables.find(function (x) { return String(x.id) === String(btn.dataset.id); });
