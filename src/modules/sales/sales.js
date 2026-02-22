@@ -8,6 +8,9 @@ window.Mazelab.Modules.SalesModule = (function () {
     let editingId = null;
     let sortCol = null;
     let sortDir = 'asc';
+    let payables = [];
+    let eventCosts = {}; // { [saleId|eventId]: totalAmount }
+    let columnFilters = {}; // { colKey: 'filterText' }
 
     function formatCLP(amount) {
         if (amount == null || isNaN(amount)) return '$0';
@@ -70,10 +73,31 @@ window.Mazelab.Modules.SalesModule = (function () {
             }
             return true;
         });
+        // Per-column filters
+        const activeCols = Object.keys(columnFilters).filter(k => columnFilters[k]);
+        if (activeCols.length) {
+            list = list.filter(sale => {
+                return activeCols.every(col => {
+                    const fv = (columnFilters[col] || '').toLowerCase();
+                    let val;
+                    if (col === '_status') val = getEffectiveStatus(sale);
+                    else val = String(sale[col] || '');
+                    return val.toLowerCase().includes(fv);
+                });
+            });
+        }
+
         if (sortCol) {
             list = list.slice().sort((a, b) => {
                 let av = a[sortCol], bv = b[sortCol];
-                if (sortCol === 'margin') { av = (a.amount || 0) - (a.costAmount || 0); bv = (b.amount || 0) - (b.costAmount || 0); }
+                if (sortCol === '_status') { av = getEffectiveStatus(a); bv = getEffectiveStatus(b); }
+                else if (sortCol === 'margin') {
+                    var _an = (a.eventName || '').trim().toLowerCase(), _bn = (b.eventName || '').trim().toLowerCase();
+                    var ac = eventCosts[String(a.id)] || (a.sourceId ? eventCosts[String(a.sourceId)] : 0) || (_an ? eventCosts['__n__' + _an] : 0) || 0;
+                    var bc = eventCosts[String(b.id)] || (b.sourceId ? eventCosts[String(b.sourceId)] : 0) || (_bn ? eventCosts['__n__' + _bn] : 0) || 0;
+                    av = (Number(a.amount) || 0) > 0 ? ((Number(a.amount) || 0) - ac) / (Number(a.amount) || 0) : 0;
+                    bv = (Number(b.amount) || 0) > 0 ? ((Number(b.amount) || 0) - bc) / (Number(b.amount) || 0) : 0;
+                }
                 const aNum = Number(av), bNum = Number(bv);
                 if (!isNaN(aNum) && !isNaN(bNum)) return sortDir === 'asc' ? aNum - bNum : bNum - aNum;
                 return sortDir === 'asc' ? String(av || '').localeCompare(String(bv || '')) : String(bv || '').localeCompare(String(av || ''));
@@ -88,10 +112,40 @@ window.Mazelab.Modules.SalesModule = (function () {
         return `<th class="sortable-th" data-sort="${col}" style="cursor:pointer;white-space:nowrap">${label}<span style="opacity:${active ? 1 : 0.25};font-size:10px">${arrow}</span></th>`;
     }
 
+    const FILTER_INPUT_STYLE = 'width:100%;font-size:11px;padding:2px 4px;border:1px solid var(--border);border-radius:3px;background:var(--bg-secondary);color:var(--text-primary);box-sizing:border-box';
+
+    function filterInput(col, placeholder) {
+        const fv = columnFilters[col] || '';
+        return `<input class="col-filter" data-col="${col}" type="text" value="${fv}" placeholder="${placeholder}" style="${FILTER_INPUT_STYLE}">`;
+    }
+
+    function buildEventCostsMap() {
+        eventCosts = {};
+        payables.forEach(function (p) {
+            var amt = Number(p.amount || p.monto || 0);
+            // 1. Primario: indexar por eventId (columna "id" del CSV de CXP).
+            //    Tras el fix de import, los payables importados desde CXP tienen eventId
+            //    seteado correctamente. Los gastos generales (id=0) tienen eventId=''.
+            var linkId = String(p.eventId || p.saleId || '').trim();
+            if (linkId) {
+                eventCosts[linkId] = (eventCosts[linkId] || 0) + amt;
+                return; // si hay id, no hacer fallback por nombre (evita doble conteo)
+            }
+            // 2. Fallback por nombre solo para payables SIN eventId (datos legacy o manuales)
+            //    que tengan categoría 'evento' (no gastos generales).
+            if ((p.category || '') === 'evento') {
+                var name = (p.eventName || '').trim().toLowerCase();
+                if (name) {
+                    eventCosts['__n__' + name] = (eventCosts['__n__' + name] || 0) + amt;
+                }
+            }
+        });
+    }
+
     function renderTableRows() {
         const filtered = getFilteredSales();
         if (filtered.length === 0) {
-            return '<tr><td colspan="10" style="text-align:center;padding:2rem;color:#888;">No se encontraron ventas</td></tr>';
+            return '<tr><td colspan="11" style="text-align:center;padding:2rem;color:#888;">No se encontraron ventas</td></tr>';
         }
         return filtered.map(sale => {
             const clientName = sale.clientName || getClientName(sale.clientId);
@@ -99,18 +153,25 @@ window.Mazelab.Modules.SalesModule = (function () {
             const effectiveStatus = getEffectiveStatus(sale);
             const badgeClass = getStatusBadgeClass(effectiveStatus);
             const statusLabel = effectiveStatus ? effectiveStatus.charAt(0).toUpperCase() + effectiveStatus.slice(1) : '';
-            const cost = Number(sale.costAmount) || 0;
-            const margin = (Number(sale.amount) || 0) - cost;
-            const marginClass = margin >= 0 ? 'text-success' : 'text-danger';
+            const _sn = (sale.eventName || '').trim().toLowerCase();
+            const cost = eventCosts[String(sale.id)]
+                      || (sale.sourceId ? eventCosts[String(sale.sourceId)] : 0)
+                      || (_sn ? eventCosts['__n__' + _sn] : 0)
+                      || 0;
+            const utilidad = (Number(sale.amount) || 0) - cost;
+            const margenPct = (Number(sale.amount) || 0) > 0 ? utilidad / Number(sale.amount) : null;
+            const marginClass = utilidad >= 0 ? 'text-success' : 'text-danger';
+            const displayId = sale.sourceId || String(sale.id || '').slice(-6);
             return `
                 <tr data-id="${sale.id}">
+                    <td style="font-size:11px;color:var(--text-muted);white-space:nowrap">${displayId}</td>
                     <td>${clientName}</td>
                     <td>${serviceNames}</td>
                     <td>${sale.eventName || ''}</td>
                     <td>${sale.jornadas != null ? sale.jornadas : ''}</td>
                     <td>${formatCLP(sale.amount)}</td>
                     <td>${cost > 0 ? formatCLP(cost) : '<span style="color:var(--text-muted)">-</span>'}</td>
-                    <td class="${marginClass}">${cost > 0 ? formatCLP(margin) : '<span style="color:var(--text-muted)">-</span>'}</td>
+                    <td class="${marginClass}">${margenPct !== null && cost > 0 ? Math.round(margenPct * 100) + '%' : '<span style="color:var(--text-muted)">-</span>'}</td>
                     <td>${sale.eventDate || ''}</td>
                     <td><span class="${badgeClass}">${statusLabel}</span></td>
                     <td>
@@ -279,7 +340,21 @@ window.Mazelab.Modules.SalesModule = (function () {
     }
 
     function renderTableHeader() {
+        const filterRow = `<tr class="filter-row" style="background:var(--bg-tertiary)">
+            <th style="padding:2px 4px;font-weight:400"><span style="font-size:10px;color:var(--text-muted)">ID</span></th>
+            <th style="padding:2px 4px">${filterInput('clientName', 'Cliente...')}</th>
+            <th style="padding:2px 4px"></th>
+            <th style="padding:2px 4px">${filterInput('eventName', 'Evento...')}</th>
+            <th style="padding:2px 4px"></th>
+            <th style="padding:2px 4px"></th>
+            <th style="padding:2px 4px"></th>
+            <th style="padding:2px 4px"></th>
+            <th style="padding:2px 4px">${filterInput('eventDate', 'YYYY-MM-DD')}</th>
+            <th style="padding:2px 4px">${filterInput('_status', 'Estado...')}</th>
+            <th style="padding:2px 4px"></th>
+        </tr>`;
         return `<tr>
+            <th style="font-size:11px;color:var(--text-muted);white-space:nowrap">ID</th>
             ${sortTh('Cliente', 'clientName')}
             <th>Servicios</th>
             ${sortTh('Evento', 'eventName')}
@@ -288,16 +363,22 @@ window.Mazelab.Modules.SalesModule = (function () {
             ${sortTh('Costo', 'costAmount')}
             ${sortTh('Margen', 'margin')}
             ${sortTh('Fecha', 'eventDate')}
-            <th>Estado</th>
+            ${sortTh('Estado', '_status')}
             <th>Acciones</th>
-        </tr>`;
+        </tr>` + filterRow;
     }
 
     function refreshTable() {
+        // Preserve focused filter column before re-render
+        const focusedEl = document.activeElement;
+        const focusedCol = (focusedEl && focusedEl.classList.contains('col-filter')) ? focusedEl.dataset.col : null;
+        const focusCursor = focusedCol ? { s: focusedEl.selectionStart, e: focusedEl.selectionEnd } : null;
+
         const thead = document.getElementById('sales-thead');
         if (thead) thead.innerHTML = renderTableHeader();
         const tbody = document.getElementById('sales-table-body');
         if (tbody) tbody.innerHTML = renderTableRows();
+
         // Bind sort headers
         document.querySelectorAll('#sales-table .sortable-th').forEach(th => {
             th.addEventListener('click', () => {
@@ -307,6 +388,20 @@ window.Mazelab.Modules.SalesModule = (function () {
                 refreshTable();
             });
         });
+
+        // Bind column filter inputs
+        document.querySelectorAll('#sales-table .col-filter').forEach(input => {
+            input.addEventListener('input', function () {
+                columnFilters[this.dataset.col] = this.value;
+                refreshTable();
+            });
+        });
+
+        // Restore focus to filter input
+        if (focusedCol) {
+            const el = document.querySelector(`#sales-table .col-filter[data-col="${focusedCol}"]`);
+            if (el) { el.focus(); if (focusCursor) el.setSelectionRange(focusCursor.s, focusCursor.e); }
+        }
     }
 
     function openModal(sale) {
@@ -443,8 +538,11 @@ window.Mazelab.Modules.SalesModule = (function () {
                     await DS.create('payables', draft);
                 }
             }
-            // Reload sales
-            sales = await DS.getAll('sales') || [];
+            // Reload sales and payables (new sale may have auto-created CXP)
+            const [freshSales, freshPayables] = await Promise.all([DS.getAll('sales'), DS.getAll('payables')]);
+            sales = freshSales || [];
+            payables = freshPayables || [];
+            buildEventCostsMap();
             refreshTable();
             closeModal();
         } catch (err) {
@@ -503,16 +601,19 @@ window.Mazelab.Modules.SalesModule = (function () {
         const DS = window.Mazelab.DataService;
 
         try {
-            const [salesData, clientsData, servicesData, staffData] = await Promise.all([
+            const [salesData, clientsData, servicesData, staffData, payablesData] = await Promise.all([
                 DS.getAll('sales'),
                 DS.getAll('clients'),
                 DS.getAll('services'),
-                DS.getAll('staff')
+                DS.getAll('staff'),
+                DS.getAll('payables')
             ]);
             sales = salesData || [];
             clients = clientsData || [];
             services = servicesData || [];
             staff = staffData || [];
+            payables = payablesData || [];
+            buildEventCostsMap();
         } catch (err) {
             console.error('Error cargando datos de ventas:', err);
             sales = [];

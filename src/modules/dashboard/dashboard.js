@@ -95,7 +95,7 @@ window.Mazelab.Modules.DashboardModule = (function () {
         payables.forEach(function (p) {
             var st = (p.status || p.paymentStatus || '').toLowerCase();
             if (st === 'pagada') return;
-            var amount = Number(p.amount || p.costAmount || p.monto) || 0;
+            var amount = Number(p.amount || p.costAmount || p.monto || p.valor_pago) || 0;
             var paid = 0;
             if (p.payments && Array.isArray(p.payments)) {
                 paid = p.payments.reduce(function (s, pay) { return s + (Number(pay.amount) || 0); }, 0);
@@ -103,7 +103,8 @@ window.Mazelab.Modules.DashboardModule = (function () {
                 paid = Number(p.amountPaid) || 0;
             }
             var pending = Math.max(0, amount - paid);
-            if (pending > 0) { totalCXP += pending; countCXP++; }
+            countCXP++;
+            totalCXP += pending;
         });
 
         // Eventos con Problemas
@@ -117,9 +118,22 @@ window.Mazelab.Modules.DashboardModule = (function () {
             }
         });
 
-        // Margen Histórico: Ventas - Costos directos registrados en ventas
+        // Margen Histórico: Ventas - Costos CXP agrupados por id de evento.
+        // Se suma el monto de cada CXP con categoría 'evento', agrupado por su eventId.
+        // Fallback a sale.costAmount si no hay CXP asociado al evento.
+        var cxpCostById = {};
+        payables.forEach(function (p) {
+            var eid = String(p.eventId || '').trim();
+            if (!eid) return; // ignorar gastos generales (id=0 o sin id)
+            cxpCostById[eid] = (cxpCostById[eid] || 0) + (Number(p.amount) || 0);
+        });
+
         var totalCostos = 0;
-        sales.forEach(function (s) { totalCostos += Number(s.costAmount || 0); });
+        sales.forEach(function (s) {
+            var sid = String(s.sourceId || s.id || '').trim();
+            var cost = (sid && cxpCostById[sid]) ? cxpCostById[sid] : Number(s.costAmount || 0);
+            totalCostos += cost;
+        });
         var margen = totalVentas - totalCostos;
 
         // ---- KPI row HTML ----

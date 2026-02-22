@@ -37,6 +37,7 @@ window.Mazelab.Modules.ImportModule = (function () {
         utility: ['utilidad','utility','profit'],
         vendorName: ['beneficiario','proveedor','vendor','vendorname'],
         eventId: ['id_venta','sale_id','eventid'],
+        sourceId: ['id','id_evento','sale_identifier'],
         billingDate: ['fecha_emision','fecha_doc','emision','billing_date','fecha emision'],
         docType: ['tipo_de_costo','tipo_documento','document_type'],
         docNumber: ['num_doc','documento','numero_documento','doc_number','valor_documento'],
@@ -244,8 +245,11 @@ window.Mazelab.Modules.ImportModule = (function () {
         var rawStatus = (row.status || 'pendiente').toLowerCase().trim();
         // Normaliza 'realizado' → 'realizada' para consistencia interna
         var status = rawStatus === 'realizado' ? 'realizada' : rawStatus;
+        // Use the CSV's own id column if present — so id_venta in CXP CSVs links directly
+        var csvId = (row.sourceId || '').toString().trim();
         return {
-            id: generateId(),
+            id: csvId || generateId(),
+            sourceId: csvId, // original CSV id for CXP linking
             clientName: row.clientName || '',
             eventName: row.eventName || '',
             serviceNames: row.serviceNames || '',
@@ -307,14 +311,19 @@ window.Mazelab.Modules.ImportModule = (function () {
     }
 
     function buildPayableRecord(row) {
-        // Monto bruto del documento (valor_pago en CSV)
-        var amount = parseAmount(row.paymentAmount) || parseAmount(row.amount);
+        // Monto bruto del documento (valor_pago en CSV).
+        // No usar row.amount como fallback: en CXP ese campo vendría de monto_venta
+        // (el ingreso total del evento, no su costo), lo que daría valores incorrectos.
+        var amount = parseAmount(row.paymentAmount);
         var amountPaid = parseAmount(row.paidAmount || row.amountPaid);
         var rawStatus = (row.paymentStatus || row.status || 'pendiente').toLowerCase().trim();
         var isPaid = rawStatus === 'pagado' || rawStatus === 'pagada';
 
-        // Categoría: si id_venta es 0/vacío/VARIOS → general, si no → evento
-        var eventIdRaw = (row.eventId || '').toString().trim();
+        // Categoría: si id es 0/vacío/VARIOS → general, si no → evento.
+        // El CSV de CXP usa la columna "id" (alias → sourceId) para identificar el evento.
+        // row.eventId viene de alias id_venta/sale_id/eventid, que NO existe en el CSV de CXP,
+        // por lo que usamos row.sourceId como fallback (la columna "id" del CSV).
+        var eventIdRaw = (row.eventId || row.sourceId || '').toString().trim();
         var isGeneralEvent = !eventIdRaw || eventIdRaw === '0' ||
             eventIdRaw.toLowerCase() === 'varios' ||
             eventIdRaw.toLowerCase() === 'general';
