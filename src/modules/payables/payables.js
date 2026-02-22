@@ -7,6 +7,7 @@ window.Mazelab.Modules.PayablesModule = (function () {
     let searchQuery = '';
     let sortCol = null;
     let sortDir = 'asc';
+    let columnFilters = {}; // { colKey: 'filterText' }
     let editingId = null;
     let abonoTargetId = null;
 
@@ -108,10 +109,26 @@ window.Mazelab.Modules.PayablesModule = (function () {
                 return [p.clientName, p.eventName, p.concept, p.vendorName, p.docNumber].join(' ').toLowerCase().includes(q);
             });
         }
+        // Per-column filters
+        var activeCols = Object.keys(columnFilters).filter(function(k) { return columnFilters[k]; });
+        if (activeCols.length) {
+            list = list.filter(function(p) {
+                return activeCols.every(function(col) {
+                    var fv = (columnFilters[col] || '').toLowerCase();
+                    var val = col === '_status' ? getStatusDerived(p) : String(p[col] || '');
+                    return val.toLowerCase().includes(fv);
+                });
+            });
+        }
+
         if (sortCol) {
             list = list.slice().sort(function (a, b) {
-                var av = sortCol === 'pending' ? getPendiente(a) : (a[sortCol] || 0);
-                var bv = sortCol === 'pending' ? getPendiente(b) : (b[sortCol] || 0);
+                var av = sortCol === 'pending' ? getPendiente(a)
+                       : sortCol === '_status' ? getStatusDerived(a)
+                       : (a[sortCol] || 0);
+                var bv = sortCol === 'pending' ? getPendiente(b)
+                       : sortCol === '_status' ? getStatusDerived(b)
+                       : (b[sortCol] || 0);
                 var an = Number(av), bn = Number(bv);
                 if (!isNaN(an) && !isNaN(bn)) return sortDir === 'asc' ? an - bn : bn - an;
                 return sortDir === 'asc' ? String(av).localeCompare(String(bv)) : String(bv).localeCompare(String(av));
@@ -225,6 +242,15 @@ window.Mazelab.Modules.PayablesModule = (function () {
         ].join('\n');
     }
 
+    // ── Column filter helpers ──────────────────────────────────────────
+
+    var COL_FILTER_STYLE = 'width:100%;font-size:11px;padding:2px 4px;border:1px solid var(--border);border-radius:3px;background:var(--bg-secondary);color:var(--text-primary);box-sizing:border-box';
+
+    function payFilterInput(col, placeholder) {
+        var fv = columnFilters[col] || '';
+        return '<input class="pay-col-filter" data-col="' + col + '" type="text" value="' + fv + '" placeholder="' + placeholder + '" style="' + COL_FILTER_STYLE + '">';
+    }
+
     // ── List view ──────────────────────────────────────────────────────
 
     function renderListView() {
@@ -242,7 +268,9 @@ window.Mazelab.Modules.PayablesModule = (function () {
             var eventCell = (p.eventName || '-') + catBadge + (p.eventDate ? '<div style="font-size:11px;color:var(--text-muted)">' + p.eventDate + '</div>' : '');
             var abonarBtn = st !== 'pagada' ? '<button class="btn btn-sm btn-success payable-abonar" data-id="' + p.id + '">Pagar</button>' : '';
 
+            var eventIdCell = p.eventId ? '<span style="font-size:11px;color:var(--text-muted)">' + p.eventId + '</span>' : '-';
             return '<tr style="' + di.rowStyle + '">' +
+                '<td style="white-space:nowrap">' + eventIdCell + '</td>' +
                 '<td>' + (p.clientName || '-') + '</td>' +
                 '<td>' + eventCell + '</td>' +
                 '<td>' + (p.concept || '-') + '</td>' +
@@ -260,8 +288,18 @@ window.Mazelab.Modules.PayablesModule = (function () {
                 '</tr>';
         }).join('');
 
+        var filterRow = '<tr style="background:var(--bg-tertiary)">' +
+            '<th style="padding:2px 4px"><span style="font-size:10px;color:var(--text-muted)">ID</span></th>' +
+            '<th style="padding:2px 4px">' + payFilterInput('clientName', 'Cliente...') + '</th>' +
+            '<th style="padding:2px 4px">' + payFilterInput('eventName', 'Evento...') + '</th>' +
+            '<th style="padding:2px 4px">' + payFilterInput('concept', 'Concepto...') + '</th>' +
+            '<th style="padding:2px 4px">' + payFilterInput('vendorName', 'Proveedor...') + '</th>' +
+            '<th></th><th></th><th></th><th></th>' +
+            '<th style="padding:2px 4px">' + payFilterInput('_status', 'Estado...') + '</th>' +
+            '<th></th></tr>';
         return '<div style="overflow-x:auto"><table class="data-table" id="payables-list-table">' +
             '<thead><tr>' +
+            '<th style="font-size:11px;color:var(--text-muted)">ID Evento</th>' +
             sortTh('Cliente', 'clientName') +
             sortTh('Evento / Descripci\u00f3n', 'eventName') +
             sortTh('Concepto', 'concept') +
@@ -270,8 +308,8 @@ window.Mazelab.Modules.PayablesModule = (function () {
             sortTh('Monto', 'amount') +
             sortTh('Pendiente', 'pending') +
             sortTh('Fecha Pago', 'eventDate') +
-            '<th>Estado</th><th>Acciones</th>' +
-            '</tr></thead><tbody>' + rows + '</tbody></table></div>';
+            sortTh('Estado', '_status') + '<th>Acciones</th>' +
+            '</tr>' + filterRow + '</thead><tbody>' + rows + '</tbody></table></div>';
     }
 
     // ── Grouped view ───────────────────────────────────────────────────
@@ -735,7 +773,6 @@ window.Mazelab.Modules.PayablesModule = (function () {
             searchEl.addEventListener('input', function () {
                 searchQuery = this.value.trim();
                 refreshView();
-                // restore focus after re-render
                 var el = document.getElementById('payables-search');
                 if (el) { el.value = searchQuery; el.focus(); }
             });
@@ -748,6 +785,20 @@ window.Mazelab.Modules.PayablesModule = (function () {
                 refreshView();
             });
         });
+        // Column filter inputs
+        var focusedEl = document.activeElement;
+        var focusedCol = (focusedEl && focusedEl.classList.contains('pay-col-filter')) ? focusedEl.dataset.col : null;
+        var focusCursor = focusedCol ? { s: focusedEl.selectionStart, e: focusedEl.selectionEnd } : null;
+        document.querySelectorAll('#payables-list-table .pay-col-filter').forEach(function (input) {
+            input.addEventListener('input', function () {
+                columnFilters[input.dataset.col] = input.value;
+                refreshView();
+            });
+        });
+        if (focusedCol) {
+            var el = document.querySelector('#payables-list-table .pay-col-filter[data-col="' + focusedCol + '"]');
+            if (el) { el.focus(); if (focusCursor) el.setSelectionRange(focusCursor.s, focusCursor.e); }
+        }
     }
 
     function bindTableActions() {

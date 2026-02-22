@@ -7,6 +7,9 @@ window.Mazelab.Modules = window.Mazelab.Modules || {};
         sales: 'SalesModule',
         finance: 'FinanceModule',
         payables: 'PayablesModule',
+        events: 'EventsModule',
+        cashflow: 'CashflowModule',
+        analytics: 'AnalyticsModule',
         settings: 'SettingsModule',
         import: 'ImportModule'
     };

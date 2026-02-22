@@ -8,6 +8,10 @@ window.Mazelab.Modules.FinanceModule = (function () {
     let showOnlyPending = true;
     let visibleCount = 25;
     let searchQuery = '';
+    let sortCol = null;
+    let sortDir = 'asc';
+    let currentView = 'lista'; // 'lista' | 'agrupada'
+    let columnFilters = {}; // { colKey: 'filterText' }
 
     // =========================================================================
     // HELPER FUNCTIONS
@@ -203,6 +207,13 @@ window.Mazelab.Modules.FinanceModule = (function () {
             }
         }
         return false;
+    }
+
+    function sortTh(label, col) {
+        var active = sortCol === col;
+        var arrow = active ? (sortDir === 'asc' ? ' \u25b2' : ' \u25bc') : ' \u2195';
+        return '<th class="finance-sort-th" data-sort="' + col + '" style="cursor:pointer;white-space:nowrap">' +
+               label + '<span style="opacity:' + (active ? 1 : 0.25) + ';font-size:10px">' + arrow + '</span></th>';
     }
 
     function getStatusBadge(status) {
@@ -473,81 +484,146 @@ window.Mazelab.Modules.FinanceModule = (function () {
     // RENDER TABLE
     // =========================================================================
 
+    var FIN_FILTER_STYLE = 'width:100%;font-size:11px;padding:2px 4px;border:1px solid var(--border);border-radius:3px;background:var(--bg-secondary);color:var(--text-primary);box-sizing:border-box';
+    function finFilterInput(col, placeholder) {
+        var fv = columnFilters[col] || '';
+        return '<input class="fin-col-filter" data-col="' + col + '" type="text" value="' + fv + '" placeholder="' + placeholder + '" style="' + FIN_FILTER_STYLE + '">';
+    }
+
     function renderTable(receivables) {
         var list = filterReceivables(receivables);
         filteredList = list;
 
-        var showing = list.slice(0, visibleCount);
-        var hasMore = list.length > visibleCount;
-
-        var html = '';
-        html += '<div class="card">';
+        var html = '<div class="card">';
         html += '<div class="toolbar">';
         html += '  <input type="text" class="search-bar" id="finance-search" placeholder="Buscar cliente, evento, factura..." value="' + (searchQuery || '') + '">';
+        html += '  <div class="toggle-group" id="finance-view-toggle">';
+        html += '    <button class="toggle-option' + (currentView === 'lista' ? ' active' : '') + '" data-finview="lista">Lista</button>';
+        html += '    <button class="toggle-option' + (currentView === 'agrupada' ? ' active' : '') + '" data-finview="agrupada">Por Evento</button>';
+        html += '  </div>';
         html += '  <button class="btn-secondary btn-sm" id="finance-toggle-pending">';
         html += showOnlyPending ? 'Ver Todo' : 'Solo Pendientes';
         html += '  </button>';
         html += '</div>';
 
-        html += '<table class="data-table">';
-        html += '<thead><tr>';
-        html += '  <th>Cliente / Evento</th>';
-        html += '  <th>N\u00b0Factura</th>';
-        html += '  <th>Neto</th>';
-        html += '  <th>Total+IVA</th>';
-        html += '  <th>Pagado</th>';
-        html += '  <th>Restante</th>';
-        html += '  <th>Vencimiento</th>';
-        html += '  <th>Estado</th>';
-        html += '  <th>Acciones</th>';
-        html += '</tr></thead>';
-        html += '<tbody>';
-
-        showing.forEach(function (r) {
-            var realStatus = r._realStatus || getRealTimeStatus(r);
-            var neto = getMonto(r);
-            var totalIva = r.tipoDoc === 'E' ? neto : (getMontoFacturado(r) * 1.19);
-            var pagado = getTotalPagado(r);
-            var restante = totalIva - pagado;
-
-            html += '<tr>';
-            html += '  <td>';
-            html += '    <strong>' + (r.clientName || 'Sin cliente') + '</strong>';
-            html += '    <br><small>' + (r.eventName || '-') + '</small>';
-            html += '  </td>';
-            html += '  <td>' + (r.invoiceNumber || '-') + '</td>';
-            html += '  <td>' + formatCLP(neto) + '</td>';
-            html += '  <td>' + formatCLP(totalIva) + '</td>';
-            html += '  <td>' + formatCLP(pagado) + '</td>';
-            html += '  <td>' + formatCLP(restante) + '</td>';
-            html += '  <td>' + formatDate(r.eventDate) + '</td>';
-            html += '  <td>' + getStatusBadge(realStatus) + '</td>';
-            html += '  <td>';
-            if (realStatus === 'pendiente_factura') {
-                html += '    <button class="btn btn-secondary btn-sm btn-facturar" data-id="' + r.id + '" style="margin-right:4px">Facturar</button>';
-            }
-            if (realStatus !== 'pagada' && realStatus !== 'anulada' && realStatus !== 'nc') {
-                html += '    <button class="btn-primary btn-sm btn-icon btn-abono" data-id="' + r.id + '" title="Agregar abono">+Abono</button> ';
-                html += '    <button class="btn-secondary btn-sm btn-icon btn-pagado-total" data-id="' + r.id + '" title="Marcar pagado total">Pagado Total</button> ';
-            }
-            html += '    <button class="btn-sm btn-icon btn-eliminar" data-id="' + r.id + '" title="Eliminar" style="color:var(--danger,#e74c3c);">Eliminar</button>';
-            html += '  </td>';
+        if (currentView === 'agrupada') {
+            html += renderGroupedCXC(list);
+        } else {
+            var showing = list.slice(0, visibleCount);
+            var hasMore = list.length > visibleCount;
+            html += '<table class="data-table">';
+            html += '<thead><tr>';
+            html += sortTh('Cliente / Evento', 'clientName');
+            html += sortTh('N\u00b0 Factura', 'invoiceNumber');
+            html += sortTh('Neto', 'neto');
+            html += sortTh('Total+IVA', 'totalIva');
+            html += sortTh('Pagado', 'pagado');
+            html += sortTh('Restante', 'pending');
+            html += sortTh('Vencimiento', 'eventDate');
+            html += sortTh('Estado', '_status');
+            html += '<th>Acciones</th>';
             html += '</tr>';
-        });
-
-        html += '</tbody></table>';
-
-        if (hasMore) {
-            html += '<div style="text-align:center;padding:16px;">';
-            html += '  <button class="btn-secondary" id="finance-load-more">Ver m\u00e1s (' + (list.length - visibleCount) + ' restantes)</button>';
-            html += '</div>';
+            // Filter row
+            html += '<tr style="background:var(--bg-tertiary)">';
+            html += '<th style="padding:2px 4px">' + finFilterInput('clientName', 'Cliente/Evento...') + '</th>';
+            html += '<th style="padding:2px 4px">' + finFilterInput('invoiceNumber', 'N° Fact...') + '</th>';
+            html += '<th></th><th></th><th></th><th></th>';
+            html += '<th style="padding:2px 4px">' + finFilterInput('eventDate', 'YYYY-MM-DD') + '</th>';
+            html += '<th style="padding:2px 4px">' + finFilterInput('_status', 'Estado...') + '</th>';
+            html += '<th></th></tr>';
+            html += '</thead><tbody>';
+            showing.forEach(function (r) {
+                var realStatus = r._realStatus || getRealTimeStatus(r);
+                var neto = getMonto(r);
+                var totalIva = r.tipoDoc === 'E' ? neto : (getMontoFacturado(r) * 1.19);
+                var pagado = getTotalPagado(r);
+                var restante = totalIva - pagado;
+                html += '<tr>';
+                html += '<td><strong>' + (r.clientName || 'Sin cliente') + '</strong><br><small>' + (r.eventName || '-') + '</small></td>';
+                html += '<td>' + (r.invoiceNumber || '-') + '</td>';
+                html += '<td>' + formatCLP(neto) + '</td>';
+                html += '<td>' + formatCLP(totalIva) + '</td>';
+                html += '<td>' + formatCLP(pagado) + '</td>';
+                html += '<td>' + formatCLP(restante) + '</td>';
+                html += '<td>' + formatDate(r.eventDate) + '</td>';
+                html += '<td>' + getStatusBadge(realStatus) + '</td>';
+                html += '<td>';
+                if (realStatus === 'pendiente_factura') {
+                    html += '<button class="btn btn-secondary btn-sm btn-facturar" data-id="' + r.id + '" style="margin-right:4px">Facturar</button>';
+                }
+                if (realStatus !== 'pagada' && realStatus !== 'anulada' && realStatus !== 'nc') {
+                    html += '<button class="btn-primary btn-sm btn-icon btn-abono" data-id="' + r.id + '" title="Agregar abono">+Abono</button> ';
+                    html += '<button class="btn-secondary btn-sm btn-icon btn-pagado-total" data-id="' + r.id + '" title="Marcar pagado total">Pagado Total</button> ';
+                }
+                html += '<button class="btn-sm btn-icon btn-eliminar" data-id="' + r.id + '" title="Eliminar" style="color:var(--danger,#e74c3c);">Eliminar</button>';
+                html += '</td></tr>';
+            });
+            html += '</tbody></table>';
+            if (hasMore) {
+                html += '<div style="text-align:center;padding:16px;">';
+                html += '<button class="btn-secondary" id="finance-load-more">Ver m\u00e1s (' + (list.length - visibleCount) + ' restantes)</button>';
+                html += '</div>';
+            }
+            html += '<div style="padding:8px 16px;color:var(--text-secondary,#888);font-size:0.85rem;">Mostrando ' + showing.length + ' de ' + list.length + ' registros</div>';
         }
 
-        html += '<div style="padding:8px 16px;color:var(--text-secondary,#888);font-size:0.85rem;">';
-        html += 'Mostrando ' + showing.length + ' de ' + list.length + ' registros';
         html += '</div>';
-        html += '</div>';
+        return html;
+    }
 
+    function renderGroupedCXC(list) {
+        if (!list.length) return '<div class="empty-state"><p>No hay registros.</p></div>';
+        var groups = {};
+        list.forEach(function (r) {
+            var key = r.eventName || 'Sin evento';
+            if (!groups[key]) groups[key] = { clientName: r.clientName || '', items: [] };
+            groups[key].items.push(r);
+        });
+        var html = '';
+        Object.keys(groups).sort().forEach(function (key) {
+            var grp = groups[key];
+            var totalPending = grp.items.reduce(function (s, r) {
+                var rs = r._realStatus || getRealTimeStatus(r);
+                if (rs === 'pagada' || rs === 'anulada' || rs === 'nc') return s;
+                return s + Math.max(0, getPendienteFacturado(r));
+            }, 0);
+            var rows = grp.items.map(function (r) {
+                var realStatus = r._realStatus || getRealTimeStatus(r);
+                var neto = getMonto(r);
+                var totalIva = r.tipoDoc === 'E' ? neto : (getMontoFacturado(r) * 1.19);
+                var pagado = getTotalPagado(r);
+                var restante = totalIva - pagado;
+                var row = '<tr>';
+                row += '<td>' + (r.invoiceNumber || '-') + '</td>';
+                row += '<td>' + formatCLP(neto) + '</td>';
+                row += '<td>' + formatCLP(totalIva) + '</td>';
+                row += '<td>' + formatCLP(pagado) + '</td>';
+                row += '<td>' + formatCLP(restante) + '</td>';
+                row += '<td>' + formatDate(r.eventDate) + '</td>';
+                row += '<td>' + getStatusBadge(realStatus) + '</td>';
+                row += '<td>';
+                if (realStatus === 'pendiente_factura') {
+                    row += '<button class="btn btn-secondary btn-sm btn-facturar" data-id="' + r.id + '" style="margin-right:4px">Facturar</button>';
+                }
+                if (realStatus !== 'pagada' && realStatus !== 'anulada' && realStatus !== 'nc') {
+                    row += '<button class="btn-primary btn-sm btn-icon btn-abono" data-id="' + r.id + '">+Abono</button> ';
+                    row += '<button class="btn-secondary btn-sm btn-icon btn-pagado-total" data-id="' + r.id + '">Pagado Total</button> ';
+                }
+                row += '<button class="btn-sm btn-icon btn-eliminar" data-id="' + r.id + '" style="color:var(--danger)">Eliminar</button>';
+                row += '</td></tr>';
+                return row;
+            }).join('');
+            html += '<div class="card" style="margin-bottom:var(--space-md)">';
+            html += '<div class="card-header">';
+            html += '<div><span class="card-title">' + key + '</span>';
+            if (grp.clientName) html += ' <span style="font-size:13px;color:var(--text-secondary)"> \u00b7 ' + grp.clientName + '</span>';
+            html += '</div>';
+            if (totalPending > 0) html += '<span class="text-danger" style="font-weight:700">' + formatCLP(totalPending) + ' pendiente</span>';
+            html += '</div>';
+            html += '<table class="data-table"><thead><tr>';
+            html += '<th>N\u00b0 Factura</th><th>Neto</th><th>Total+IVA</th><th>Pagado</th><th>Restante</th><th>Vencimiento</th><th>Estado</th><th>Acciones</th>';
+            html += '</tr></thead><tbody>' + rows + '</tbody></table></div>';
+        });
         return html;
     }
 
@@ -603,6 +679,36 @@ window.Mazelab.Modules.FinanceModule = (function () {
             var db = b.eventDate ? new Date(b.eventDate).getTime() : 0;
             return db - da;
         });
+
+        // Per-column filters
+        var activeCols = Object.keys(columnFilters).filter(function(k) { return columnFilters[k]; });
+        if (activeCols.length) {
+            list = list.filter(function (r) {
+                return activeCols.every(function (col) {
+                    var fv = (columnFilters[col] || '').toLowerCase();
+                    var val = col === '_status' ? (r._realStatus || '') : String(r[col] || '');
+                    return val.toLowerCase().includes(fv);
+                });
+            });
+        }
+
+        // Override with user-selected column sort
+        if (sortCol) {
+            list.sort(function (a, b) {
+                var av, bv;
+                switch (sortCol) {
+                    case '_status':  av = a._realStatus || ''; bv = b._realStatus || ''; break;
+                    case 'neto':     av = getMonto(a); bv = getMonto(b); break;
+                    case 'totalIva': av = getMontoFacturado(a) * 1.19; bv = getMontoFacturado(b) * 1.19; break;
+                    case 'pagado':   av = getTotalPagado(a); bv = getTotalPagado(b); break;
+                    case 'pending':  av = getPendienteFacturado(a); bv = getPendienteFacturado(b); break;
+                    default:         av = a[sortCol] || ''; bv = b[sortCol] || '';
+                }
+                var an = Number(av), bn = Number(bv);
+                if (!isNaN(an) && !isNaN(bn)) return sortDir === 'asc' ? an - bn : bn - an;
+                return sortDir === 'asc' ? String(av).localeCompare(String(bv)) : String(bv).localeCompare(String(av));
+            });
+        }
 
         return list;
     }
@@ -735,6 +841,42 @@ window.Mazelab.Modules.FinanceModule = (function () {
                 searchQuery = this.value;
                 refreshTable();
             });
+        }
+
+        // View toggle (Lista / Por Evento)
+        var viewToggle = document.getElementById('finance-view-toggle');
+        if (viewToggle) {
+            viewToggle.querySelectorAll('.toggle-option').forEach(function (btn) {
+                btn.addEventListener('click', function () {
+                    currentView = btn.dataset.finview;
+                    refreshTable();
+                });
+            });
+        }
+
+        // Column sort headers
+        document.querySelectorAll('.finance-sort-th').forEach(function (th) {
+            th.addEventListener('click', function () {
+                var col = th.dataset.sort;
+                if (sortCol === col) { sortDir = sortDir === 'asc' ? 'desc' : 'asc'; }
+                else { sortCol = col; sortDir = 'asc'; }
+                refreshTable();
+            });
+        });
+
+        // Column filter inputs (with focus restore)
+        var focusedEl = document.activeElement;
+        var focusedCol = (focusedEl && focusedEl.classList.contains('fin-col-filter')) ? focusedEl.dataset.col : null;
+        var focusCursor = focusedCol ? { s: focusedEl.selectionStart, e: focusedEl.selectionEnd } : null;
+        document.querySelectorAll('.fin-col-filter').forEach(function (input) {
+            input.addEventListener('input', function () {
+                columnFilters[input.dataset.col] = input.value;
+                refreshTable();
+            });
+        });
+        if (focusedCol) {
+            var focusEl = document.querySelector('.fin-col-filter[data-col="' + focusedCol + '"]');
+            if (focusEl) { focusEl.focus(); if (focusCursor) focusEl.setSelectionRange(focusCursor.s, focusCursor.e); }
         }
 
         // Toggle pending
@@ -1074,6 +1216,10 @@ window.Mazelab.Modules.FinanceModule = (function () {
         showOnlyPending = true;
         visibleCount = 25;
         searchQuery = '';
+        sortCol = null;
+        sortDir = 'asc';
+        currentView = 'lista';
+        columnFilters = {};
         loadAndRender();
     }
 
