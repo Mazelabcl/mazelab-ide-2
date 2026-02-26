@@ -491,6 +491,19 @@ window.Mazelab.Modules.SalesModule = (function () {
         try {
             if (editingId) {
                 await DS.update('sales', editingId, data);
+                // Sincronizar la CXC auto-generada con los datos actualizados de la venta
+                const allReceivables = await DS.getAll('receivables') || [];
+                const linkedCXC = allReceivables.find(function(r) {
+                    return String(r.saleId) === String(editingId) && r.sourceType === 'auto';
+                });
+                if (linkedCXC) {
+                    await DS.update('receivables', linkedCXC.id, {
+                        eventName:   data.eventName   || linkedCXC.eventName,
+                        eventDate:   data.eventDate   || linkedCXC.eventDate,
+                        clientName:  data.clientName  || linkedCXC.clientName,
+                        monto_venta: data.amount      || 0
+                    });
+                }
             } else {
                 // Capture the created sale so we can link CXC and CXP to it
                 const createdSale = await DS.create('sales', data);

@@ -479,8 +479,8 @@ window.Mazelab.Modules.NominasModule = (function () {
 
             var vendorSummary = Object.keys(byVendor).map(function (v) {
                 var total = byVendor[v].reduce(function (s, p) { return s + getTotalPagado(p); }, 0);
-                return '<span style="display:inline-flex;align-items:center;gap:6px;background:#f1f3f5;border:1px solid #dee2e6;border-radius:6px;padding:5px 12px;font-size:13px;margin:3px">' +
-                       '<strong>' + escHtml(v) + '</strong><span style="color:#495057">' + formatCLP(total) + '</span></span>';
+                return '<span style="display:inline-flex;align-items:center;gap:6px;background:#f1f3f5;border:1px solid #dee2e6;border-radius:6px;padding:5px 12px;font-size:13px;margin:3px;color:#212529">' +
+                       '<strong style="color:#212529">' + escHtml(v) + '</strong><span style="margin-left:4px;color:#212529">' + formatCLP(total) + '</span></span>';
             }).join('');
 
             var detailRows = isExpanded ? Object.keys(byVendor).map(function (v) {
@@ -511,7 +511,7 @@ window.Mazelab.Modules.NominasModule = (function () {
                 '    <div style="font-size:16px;font-weight:700;color:#212529;text-transform:capitalize">' + label + '</div>',
                 '    <div style="display:flex;align-items:center;gap:12px">',
                 '      <div style="font-size:16px;font-weight:700;color:#2563eb">' + formatCLP(totalPagado) + '</div>',
-                '      <div style="font-size:13px;color:#868e96;">' + items.length + ' BH &middot; ' + Object.keys(byVendor).length + ' personas</div>',
+                '      <div style="font-size:13px;color:#495057;">' + items.length + ' BH &middot; ' + Object.keys(byVendor).length + ' personas</div>',
                 '      <div style="font-size:12px;color:#868e96">' + (isExpanded ? '&#9650;' : '&#9660;') + '</div>',
                 '    </div>',
                 '  </div>',

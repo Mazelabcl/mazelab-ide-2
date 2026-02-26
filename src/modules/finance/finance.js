@@ -535,9 +535,10 @@ window.Mazelab.Modules.FinanceModule = (function () {
             showing.forEach(function (r) {
                 var realStatus = r._realStatus || getRealTimeStatus(r);
                 var neto = getMonto(r);
-                var totalIva = r.tipoDoc === 'E' ? neto : (getMontoFacturado(r) * 1.19);
+                var _facturado = getMontoFacturado(r);
+                var totalIva = _facturado <= 0 ? neto : (r.tipoDoc === 'E' ? _facturado : Math.round(_facturado * 1.19));
                 var pagado = getTotalPagado(r);
-                var restante = totalIva - pagado;
+                var restante = Math.max(0, totalIva - pagado);
                 html += '<tr>';
                 html += '<td><strong>' + (r.clientName || 'Sin cliente') + '</strong><br><small>' + (r.eventName || '-') + '</small></td>';
                 html += '<td>' + (r.invoiceNumber || '-') + '</td>';
@@ -590,9 +591,10 @@ window.Mazelab.Modules.FinanceModule = (function () {
             var rows = grp.items.map(function (r) {
                 var realStatus = r._realStatus || getRealTimeStatus(r);
                 var neto = getMonto(r);
-                var totalIva = r.tipoDoc === 'E' ? neto : (getMontoFacturado(r) * 1.19);
+                var _facturado = getMontoFacturado(r);
+                var totalIva = _facturado <= 0 ? neto : (r.tipoDoc === 'E' ? _facturado : Math.round(_facturado * 1.19));
                 var pagado = getTotalPagado(r);
-                var restante = totalIva - pagado;
+                var restante = Math.max(0, totalIva - pagado);
                 var row = '<tr>';
                 row += '<td>' + (r.invoiceNumber || '-') + '</td>';
                 row += '<td>' + formatCLP(neto) + '</td>';
@@ -1099,6 +1101,15 @@ window.Mazelab.Modules.FinanceModule = (function () {
         html += '      <input type="number" class="form-control" id="fac-terms" value="30" min="1" step="1" placeholder="30">';
         html += '    </div>';
         html += '  </div>';
+        html += '  <div class="form-row" style="margin-bottom:8px">';
+        html += '    <div class="form-group" style="margin-bottom:0">';
+        html += '      <label>Tipo de documento</label>';
+        html += '      <select class="form-control" id="fac-tipo">';
+        html += '        <option value="F">Factura (+ 19% IVA)</option>';
+        html += '        <option value="E">Factura Exenta (sin IVA)</option>';
+        html += '      </select>';
+        html += '    </div>';
+        html += '  </div>';
         html += '  <div style="background:var(--bg-tertiary);border-radius:var(--radius-sm);padding:12px;margin-bottom:16px;font-size:13px;">';
         html += '    <span style="color:var(--text-secondary)">IVA (19%): </span><strong id="fac-iva-preview">$0</strong>';
         html += '    &nbsp;&nbsp; <span style="color:var(--text-secondary)">Total con IVA: </span><strong id="fac-total-preview">$0</strong>';
@@ -1121,17 +1132,22 @@ window.Mazelab.Modules.FinanceModule = (function () {
         });
 
         // Live IVA preview
-        document.getElementById('fac-amount').addEventListener('input', function () {
-            var neto = Number(this.value) || 0;
-            document.getElementById('fac-iva-preview').textContent = formatCLP(neto * 0.19);
-            document.getElementById('fac-total-preview').textContent = formatCLP(neto * 1.19);
-        });
+        function updateIvaPreview() {
+            var neto = Number(document.getElementById('fac-amount').value) || 0;
+            var tipo = document.getElementById('fac-tipo').value;
+            var iva  = tipo === 'E' ? 0 : Math.round(neto * 0.19);
+            document.getElementById('fac-iva-preview').textContent = tipo === 'E' ? '$0 (exenta)' : formatCLP(iva);
+            document.getElementById('fac-total-preview').textContent = formatCLP(neto + iva);
+        }
+        document.getElementById('fac-amount').addEventListener('input', updateIvaPreview);
+        document.getElementById('fac-tipo').addEventListener('change', updateIvaPreview);
 
         document.getElementById('fac-save-btn').addEventListener('click', async function () {
             var invoiceNumber = document.getElementById('fac-number').value.trim();
             var billingMonth = document.getElementById('fac-date').value.trim();
             var invoicedAmount = Number(document.getElementById('fac-amount').value) || 0;
             var paymentTerms = Number(document.getElementById('fac-terms').value) || 30;
+            var tipoDoc = document.getElementById('fac-tipo').value;
 
             // Validate DD/MM/YYYY
             if (!/^\d{2}\/\d{2}\/\d{4}$/.test(billingMonth)) {
@@ -1148,6 +1164,7 @@ window.Mazelab.Modules.FinanceModule = (function () {
                     billingMonth: billingMonth,
                     invoicedAmount: invoicedAmount,
                     paymentTerms: paymentTerms,
+                    tipoDoc: tipoDoc,
                     status: 'pendiente_pago'
                 });
                 closeModal();

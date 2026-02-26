@@ -224,7 +224,8 @@ window.Mazelab.Modules.PayablesModule = (function () {
             '<div class="content-body" id="payables-body">',
             '  <div class="kpi-grid" id="payables-kpis"></div>',
             '  <div class="toolbar">',
-            '    <input type="text" id="payables-search" class="form-control" placeholder="Buscar proveedor, evento, concepto..." style="max-width:280px">',
+            '    <input type="text" id="payables-search" class="form-control" placeholder="Buscar proveedor, evento, concepto..." style="max-width:280px" value="' + searchQuery + '">',
+            '    <button id="payables-clear-filters" class="btn btn-secondary btn-sm" style="white-space:nowrap" title="Limpiar todos los filtros">&#10006; Limpiar filtros</button>',
             '    <div class="toggle-group" id="payables-category-toggle">',
             '      <button class="toggle-option active" data-cat="todos">Todos</button>',
             '      <button class="toggle-option" data-cat="evento">Por Evento</button>',
@@ -785,19 +786,34 @@ window.Mazelab.Modules.PayablesModule = (function () {
                 refreshView();
             });
         });
-        // Column filter inputs
-        var focusedEl = document.activeElement;
-        var focusedCol = (focusedEl && focusedEl.classList.contains('pay-col-filter')) ? focusedEl.dataset.col : null;
-        var focusCursor = focusedCol ? { s: focusedEl.selectionStart, e: focusedEl.selectionEnd } : null;
+        // Column filter inputs — restaurar foco después del re-render con setTimeout
         document.querySelectorAll('#payables-list-table .pay-col-filter').forEach(function (input) {
+            if (input._bound) return;
+            input._bound = true;
             input.addEventListener('input', function () {
-                columnFilters[input.dataset.col] = input.value;
+                var col    = this.dataset.col;
+                var val    = this.value;
+                var cursor = this.selectionStart;
+                columnFilters[col] = val;
                 refreshView();
+                setTimeout(function () {
+                    var el = document.querySelector('#payables-list-table .pay-col-filter[data-col="' + col + '"]');
+                    if (el) { el.focus(); try { el.setSelectionRange(cursor, cursor); } catch(e){} }
+                }, 0);
             });
         });
-        if (focusedCol) {
-            var el = document.querySelector('#payables-list-table .pay-col-filter[data-col="' + focusedCol + '"]');
-            if (el) { el.focus(); if (focusCursor) el.setSelectionRange(focusCursor.s, focusCursor.e); }
+
+        // Botón limpiar filtros
+        var clearBtn = document.getElementById('payables-clear-filters');
+        if (clearBtn && !clearBtn._bound) {
+            clearBtn._bound = true;
+            clearBtn.addEventListener('click', function () {
+                searchQuery = '';
+                columnFilters = {};
+                var searchEl2 = document.getElementById('payables-search');
+                if (searchEl2) searchEl2.value = '';
+                refreshView();
+            });
         }
     }
 
