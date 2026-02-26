@@ -5,14 +5,14 @@ window.Mazelab.Modules.NominasModule = (function () {
 
     // ── State ──────────────────────────────────────────────────────────
     let payables = [];
-    let cutoffDate = '';       // YYYY-MM-DD, default = hoy
-    let activeTab = 'nomina';  // 'nomina' | 'proximas' | 'historial'
+    let cutoffDate = '';
+    let activeTab = 'nomina';
+    let historialExpanded = {}; // { monthKey: bool }
 
-    // Por beneficiario: mapa de id → {amount, selected}
-    // Permite overrides de monto y selección de BH individuales
-    let selectionState = {};   // { [payableId]: { selected: bool, amount: number } }
+    // Overrides por payable: { [id]: { selected: bool, amount: number } }
+    let selectionState = {};
 
-    // ── Helpers compartidos con PayablesModule ─────────────────────────
+    // ── Helpers ────────────────────────────────────────────────────────
 
     function formatCLP(n) {
         if (n == null || isNaN(n)) return '$0';
@@ -24,14 +24,6 @@ window.Mazelab.Modules.NominasModule = (function () {
     }
 
     function todayStr() { return new Date().toISOString().substring(0, 10); }
-
-    function getBHRetentionRate(dateStr) {
-        if (!dateStr) return 0.1525;
-        var year = new Date(dateStr).getFullYear();
-        return year <= 2024 ? 0.145 : 0.1525;
-    }
-
-    function isBH(p) { return (p.docType || '').toLowerCase() === 'bh'; }
 
     function calcDueDate(dateStr) {
         if (!dateStr) return null;
@@ -56,6 +48,10 @@ window.Mazelab.Modules.NominasModule = (function () {
         return Number(p.amountPaid) || 0;
     }
 
+    function getPendiente(p) {
+        return Math.max(0, (Number(p.amount) || 0) - getTotalPagado(p));
+    }
+
     function getStatusDerived(p) {
         var pagado = getTotalPagado(p);
         var amount = Number(p.amount) || 0;
@@ -68,45 +64,16 @@ window.Mazelab.Modules.NominasModule = (function () {
         return Date.now().toString(36) + '-' + Math.random().toString(36).substring(2, 9);
     }
 
-    // Neto a transferir = bruto × (1 − retención)
-    function calcNeto(p) {
-        var rate = getBHRetentionRate(p.billingDate || p.eventDate);
-        return Math.round((Number(p.amount) || 0) * (1 - rate));
-    }
-
-    // Neto pendiente = neto total − ya pagado (payments[] son montos transferidos)
-    function calcNetoPendiente(p) {
-        return Math.max(0, calcNeto(p) - getTotalPagado(p));
-    }
-
-    // Referencia corta para el comentario de transferencia
-    // Prioridad: docNumber numérico → abreviatura del evento → índice secuencial
-    function shortRef(p, idx) {
-        var dn = (p.docNumber || '').trim();
-        if (dn && /^\d+$/.test(dn)) return dn;
-        var name = (p.eventName || '').trim();
-        if (name) {
-            // Tomar primeras letras de cada palabra, máx 4 chars
-            var abbr = name.split(/\s+/).map(function (w) { return w[0] || ''; }).join('').toUpperCase().substring(0, 4);
-            if (abbr) return abbr;
-        }
-        return String(idx + 1);
-    }
-
-    // Genera el comentario de transferencia (máx 40 chars)
-    function buildTransferComment(items) {
-        var refs = items.map(function (p, i) { return shortRef(p, i); });
-        var comment = 'BH ' + refs.join('-');
-        if (comment.length <= 40) return comment;
-        // Si excede, truncar refs hasta caber
-        var base = 'BH ';
-        var fitted = [];
-        for (var i = 0; i < refs.length; i++) {
-            var candidate = base + fitted.concat([refs[i]]).join('-');
-            if (candidate.length > 40) break;
-            fitted.push(refs[i]);
-        }
-        return base + fitted.join('-');
+    // ── Identificación BH ──────────────────────────────────────────────
+    // Después del fix de import: docType = 'bh' para todos los registros con documento = 'BH'
+    // Legacy (datos importados con mapping viejo): docType = 'freelance' o 'fuera de horario'
+    function isBH(p) {
+        var dt = (p.docType || '').toLowerCase().trim();
+        if (dt === 'bh') return true;
+        // Fallback legacy: tipo_de_costo almacenado como docType en imports anteriores
+        // "Freelance" y "Fuera de horario" son exclusivamente BH en el CSV
+        if (dt === 'freelance' || dt === 'fuera de horario') return true;
+        return false;
     }
 
     // ── Filtros de elegibilidad ────────────────────────────────────────
@@ -117,7 +84,6 @@ window.Mazelab.Modules.NominasModule = (function () {
         return d;
     }
 
-    // BH que entran en la nómina actual (vencidas ≤ cutoff, no pagadas)
     function getEligibleBH() {
         var cutoff = getCutoff();
         return payables.filter(function (p) {
@@ -129,7 +95,6 @@ window.Mazelab.Modules.NominasModule = (function () {
         });
     }
 
-    // BH que vencen en los próximos N días (sin llegar al cutoff)
     function getUpcomingBH(days) {
         var cutoff = getCutoff();
         var horizon = new Date(cutoff.getTime() + days * 86400000);
@@ -142,14 +107,12 @@ window.Mazelab.Modules.NominasModule = (function () {
         });
     }
 
-    // BH pagadas (historial)
     function getPaidBH() {
         return payables.filter(function (p) {
             return isBH(p) && getStatusDerived(p) === 'pagada';
         });
     }
 
-    // Agrupa items por vendorName
     function groupByVendor(items) {
         var groups = {};
         var order = [];
@@ -158,21 +121,37 @@ window.Mazelab.Modules.NominasModule = (function () {
             if (!groups[key]) { groups[key] = []; order.push(key); }
             groups[key].push(p);
         });
+        // Ordenar items de cada grupo por fecha de evento
+        order.forEach(function (k) {
+            groups[k].sort(function (a, b) { return (a.eventDate || '').localeCompare(b.eventDate || ''); });
+        });
         return order.map(function (k) { return { vendor: k, items: groups[k] }; });
     }
 
-    // ── Inicialización del estado de selección ─────────────────────────
+    // ── Estado de selección ────────────────────────────────────────────
 
     function initSelectionState(eligible) {
         var next = {};
         eligible.forEach(function (p) {
-            if (selectionState[p.id]) {
-                next[p.id] = selectionState[p.id];
-            } else {
-                next[p.id] = { selected: true, amount: calcNetoPendiente(p) };
-            }
+            next[p.id] = selectionState[p.id] || { selected: true, amount: getPendiente(p) };
         });
         selectionState = next;
+    }
+
+    // ── Transfer comment ───────────────────────────────────────────────
+    // Usa el ID de evento (eventId) que corresponde al número en el CSV
+    function buildTransferComment(items) {
+        var ids = items.map(function (p) { return (p.eventId || p.id || '').toString().trim(); }).filter(Boolean);
+        var comment = 'BH ' + ids.join('-');
+        if (comment.length <= 40) return comment;
+        // Si excede 40 chars, ir recortando
+        var parts = [];
+        for (var i = 0; i < ids.length; i++) {
+            var candidate = 'BH ' + parts.concat([ids[i]]).join('-');
+            if (candidate.length > 40) break;
+            parts.push(ids[i]);
+        }
+        return 'BH ' + parts.join('-');
     }
 
     // ── Render: shell ──────────────────────────────────────────────────
@@ -182,31 +161,33 @@ window.Mazelab.Modules.NominasModule = (function () {
             '<div class="page-header">',
             '  <div>',
             '    <h1 class="page-title">N\u00f3minas de Pago</h1>',
-            '    <p class="page-subtitle">Genera y gestiona las transferencias semanales a beneficiarios</p>',
+            '    <p class="page-subtitle">Genera y gestiona las transferencias semanales a beneficiarios BH</p>',
             '  </div>',
             '</div>',
             '<div id="nominas-root"><div class="empty-state"><p>Cargando...</p></div></div>'
         ].join('\n');
     }
 
-    // ── Render: contenido principal ────────────────────────────────────
+    // ── Render: contenido ──────────────────────────────────────────────
 
     function renderContent() {
-        var eligible  = getEligibleBH();
-        var upcoming  = getUpcomingBH(14);
-        var paid      = getPaidBH();
+        var eligible = getEligibleBH();
+        var upcoming = getUpcomingBH(14);
+        var paid     = getPaidBH();
         initSelectionState(eligible);
 
         var root = document.getElementById('nominas-root');
         if (!root) return;
 
+        var totalBHInSystem = payables.filter(isBH).length;
+
         root.innerHTML = [
             renderControls(eligible),
             renderTabs(eligible.length, upcoming.length),
             '<div id="nominas-tab-content">',
-            activeTab === 'nomina'    ? renderNominaTab(eligible)    : '',
-            activeTab === 'proximas'  ? renderProximasTab(upcoming)  : '',
-            activeTab === 'historial' ? renderHistorialTab(paid)     : '',
+            activeTab === 'nomina'    ? renderNominaTab(eligible, totalBHInSystem)  : '',
+            activeTab === 'proximas'  ? renderProximasTab(upcoming)                 : '',
+            activeTab === 'historial' ? renderHistorialTab(paid)                    : '',
             '</div>'
         ].join('\n');
 
@@ -222,18 +203,19 @@ window.Mazelab.Modules.NominasModule = (function () {
             var s = selectionState[p.id];
             if (s && s.selected) {
                 totalSelected += s.amount;
-                selectedVendors.add(p.vendorName || 'Sin beneficiario');
+                selectedVendors.add((p.vendorName || 'Sin beneficiario').trim());
             }
         });
 
         return [
             '<div style="display:flex;align-items:center;gap:var(--space-md);flex-wrap:wrap;margin-bottom:var(--space-lg)">',
             '  <div style="display:flex;align-items:center;gap:8px">',
-            '    <label style="font-size:13px;color:var(--text-secondary);white-space:nowrap">Corte al:</label>',
+            '    <label style="font-size:13px;color:var(--text-secondary);white-space:nowrap">Fecha de corte:</label>',
             '    <input type="date" id="nominas-cutoff" class="form-control" style="width:160px" value="' + (cutoffDate || todayStr()) + '">',
             '  </div>',
-            '  <div style="margin-left:auto;display:flex;gap:var(--space-sm);align-items:center">',
-            '    <span style="font-size:13px;color:var(--text-secondary)">' + selectedVendors.size + ' beneficiarios \u00b7 <strong style="color:var(--text-primary)">' + formatCLP(totalSelected) + '</strong> total</span>',
+            '  <div style="margin-left:auto;font-size:13px;color:var(--text-secondary)">',
+            '    <strong style="color:var(--text-primary)">' + selectedVendors.size + '</strong> beneficiarios &middot;',
+            '    <strong style="color:var(--text-primary)">' + formatCLP(totalSelected) + '</strong> total',
             '  </div>',
             '</div>'
         ].join('\n');
@@ -242,87 +224,118 @@ window.Mazelab.Modules.NominasModule = (function () {
     // ── Tabs ───────────────────────────────────────────────────────────
 
     function renderTabs(eligibleCount, upcomingCount) {
-        function tab(id, label, count, badge) {
+        function tab(id, label, count, danger) {
             var active = activeTab === id;
-            var badgeHtml = count > 0
-                ? ' <span style="background:' + (badge || 'var(--primary)') + ';color:#fff;border-radius:10px;padding:1px 7px;font-size:11px;font-weight:600;margin-left:4px">' + count + '</span>'
+            var badge = count > 0
+                ? ' <span style="background:' + (danger ? '#e74c3c' : '#f39c12') + ';color:#fff;border-radius:10px;padding:1px 7px;font-size:11px;font-weight:600;margin-left:4px">' + count + '</span>'
                 : '';
             return '<div class="tab-btn' + (active ? ' active' : '') + '" data-tab="' + id + '" style="cursor:pointer;padding:8px 18px;border-radius:8px;font-size:14px;font-weight:500;' +
-                   (active ? 'background:var(--primary);color:#fff;' : 'color:var(--text-secondary);') + '">' + label + badgeHtml + '</div>';
+                   (active ? 'background:var(--primary);color:#fff;' : 'color:var(--text-secondary);') + '">' + label + badge + '</div>';
         }
         return [
             '<div style="display:flex;gap:6px;margin-bottom:var(--space-lg);border-bottom:1px solid var(--border);padding-bottom:var(--space-sm)">',
-            tab('nomina',    'N\u00f3mina actual', eligibleCount, eligibleCount > 0 ? '#e74c3c' : null),
-            tab('proximas',  'Pr\u00f3ximas',      upcomingCount, upcomingCount > 0 ? '#f39c12' : null),
-            tab('historial', 'Historial',           0, null),
+            tab('nomina',    'N\u00f3mina actual', eligibleCount, true),
+            tab('proximas',  'Pr\u00f3ximas 14d',  upcomingCount, false),
+            tab('historial', 'Historial',           0,             false),
             '</div>'
         ].join('\n');
     }
 
     // ── Tab: Nómina actual ─────────────────────────────────────────────
 
-    function renderNominaTab(eligible) {
-        if (!eligible.length) {
-            return [
-                '<div class="empty-state">',
-                '  <div style="font-size:40px;margin-bottom:12px">&#10003;</div>',
-                '  <p style="font-size:16px;font-weight:600;margin-bottom:6px">Sin pagos pendientes</p>',
-                '  <p style="color:var(--text-muted)">No hay BH que hayan cumplido los 30 d\u00edas al ' + (cutoffDate || todayStr()) + '</p>',
+    function renderNominaTab(eligible, totalBHInSystem) {
+        var html = '';
+
+        // Debug info si hay datos pero no coinciden con el filtro
+        var allBH = payables.filter(isBH);
+        var pendientesBH = allBH.filter(function (p) { return getStatusDerived(p) !== 'pagada'; });
+        if (!eligible.length && pendientesBH.length > 0) {
+            var nearestDD = null;
+            pendientesBH.forEach(function (p) {
+                var dd = calcDueDate(p.eventDate);
+                if (dd && (!nearestDD || dd < nearestDD)) nearestDD = dd;
+            });
+            html += [
+                '<div style="background:#fff3cd;border:1px solid #ffc107;border-radius:8px;padding:16px;margin-bottom:var(--space-md)">',
+                '  <div style="font-weight:600;margin-bottom:4px">&#9888; Sin pagos a la fecha de corte</div>',
+                '  <div style="font-size:13px">Hay <strong>' + pendientesBH.length + '</strong> BH pendientes que a\u00fan no cumplen los 30 d\u00edas.',
+                nearestDD ? ' El pr\u00f3ximo vencimiento es el <strong>' + formatDateShort(nearestDD) + '</strong>.' : '',
+                '  </div>',
                 '</div>'
-            ].join('\n');
+            ].join('');
+        }
+
+        if (!eligible.length) {
+            html += [
+                '<div class="empty-state">',
+                '  <div style="font-size:36px;margin-bottom:12px">&#10003;</div>',
+                '  <p style="font-size:15px;font-weight:600;margin-bottom:6px">Sin BH para pagar al ' + (cutoffDate || todayStr()) + '</p>',
+                totalBHInSystem === 0
+                    ? '<p style="color:var(--text-muted)">No hay registros BH en el sistema. Re-importa el CSV de CXP.</p>'
+                    : '<p style="color:var(--text-muted)">Revisa la pesta\u00f1a \u201cPr\u00f3ximas 14d\u201d para ver qu\u00e9 viene.</p>',
+                '</div>'
+            ].join('');
+            return html;
         }
 
         var groups = groupByVendor(eligible);
-        return groups.map(function (g) { return renderBeneficiaryCard(g.vendor, g.items); }).join('\n');
+        html += groups.map(function (g) { return renderBeneficiaryCard(g.vendor, g.items); }).join('\n');
+        return html;
     }
 
     // ── Tarjeta por beneficiario ───────────────────────────────────────
 
     function renderBeneficiaryCard(vendor, items) {
-        var totalNeto    = 0;
-        var totalPendiente = 0;
+        var totalAmount  = 0; // suma de p.amount de los seleccionados
+        var totalPagado  = 0;
+        var totalPend    = 0;
         var selectedItems = [];
 
         items.forEach(function (p) {
-            totalNeto += calcNeto(p);
-            var s = selectionState[p.id] || { selected: true, amount: calcNetoPendiente(p) };
+            var s = selectionState[p.id] || { selected: true, amount: getPendiente(p) };
             if (s.selected) {
-                totalPendiente += s.amount;
+                totalAmount += Number(p.amount) || 0;
+                totalPagado += getTotalPagado(p);
+                totalPend   += s.amount;
                 selectedItems.push(p);
             }
         });
 
         var comment     = buildTransferComment(selectedItems);
         var commentLen  = comment.length;
-        var commentWarn = commentLen > 40;
-        var commentColor = commentWarn ? 'var(--danger)' : commentLen > 32 ? 'var(--warning)' : 'var(--success)';
-
-        var cardId = 'card-' + vendor.replace(/[^a-z0-9]/gi, '_');
+        var lenColor    = commentLen > 40 ? '#e74c3c' : commentLen > 32 ? '#f39c12' : '#27ae60';
+        var cardId      = 'card-' + vendor.replace(/[^a-z0-9]/gi, '_');
+        var allSelected = selectedItems.length === items.length;
 
         return [
             '<div class="card" id="' + cardId + '" style="margin-bottom:var(--space-lg)">',
+
+            // Header
             '  <div style="display:flex;align-items:flex-start;justify-content:space-between;margin-bottom:var(--space-md)">',
             '    <div>',
-            '      <div style="font-size:18px;font-weight:700;color:var(--text-primary)">' + escHtml(vendor) + '</div>',
-            '      <div style="font-size:13px;color:var(--text-muted);margin-top:2px">' + items.length + ' BH en n\u00f3mina</div>',
+            '      <div style="font-size:18px;font-weight:700">' + escHtml(vendor) + '</div>',
+            '      <div style="font-size:12px;color:var(--text-muted);margin-top:2px">',
+            '        ' + items.length + ' BH en n\u00f3mina &middot; ' + selectedItems.length + ' seleccionadas',
+            '      </div>',
             '    </div>',
             '    <div style="text-align:right">',
-            '      <div style="font-size:22px;font-weight:800;color:var(--primary)">' + formatCLP(totalPendiente) + '</div>',
-            '      <div style="font-size:12px;color:var(--text-muted)">l\u00edquido a transferir (selecci\u00f3n)</div>',
+            '      <div style="font-size:22px;font-weight:800;color:var(--primary)">' + formatCLP(totalPend) + '</div>',
+            '      <div style="font-size:11px;color:var(--text-muted)">a transferir (selecci\u00f3n)</div>',
             '    </div>',
             '  </div>',
 
-            // ── Tabla de BH individuales ──────────────────────────────
-            '  <div style="margin-bottom:var(--space-md);overflow-x:auto">',
+            // Tabla
+            '  <div style="overflow-x:auto;margin-bottom:var(--space-md)">',
             '  <table class="data-table" style="margin:0">',
             '    <thead><tr>',
-            '      <th style="width:36px"><input type="checkbox" id="check-all-' + cardId + '" class="nomina-check-all" data-vendor="' + escAttr(vendor) + '" ' + (selectedItems.length === items.length ? 'checked' : '') + '></th>',
+            '      <th style="width:32px"><input type="checkbox" class="nomina-check-all" data-vendor="' + escAttr(vendor) + '" ' + (allSelected ? 'checked' : '') + '></th>',
+            '      <th>ID</th>',
+            '      <th>Cliente</th>',
             '      <th>Evento</th>',
             '      <th>Fecha evento</th>',
             '      <th>Vence</th>',
-            '      <th style="text-align:right">Bruto BH</th>',
-            '      <th style="text-align:right">Retenci\u00f3n</th>',
-            '      <th style="text-align:right">Neto</th>',
+            '      <th style="text-align:right">Total BH</th>',
+            '      <th style="text-align:right">Pagado</th>',
             '      <th style="text-align:right;width:140px">A transferir</th>',
             '    </tr></thead>',
             '    <tbody>',
@@ -331,94 +344,97 @@ window.Mazelab.Modules.NominasModule = (function () {
             '  </table>',
             '  </div>',
 
-            // ── Comentario de transferencia ───────────────────────────
-            '  <div style="background:var(--surface-secondary,#f8f9fa);border-radius:8px;padding:var(--space-md);margin-bottom:var(--space-md)">',
-            '    <div style="display:flex;align-items:center;gap:8px;margin-bottom:6px">',
-            '      <span style="font-size:12px;font-weight:600;color:var(--text-secondary);text-transform:uppercase;letter-spacing:.5px">Comentario transferencia</span>',
-            '      <span style="font-size:11px;color:' + commentColor + ';font-weight:600">' + commentLen + '/40</span>',
-            commentWarn ? '      <span style="font-size:11px;color:var(--danger);background:rgba(231,76,60,.1);padding:1px 7px;border-radius:4px">&#9888; Excede 40 caracteres</span>' : '',
+            // Comentario transferencia
+            '  <div style="background:#f8f9fa;border:1px solid #dee2e6;border-radius:8px;padding:14px;margin-bottom:var(--space-md)">',
+            '    <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px">',
+            '      <span style="font-size:12px;font-weight:700;color:#495057;text-transform:uppercase;letter-spacing:.4px">Glosa para transferencia</span>',
+            '      <span style="font-size:12px;font-weight:700;color:' + lenColor + '">' + commentLen + '/40</span>',
+            commentLen > 40 ? '      <span style="font-size:11px;color:#e74c3c;background:#ffeaea;padding:2px 8px;border-radius:4px">&#9888; Excede 40 caracteres</span>' : '',
             '    </div>',
             '    <div style="display:flex;gap:8px;align-items:center">',
             '      <input type="text" class="form-control nomina-comment-input" data-vendor="' + escAttr(vendor) + '"',
             '             maxlength="60" value="' + escAttr(comment) + '"',
-            '             style="font-family:monospace;font-size:15px;font-weight:600;letter-spacing:.5px;flex:1">',
-            '      <button class="btn btn-secondary nomina-copy-btn" data-vendor="' + escAttr(vendor) + '" style="white-space:nowrap">&#128203; Copiar</button>',
+            '             style="font-family:monospace;font-size:15px;font-weight:700;flex:1">',
+            '      <button class="btn btn-secondary nomina-copy-btn" data-vendor="' + escAttr(vendor) + '">&#128203; Copiar</button>',
+            '    </div>',
+            '    <div style="font-size:11px;color:#868e96;margin-top:6px">',
+            '      Los IDs corresponden al n\u00famero de evento del CSV. Edit\u00e1 el texto antes de copiar si necesit\u00e1s ajustarlo.',
             '    </div>',
             '  </div>',
 
-            // ── Acciones de la tarjeta ────────────────────────────────
-            '  <div style="display:flex;gap:var(--space-sm);justify-content:flex-end">',
-            '    <button class="btn btn-primary nomina-pagar-btn" data-vendor="' + escAttr(vendor) + '" ' + (selectedItems.length === 0 ? 'disabled' : '') + '>',
-            '      &#10003; Confirmar pago (' + formatCLP(totalPendiente) + ')',
+            // Botón confirmar
+            '  <div style="display:flex;justify-content:flex-end">',
+            '    <button class="btn btn-primary nomina-pagar-btn" data-vendor="' + escAttr(vendor) + '"' + (selectedItems.length === 0 ? ' disabled' : '') + '>',
+            '      &#10003; Confirmar pago &mdash; ' + formatCLP(totalPend),
             '    </button>',
             '  </div>',
+
             '</div>'
         ].join('\n');
     }
 
     function renderBHRow(p) {
-        var s = selectionState[p.id] || { selected: true, amount: calcNetoPendiente(p) };
-        var bruto  = Number(p.amount) || 0;
-        var rate   = getBHRetentionRate(p.billingDate || p.eventDate);
-        var ret    = Math.round(bruto * rate);
-        var neto   = bruto - ret;
-        var pend   = calcNetoPendiente(p);
-        var dd     = calcDueDate(p.eventDate);
+        var s        = selectionState[p.id] || { selected: true, amount: getPendiente(p) };
+        var amount   = Number(p.amount) || 0;
+        var pagado   = getTotalPagado(p);
+        var pend     = getPendiente(p);
+        var dd       = calcDueDate(p.eventDate);
         var isParcial = getStatusDerived(p) === 'parcial';
+        var rowDim   = s.selected ? '' : 'opacity:.45';
 
         return [
-            '<tr style="' + (s.selected ? '' : 'opacity:.5') + '">',
+            '<tr style="' + rowDim + '">',
             '  <td><input type="checkbox" class="nomina-bh-check" data-id="' + escAttr(p.id) + '" ' + (s.selected ? 'checked' : '') + '></td>',
+            '  <td style="font-weight:700;font-size:13px;color:var(--primary)">' + escHtml(p.eventId || '-') + '</td>',
+            '  <td style="font-size:12px;color:var(--text-secondary)">' + escHtml(p.clientName || '-') + '</td>',
             '  <td>',
-            '    <div style="font-weight:600;font-size:13px">' + escHtml(p.eventName || '-') + '</div>',
-            isParcial ? '<div style="font-size:11px;color:var(--warning);margin-top:2px">&#9679; Pago parcial previo: ' + formatCLP(getTotalPagado(p)) + ' ya transferido</div>' : '',
+            '    <div style="font-size:13px;font-weight:600">' + escHtml(p.eventName || '-') + '</div>',
+            isParcial ? '<div style="font-size:11px;color:#f39c12;margin-top:1px">&#9679; Pago parcial previo (' + formatCLP(pagado) + ' ya pagado)</div>' : '',
             '  </td>',
-            '  <td style="font-size:13px;color:var(--text-secondary)">' + (p.eventDate || '-') + '</td>',
-            '  <td style="font-size:13px;color:var(--text-secondary)">' + formatDateShort(dd) + '</td>',
-            '  <td style="text-align:right;font-size:13px">' + formatCLP(bruto) + '</td>',
-            '  <td style="text-align:right;font-size:13px;color:var(--warning)">' + formatCLP(ret) + ' <span style="font-size:10px;opacity:.7">(' + (rate * 100).toFixed(2) + '%)</span></td>',
-            '  <td style="text-align:right;font-size:13px;font-weight:600">' + formatCLP(neto) + (isParcial ? '<div style="font-size:10px;color:var(--text-muted)">pend: ' + formatCLP(pend) + '</div>' : '') + '</td>',
+            '  <td style="font-size:12px;color:var(--text-secondary);white-space:nowrap">' + (p.eventDate || '-') + '</td>',
+            '  <td style="font-size:12px;white-space:nowrap;color:var(--text-secondary)">' + formatDateShort(dd) + '</td>',
+            '  <td style="text-align:right;font-size:13px">' + formatCLP(amount) + '</td>',
+            '  <td style="text-align:right;font-size:13px;color:' + (pagado > 0 ? '#27ae60' : 'var(--text-muted)') + '">' + (pagado > 0 ? formatCLP(pagado) : '-') + '</td>',
             '  <td style="text-align:right">',
             '    <input type="number" class="form-control nomina-amount-input" data-id="' + escAttr(p.id) + '"',
-            '           value="' + s.amount + '" min="0" max="' + neto + '" step="1"',
-            '           style="text-align:right;width:120px;font-weight:600;' + (!s.selected ? 'opacity:.4;pointer-events:none' : '') + '">',
+            '           value="' + s.amount + '" min="0" max="' + pend + '" step="1"',
+            '           style="text-align:right;width:120px;font-weight:700' + (!s.selected ? ';opacity:.35;pointer-events:none' : '') + '">',
             '  </td>',
             '</tr>'
         ].join('\n');
     }
 
-    // ── Tab: Próximas a vencer ─────────────────────────────────────────
+    // ── Tab: Próximas ──────────────────────────────────────────────────
 
     function renderProximasTab(upcoming) {
         if (!upcoming.length) {
             return '<div class="empty-state"><p>No hay BH que venzan en los pr\u00f3ximos 14 d\u00edas.</p></div>';
         }
-        var groups = groupByVendor(upcoming);
+        var today = new Date(); today.setHours(0,0,0,0);
         return [
-            '<div class="card" style="margin-bottom:var(--space-md)">',
-            '  <div style="font-size:14px;font-weight:600;color:var(--warning);margin-bottom:var(--space-md)">&#9888; Pr\u00f3ximas a vencer (14 d\u00edas)</div>',
+            '<div class="card">',
+            '  <div style="font-size:14px;font-weight:700;color:#f39c12;margin-bottom:var(--space-md)">&#9888; Pr\u00f3ximas a vencer &mdash; 14 d\u00edas</div>',
             '  <table class="data-table" style="margin:0">',
             '    <thead><tr>',
-            '      <th>Beneficiario</th><th>Evento</th><th>Fecha evento</th><th>Vence</th><th style="text-align:right">Neto</th>',
-            '    </tr></thead>',
-            '    <tbody>',
+            '      <th>ID</th><th>Beneficiario</th><th>Cliente</th><th>Evento</th><th>Fecha evento</th><th>Vence</th><th style="text-align:right">Pendiente</th>',
+            '    </tr></thead><tbody>',
             upcoming.map(function (p) {
                 var dd = calcDueDate(p.eventDate);
-                var today = new Date(); today.setHours(0,0,0,0);
                 var diff = Math.round((dd - today) / 86400000);
-                var urgency = diff <= 3 ? 'color:var(--danger);font-weight:700' : 'color:var(--warning);font-weight:600';
+                var urg = diff <= 3 ? 'color:#e74c3c;font-weight:700' : 'color:#f39c12;font-weight:600';
                 return [
                     '<tr>',
+                    '<td style="font-weight:700;color:var(--primary)">' + escHtml(p.eventId || '-') + '</td>',
                     '<td style="font-weight:600">' + escHtml(p.vendorName || '-') + '</td>',
+                    '<td style="font-size:12px;color:var(--text-secondary)">' + escHtml(p.clientName || '-') + '</td>',
                     '<td style="font-size:13px">' + escHtml(p.eventName || '-') + '</td>',
-                    '<td style="font-size:13px;color:var(--text-secondary)">' + (p.eventDate || '-') + '</td>',
-                    '<td style="' + urgency + '">' + formatDateShort(dd) + ' &middot; ' + diff + 'd</td>',
-                    '<td style="text-align:right;font-weight:600">' + formatCLP(calcNetoPendiente(p)) + '</td>',
+                    '<td style="font-size:12px;color:var(--text-secondary)">' + (p.eventDate || '-') + '</td>',
+                    '<td style="' + urg + '">' + formatDateShort(dd) + ' &middot; ' + diff + 'd</td>',
+                    '<td style="text-align:right;font-weight:700">' + formatCLP(getPendiente(p)) + '</td>',
                     '</tr>'
                 ].join('');
-            }).join('\n'),
-            '    </tbody>',
-            '  </table>',
+            }).join(''),
+            '    </tbody></table>',
             '</div>'
         ].join('\n');
     }
@@ -427,12 +443,11 @@ window.Mazelab.Modules.NominasModule = (function () {
 
     function renderHistorialTab(paid) {
         if (!paid.length) {
-            return '<div class="empty-state"><p>No hay BH pagadas en el historial.</p></div>';
+            return '<div class="empty-state"><p>No hay BH pagadas en el historial a\u00fan.</p></div>';
         }
 
         // Agrupar por mes de último pago
-        var byMonth = {};
-        var monthOrder = [];
+        var byMonth = {}, monthOrder = [];
         paid.forEach(function (p) {
             var lastPay = p.payments && p.payments.length
                 ? p.payments.reduce(function (a, b) { return a.date > b.date ? a : b; })
@@ -441,7 +456,6 @@ window.Mazelab.Modules.NominasModule = (function () {
             if (!byMonth[mKey]) { byMonth[mKey] = []; monthOrder.push(mKey); }
             byMonth[mKey].push(p);
         });
-        // Ordenar meses descendente
         monthOrder = monthOrder.filter(function (v, i, a) { return a.indexOf(v) === i; });
         monthOrder.sort(function (a, b) { return b.localeCompare(a); });
 
@@ -452,26 +466,75 @@ window.Mazelab.Modules.NominasModule = (function () {
                 var d = new Date(Number(parts[0]), Number(parts[1]) - 1, 1);
                 return d.toLocaleDateString('es-CL', { month: 'long', year: 'numeric' });
             })();
-            var total = items.reduce(function (s, p) { return s + getTotalPagado(p); }, 0);
-            var vendors = {};
+
+            var totalPagado = items.reduce(function (s, p) { return s + getTotalPagado(p); }, 0);
+            var byVendor = {};
             items.forEach(function (p) {
-                var v = p.vendorName || 'Sin beneficiario';
-                vendors[v] = (vendors[v] || 0) + getTotalPagado(p);
+                var v = (p.vendorName || 'Sin beneficiario').trim();
+                if (!byVendor[v]) byVendor[v] = [];
+                byVendor[v].push(p);
             });
 
+            var isExpanded = !!historialExpanded[mKey];
+
+            var vendorSummary = Object.keys(byVendor).map(function (v) {
+                var total = byVendor[v].reduce(function (s, p) { return s + getTotalPagado(p); }, 0);
+                return '<span style="display:inline-flex;align-items:center;gap:6px;background:#f1f3f5;border:1px solid #dee2e6;border-radius:6px;padding:5px 12px;font-size:13px;margin:3px">' +
+                       '<strong>' + escHtml(v) + '</strong><span style="color:#495057">' + formatCLP(total) + '</span></span>';
+            }).join('');
+
+            var detailRows = isExpanded ? Object.keys(byVendor).map(function (v) {
+                return byVendor[v].map(function (p) {
+                    var pagado = getTotalPagado(p);
+                    var lastPay = p.payments && p.payments.length
+                        ? p.payments.reduce(function (a, b) { return a.date > b.date ? a : b; })
+                        : null;
+                    return [
+                        '<tr style="background:#fafafa">',
+                        '<td style="font-size:12px;font-weight:700;color:var(--primary)">' + escHtml(p.eventId || '-') + '</td>',
+                        '<td style="font-weight:600;font-size:13px">' + escHtml(v) + '</td>',
+                        '<td style="font-size:12px;color:#495057">' + escHtml(p.clientName || '-') + '</td>',
+                        '<td style="font-size:13px">' + escHtml(p.eventName || '-') + '</td>',
+                        '<td style="font-size:12px;color:#495057">' + (p.eventDate || '-') + '</td>',
+                        '<td style="font-size:12px;color:#495057">' + (lastPay ? lastPay.date : '-') + '</td>',
+                        '<td style="text-align:right;font-weight:700;color:#27ae60">' + formatCLP(pagado) + '</td>',
+                        '</tr>'
+                    ].join('');
+                }).join('');
+            }).join('') : '';
+
             return [
-                '<div class="card" style="margin-bottom:var(--space-md)">',
-                '  <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:var(--space-md)">',
-                '    <div style="font-size:16px;font-weight:700;text-transform:capitalize">' + label + '</div>',
-                '    <div style="font-size:15px;font-weight:700;color:var(--primary)">' + formatCLP(total) + '</div>',
+                '<div style="border:1px solid #dee2e6;border-radius:10px;margin-bottom:12px;overflow:hidden">',
+
+                // Header de mes (siempre visible)
+                '  <div style="display:flex;align-items:center;justify-content:space-between;padding:14px 18px;background:#fff;cursor:pointer" class="hist-month-header" data-mkey="' + escAttr(mKey) + '">',
+                '    <div style="font-size:16px;font-weight:700;color:#212529;text-transform:capitalize">' + label + '</div>',
+                '    <div style="display:flex;align-items:center;gap:12px">',
+                '      <div style="font-size:16px;font-weight:700;color:#2563eb">' + formatCLP(totalPagado) + '</div>',
+                '      <div style="font-size:13px;color:#868e96;">' + items.length + ' BH &middot; ' + Object.keys(byVendor).length + ' personas</div>',
+                '      <div style="font-size:12px;color:#868e96">' + (isExpanded ? '&#9650;' : '&#9660;') + '</div>',
+                '    </div>',
                 '  </div>',
-                '  <div style="display:flex;flex-wrap:wrap;gap:8px">',
-                Object.keys(vendors).map(function (v) {
-                    return '<div style="background:var(--surface-secondary,#f1f3f5);border-radius:6px;padding:6px 12px;font-size:13px">' +
-                           '<span style="font-weight:600">' + escHtml(v) + '</span>' +
-                           ' &middot; ' + formatCLP(vendors[v]) + '</div>';
-                }).join(''),
+
+                // Resumen por beneficiario (siempre visible)
+                '  <div style="padding:8px 18px 12px;background:#fff;border-top:1px solid #f1f3f5">',
+                '    ' + vendorSummary,
                 '  </div>',
+
+                // Detalle expandible
+                isExpanded ? [
+                    '  <div style="background:#f8f9fa;border-top:1px solid #dee2e6;padding:8px 18px 14px">',
+                    '  <table class="data-table" style="margin:0;background:#fff">',
+                    '    <thead><tr style="background:#f1f3f5">',
+                    '      <th style="font-size:11px">ID</th><th style="font-size:11px">Beneficiario</th><th style="font-size:11px">Cliente</th>',
+                    '      <th style="font-size:11px">Evento</th><th style="font-size:11px">Fecha evento</th><th style="font-size:11px">Fecha pago</th>',
+                    '      <th style="text-align:right;font-size:11px">Transferido</th>',
+                    '    </tr></thead>',
+                    '    <tbody>' + detailRows + '</tbody>',
+                    '  </table>',
+                    '  </div>'
+                ].join('') : '',
+
                 '</div>'
             ].join('\n');
         }).join('\n');
@@ -480,8 +543,7 @@ window.Mazelab.Modules.NominasModule = (function () {
     // ── Bind events ────────────────────────────────────────────────────
 
     function bindEvents() {
-
-        // Cambio de fecha de corte
+        // Fecha de corte
         var cutoffEl = document.getElementById('nominas-cutoff');
         if (cutoffEl && !cutoffEl._bound) {
             cutoffEl._bound = true;
@@ -503,7 +565,19 @@ window.Mazelab.Modules.NominasModule = (function () {
             }
         });
 
-        // Checkbox "seleccionar todo" por beneficiario
+        // Historial: expandir/colapsar mes
+        document.querySelectorAll('.hist-month-header').forEach(function (el) {
+            if (!el._bound) {
+                el._bound = true;
+                el.addEventListener('click', function () {
+                    var mKey = this.dataset.mkey;
+                    historialExpanded[mKey] = !historialExpanded[mKey];
+                    renderContent();
+                });
+            }
+        });
+
+        // Checkbox "todo" por beneficiario
         document.querySelectorAll('.nomina-check-all').forEach(function (cb) {
             if (!cb._bound) {
                 cb._bound = true;
@@ -511,12 +585,11 @@ window.Mazelab.Modules.NominasModule = (function () {
                     var vendor = this.dataset.vendor;
                     var checked = this.checked;
                     document.querySelectorAll('.nomina-bh-check').forEach(function (bc) {
-                        var id = bc.dataset.id;
-                        var p = payables.find(function (x) { return x.id === id; });
+                        var p = payables.find(function (x) { return x.id === bc.dataset.id; });
                         if (p && (p.vendorName || 'Sin beneficiario').trim() === vendor) {
                             bc.checked = checked;
-                            if (!selectionState[id]) selectionState[id] = { selected: checked, amount: calcNetoPendiente(p) };
-                            selectionState[id].selected = checked;
+                            if (!selectionState[p.id]) selectionState[p.id] = { selected: checked, amount: getPendiente(p) };
+                            selectionState[p.id].selected = checked;
                         }
                     });
                     renderContent();
@@ -524,7 +597,7 @@ window.Mazelab.Modules.NominasModule = (function () {
             }
         });
 
-        // Checkbox por BH individual
+        // Checkbox individual BH
         document.querySelectorAll('.nomina-bh-check').forEach(function (cb) {
             if (!cb._bound) {
                 cb._bound = true;
@@ -532,7 +605,7 @@ window.Mazelab.Modules.NominasModule = (function () {
                     var id = this.dataset.id;
                     var p = payables.find(function (x) { return x.id === id; });
                     if (!p) return;
-                    if (!selectionState[id]) selectionState[id] = { selected: true, amount: calcNetoPendiente(p) };
+                    if (!selectionState[id]) selectionState[id] = { selected: true, amount: getPendiente(p) };
                     selectionState[id].selected = this.checked;
                     renderContent();
                 });
@@ -545,16 +618,18 @@ window.Mazelab.Modules.NominasModule = (function () {
                 inp._bound = true;
                 inp.addEventListener('input', function () {
                     var id = this.dataset.id;
-                    var val = Number(this.value) || 0;
-                    if (!selectionState[id]) selectionState[id] = { selected: true, amount: val };
-                    selectionState[id].amount = val;
-                    // Actualizar solo el total del header sin re-renderizar toda la vista
-                    updateCardTotals();
+                    var p = payables.find(function (x) { return x.id === id; });
+                    if (!p) return;
+                    if (!selectionState[id]) selectionState[id] = { selected: true, amount: getPendiente(p) };
+                    selectionState[id].amount = Number(this.value) || 0;
+                    // Re-render solo el header (total) sin re-render completo
+                    // Para simplicidad, re-render completo pero manteniendo focus
+                    renderContent();
                 });
             }
         });
 
-        // Copiar comentario
+        // Copiar glosa
         document.querySelectorAll('.nomina-copy-btn').forEach(function (btn) {
             if (!btn._bound) {
                 btn._bound = true;
@@ -563,16 +638,17 @@ window.Mazelab.Modules.NominasModule = (function () {
                     var inputEl = document.querySelector('.nomina-comment-input[data-vendor="' + vendor + '"]');
                     if (!inputEl) return;
                     var text = inputEl.value;
+                    var self = this;
                     if (navigator.clipboard) {
                         navigator.clipboard.writeText(text).then(function () {
-                            btn.textContent = '\u2713 Copiado';
-                            setTimeout(function () { btn.innerHTML = '&#128203; Copiar'; }, 1800);
+                            self.textContent = '\u2713 Copiado!';
+                            setTimeout(function () { self.innerHTML = '&#128203; Copiar'; }, 2000);
                         });
                     } else {
                         inputEl.select();
                         document.execCommand('copy');
-                        btn.textContent = '\u2713 Copiado';
-                        setTimeout(function () { btn.innerHTML = '&#128203; Copiar'; }, 1800);
+                        self.textContent = '\u2713 Copiado!';
+                        setTimeout(function () { self.innerHTML = '&#128203; Copiar'; }, 2000);
                     }
                 });
             }
@@ -583,111 +659,70 @@ window.Mazelab.Modules.NominasModule = (function () {
             if (!btn._bound) {
                 btn._bound = true;
                 btn.addEventListener('click', function () {
-                    var vendor = this.dataset.vendor;
-                    handleConfirmPago(vendor);
+                    handleConfirmPago(this.dataset.vendor);
                 });
             }
-        });
-    }
-
-    // Actualiza solo los totales sin re-renderizar todo (para inputs de monto)
-    function updateCardTotals() {
-        var eligible = getEligibleBH();
-        var groups = groupByVendor(eligible);
-        var totalGlobal = 0;
-        groups.forEach(function (g) {
-            var total = 0;
-            var selectedItems = [];
-            g.items.forEach(function (p) {
-                var s = selectionState[p.id];
-                if (s && s.selected) {
-                    total += s.amount;
-                    selectedItems.push(p);
-                }
-            });
-            totalGlobal += total;
         });
     }
 
     // ── Confirmar pago ─────────────────────────────────────────────────
 
     async function handleConfirmPago(vendor) {
-        var eligible = getEligibleBH();
-        var vendorItems = eligible.filter(function (p) {
-            return (p.vendorName || 'Sin beneficiario').trim() === vendor;
-        });
-        var toPay = vendorItems.filter(function (p) {
-            return selectionState[p.id] && selectionState[p.id].selected;
-        });
+        var eligible    = getEligibleBH();
+        var vendorItems = eligible.filter(function (p) { return (p.vendorName || 'Sin beneficiario').trim() === vendor; });
+        var toPay       = vendorItems.filter(function (p) { return selectionState[p.id] && selectionState[p.id].selected; });
 
-        if (!toPay.length) { alert('No hay BH seleccionadas para pagar.'); return; }
+        if (!toPay.length) { alert('No hay BH seleccionadas.'); return; }
 
         var totalTransfer = toPay.reduce(function (s, p) { return s + (selectionState[p.id].amount || 0); }, 0);
-        var comment = (function () {
-            var inputEl = document.querySelector('.nomina-comment-input[data-vendor="' + vendor + '"]');
-            return inputEl ? inputEl.value : buildTransferComment(toPay);
-        })();
+        var inputEl       = document.querySelector('.nomina-comment-input[data-vendor="' + vendor + '"]');
+        var comment       = inputEl ? inputEl.value : buildTransferComment(toPay);
 
-        var confirmMsg = '¿Confirmar pago a ' + vendor + '?\n\n' +
+        var confirmMsg = '\u00bfConfirmar pago a ' + vendor + '?\n\n' +
             'Monto: ' + formatCLP(totalTransfer) + '\n' +
-            'Comentario: ' + comment + '\n\n' +
+            'Glosa: ' + comment + '\n\n' +
             toPay.length + ' BH incluidas.';
         if (!confirm(confirmMsg)) return;
 
         var dateStr = todayStr();
-
         try {
             for (var i = 0; i < toPay.length; i++) {
-                var p = toPay[i];
+                var p   = toPay[i];
                 var amt = selectionState[p.id].amount || 0;
                 if (amt <= 0) continue;
                 var newPayments = (p.payments || []).concat([{
-                    id: generateId(),
-                    amount: amt,
-                    date: dateStr,
-                    method: 'transferencia',
-                    comment: comment
+                    id: generateId(), amount: amt, date: dateStr, method: 'transferencia', comment: comment
                 }]);
                 await window.Mazelab.DataService.update('payables', p.id, { payments: newPayments });
             }
-            // Reload data
             payables = await window.Mazelab.DataService.getAll('payables');
-            // Limpiar selección para este vendor
             toPay.forEach(function (p) { delete selectionState[p.id]; });
             showSuccessToast(vendor, totalTransfer, comment);
             renderContent();
         } catch (err) {
             console.error('NominasModule: handleConfirmPago error', err);
-            alert('Error al guardar los pagos. Intenta nuevamente.');
+            alert('Error al guardar. Intenta nuevamente.');
         }
     }
 
-    // ── Toast de éxito ─────────────────────────────────────────────────
+    // ── Toast ──────────────────────────────────────────────────────────
 
     function showSuccessToast(vendor, amount, comment) {
         var toast = document.createElement('div');
-        toast.style.cssText = [
-            'position:fixed;bottom:24px;right:24px;z-index:9999',
-            'background:var(--success,#27ae60);color:#fff',
-            'border-radius:10px;padding:16px 20px;max-width:340px',
-            'box-shadow:0 4px 20px rgba(0,0,0,.2);font-size:14px'
-        ].join(';');
-        toast.innerHTML = [
-            '<div style="font-weight:700;margin-bottom:4px">&#10003; Pago registrado</div>',
-            '<div>' + escHtml(vendor) + ' &middot; ' + formatCLP(amount) + '</div>',
-            '<div style="font-family:monospace;font-size:12px;margin-top:6px;opacity:.85">' + escHtml(comment) + '</div>'
-        ].join('');
+        toast.style.cssText = 'position:fixed;bottom:24px;right:24px;z-index:9999;background:#27ae60;color:#fff;border-radius:10px;padding:16px 20px;max-width:340px;box-shadow:0 4px 20px rgba(0,0,0,.25);font-size:14px';
+        toast.innerHTML = '<div style="font-weight:700;margin-bottom:4px">&#10003; Pago registrado</div>' +
+            '<div>' + escHtml(vendor) + ' &middot; ' + formatCLP(amount) + '</div>' +
+            '<div style="font-family:monospace;font-size:12px;margin-top:6px;opacity:.9">' + escHtml(comment) + '</div>';
         document.body.appendChild(toast);
-        setTimeout(function () { toast.style.transition = 'opacity .4s'; toast.style.opacity = '0'; }, 3000);
-        setTimeout(function () { if (toast.parentNode) toast.parentNode.removeChild(toast); }, 3500);
+        setTimeout(function () { toast.style.transition = 'opacity .4s'; toast.style.opacity = '0'; }, 3200);
+        setTimeout(function () { if (toast.parentNode) toast.parentNode.removeChild(toast); }, 3700);
     }
 
-    // ── Utilidades HTML ────────────────────────────────────────────────
+    // ── Utils HTML ─────────────────────────────────────────────────────
 
     function escHtml(s) {
         return String(s || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
     }
-
     function escAttr(s) {
         return String(s || '').replace(/&/g, '&amp;').replace(/"/g, '&quot;');
     }
@@ -697,10 +732,11 @@ window.Mazelab.Modules.NominasModule = (function () {
     async function init() {
         cutoffDate = todayStr();
         selectionState = {};
+        historialExpanded = {};
         try {
             payables = await window.Mazelab.DataService.getAll('payables');
         } catch (err) {
-            console.error('NominasModule: failed to load payables', err);
+            console.error('NominasModule: init error', err);
             payables = [];
         }
         renderContent();
