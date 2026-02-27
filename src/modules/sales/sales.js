@@ -512,8 +512,16 @@ window.Mazelab.Modules.SalesModule = (function () {
                     });
                 }
             } else {
+                // Asignar ID numérico auto-incremental (max existente + 1)
+                var maxId = 0;
+                sales.forEach(function(s) {
+                    var numId = parseInt(s.sourceId || s.id, 10);
+                    if (!isNaN(numId) && numId > maxId) maxId = numId;
+                });
+                var nextId = String(maxId + 1);
+
                 // Capture the created sale so we can link CXC and CXP to it
-                const createdSale = await DS.create('sales', data);
+                const createdSale = await DS.create('sales', Object.assign({}, data, { id: nextId, sourceId: nextId }));
                 const saleId = createdSale ? createdSale.id : null;
 
                 // Auto-create CXC (receivable) for this sale

@@ -493,12 +493,12 @@ window.Mazelab.Modules.NominasModule = (function () {
                         : null;
                     return [
                         '<tr style="background:#fafafa">',
-                        '<td style="font-size:12px;font-weight:700;color:var(--primary)">' + escHtml(p.eventId || '-') + '</td>',
-                        '<td style="font-weight:600;font-size:13px">' + escHtml(v) + '</td>',
-                        '<td style="font-size:12px;color:#495057">' + escHtml(p.clientName || '-') + '</td>',
-                        '<td style="font-size:13px">' + escHtml(p.eventName || '-') + '</td>',
-                        '<td style="font-size:12px;color:#495057">' + (p.eventDate || '-') + '</td>',
-                        '<td style="font-size:12px;color:#495057">' + (lastPay ? lastPay.date : '-') + '</td>',
+                        '<td style="font-size:12px;font-weight:700;color:#212529">' + escHtml(p.eventId || '-') + '</td>',
+                        '<td style="font-weight:600;font-size:13px;color:#212529">' + escHtml(v) + '</td>',
+                        '<td style="font-size:12px;color:#212529">' + escHtml(p.clientName || '-') + '</td>',
+                        '<td style="font-size:13px;color:#212529">' + escHtml(p.eventName || '-') + '</td>',
+                        '<td style="font-size:12px;color:#212529">' + (p.eventDate || '-') + '</td>',
+                        '<td style="font-size:12px;color:#212529">' + (lastPay ? lastPay.date : '-') + '</td>',
                         '<td style="text-align:right;font-weight:700;color:#27ae60">' + formatCLP(pagado) + '</td>',
                         '</tr>'
                     ].join('');

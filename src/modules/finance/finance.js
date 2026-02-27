@@ -129,7 +129,7 @@ window.Mazelab.Modules.FinanceModule = (function () {
         // 3. Pagada
         if (r.status === 'pagado' || r.status === 'pagada') return 'pagada';
         // 4. Pendiente factura by status
-        if (r.status === 'pendiente_factura') return 'pendiente_factura';
+        if (r.status === 'pendiente_factura' || r.status === 'sin_factura') return 'pendiente_factura';
         // 5. montoFacturado <= 0
         if (getMontoFacturado(r) <= 0) return 'pendiente_factura';
         // 6. Pending / overdue states — recalculate dynamically from billingMonth
@@ -563,7 +563,8 @@ window.Mazelab.Modules.FinanceModule = (function () {
                 if (realStatus === 'pendiente_factura') {
                     html += '<button class="btn btn-secondary btn-sm btn-facturar" data-id="' + r.id + '" style="margin-right:4px">Facturar</button>';
                 }
-                if (realStatus !== 'pagada' && realStatus !== 'anulada' && realStatus !== 'nc') {
+                // Abono/Pagado Total solo para facturas emitidas (no para filas residuales sin_factura)
+                if (realStatus !== 'pagada' && realStatus !== 'anulada' && realStatus !== 'nc' && realStatus !== 'pendiente_factura') {
                     html += '<button class="btn-primary btn-sm btn-icon btn-abono" data-id="' + r.id + '" title="Agregar abono">+Abono</button> ';
                     html += '<button class="btn-secondary btn-sm btn-icon btn-pagado-total" data-id="' + r.id + '" title="Marcar pagado total">Pagado Total</button> ';
                 }
@@ -617,7 +618,7 @@ window.Mazelab.Modules.FinanceModule = (function () {
                 if (realStatus === 'pendiente_factura') {
                     row += '<button class="btn btn-secondary btn-sm btn-facturar" data-id="' + r.id + '" style="margin-right:4px">Facturar</button>';
                 }
-                if (realStatus !== 'pagada' && realStatus !== 'anulada' && realStatus !== 'nc') {
+                if (realStatus !== 'pagada' && realStatus !== 'anulada' && realStatus !== 'nc' && realStatus !== 'pendiente_factura') {
                     row += '<button class="btn-primary btn-sm btn-icon btn-abono" data-id="' + r.id + '">+Abono</button> ';
                     row += '<button class="btn-secondary btn-sm btn-icon btn-pagado-total" data-id="' + r.id + '">Pagado Total</button> ';
                 }
@@ -1093,7 +1094,7 @@ window.Mazelab.Modules.FinanceModule = (function () {
         var mm = String(today.getMonth() + 1).padStart(2, '0');
         var yyyy = today.getFullYear();
         var todayDMY = dd + '/' + mm + '/' + yyyy;
-        var refAmount = rec.monto_venta || rec.amount || 0;
+        var refAmount = getMonto(rec); // neto restante a facturar
 
         var html = '';
         html += '<div class="modal-overlay active" id="facturar-modal-overlay">';
@@ -1102,8 +1103,12 @@ window.Mazelab.Modules.FinanceModule = (function () {
         html += '    <h3>Registrar Factura</h3>';
         html += '    <button class="modal-close" id="fac-close-x">&times;</button>';
         html += '  </div>';
-        html += '  <p style="color:var(--text-secondary);font-size:13px;margin-bottom:16px;">';
+        html += '  <p style="color:var(--text-secondary);font-size:13px;margin-bottom:8px;">';
         html += '    <strong>' + (rec.clientName || '') + '</strong> — ' + (rec.eventName || '') + '</p>';
+        html += '  <div style="background:#f0f7ff;border:1px solid #bdd7f5;border-radius:6px;padding:10px 14px;margin-bottom:16px;font-size:13px;">';
+        html += '    <span style="color:#555">Neto pendiente de facturar: </span><strong>' + formatCLP(refAmount) + '</strong>';
+        html += '    <span style="color:#888;margin-left:12px;font-size:12px">(puedes facturar una parte o el total)</span>';
+        html += '  </div>';
         html += '  <div class="form-row">';
         html += '    <div class="form-group">';
         html += '      <label>N\u00b0 Factura</label>';
@@ -1182,14 +1187,44 @@ window.Mazelab.Modules.FinanceModule = (function () {
                 return;
             }
             try {
-                await window.Mazelab.DataService.update('receivables', rec.id, {
-                    invoiceNumber: invoiceNumber,
-                    billingMonth: billingMonth,
+                var netoTotal = getMonto(rec); // monto_venta del registro residual
+                if (invoicedAmount > netoTotal) {
+                    alert('El monto facturado (' + formatCLP(invoicedAmount) + ') no puede superar el neto pendiente (' + formatCLP(netoTotal) + ').');
+                    return;
+                }
+                var netoRestante = netoTotal - invoicedAmount;
+
+                // 1. Crear una nueva CXC row para esta factura específica
+                var linkedSaleId = rec.saleId || (/^\d+$/.test(String(rec.id || '')) ? rec.id : null);
+                await window.Mazelab.DataService.create('receivables', {
+                    eventName:      rec.eventName  || '',
+                    eventDate:      rec.eventDate  || '',
+                    clientName:     rec.clientName || '',
+                    montoNeto:      invoicedAmount,
                     invoicedAmount: invoicedAmount,
-                    paymentTerms: paymentTerms,
-                    tipoDoc: tipoDoc,
-                    status: 'pendiente_pago'
+                    monto_venta:    invoicedAmount,
+                    invoiceNumber:  invoiceNumber,
+                    billingMonth:   billingMonth,
+                    paymentTerms:   paymentTerms,
+                    tipoDoc:        tipoDoc,
+                    status:         'pendiente_pago',
+                    saleId:         linkedSaleId,
+                    sourceType:     'factura',
+                    payments:       []
                 });
+
+                // 2. Actualizar o eliminar la CXC residual (por facturar)
+                if (netoRestante <= 0) {
+                    // Completamente facturado: eliminar la fila residual
+                    await window.Mazelab.DataService.remove('receivables', rec.id);
+                } else {
+                    // Parcialmente facturado: reducir el monto restante
+                    await window.Mazelab.DataService.update('receivables', rec.id, {
+                        monto_venta: netoRestante,
+                        status:      'sin_factura'
+                    });
+                }
+
                 closeModal();
                 await loadAndRender();
             } catch (err) { alert('Error: ' + err.message); }
