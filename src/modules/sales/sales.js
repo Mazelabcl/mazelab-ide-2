@@ -557,7 +557,8 @@ window.Mazelab.Modules.SalesModule = (function () {
                                 status: 'pendiente',
                                 isDraft: true,
                                 sourceType: 'auto',
-                                saleId: saleId
+                                saleId: saleId,
+                                eventId: saleId  // ID numérico del evento para Nóminas y CXP
                             });
                         });
                     }

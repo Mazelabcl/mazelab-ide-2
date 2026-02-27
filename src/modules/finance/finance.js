@@ -1106,8 +1106,8 @@ window.Mazelab.Modules.FinanceModule = (function () {
         html += '  <p style="color:var(--text-secondary);font-size:13px;margin-bottom:8px;">';
         html += '    <strong>' + (rec.clientName || '') + '</strong> — ' + (rec.eventName || '') + '</p>';
         html += '  <div style="background:#f0f7ff;border:1px solid #bdd7f5;border-radius:6px;padding:10px 14px;margin-bottom:16px;font-size:13px;">';
-        html += '    <span style="color:#555">Neto pendiente de facturar: </span><strong>' + formatCLP(refAmount) + '</strong>';
-        html += '    <span style="color:#888;margin-left:12px;font-size:12px">(puedes facturar una parte o el total)</span>';
+        html += '    <span style="color:#212529">Neto pendiente de facturar: </span><strong style="color:#212529">' + formatCLP(refAmount) + '</strong>';
+        html += '    <span style="color:#555;margin-left:12px;font-size:12px">(puedes facturar una parte o el total)</span>';
         html += '  </div>';
         html += '  <div class="form-row">';
         html += '    <div class="form-group">';
