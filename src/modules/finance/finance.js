@@ -18,8 +18,9 @@ window.Mazelab.Modules.FinanceModule = (function () {
     // =========================================================================
 
     function getMonto(r) {
-        // Precedencia: montoNeto (nativo) → invoicedAmount (CSV import) → monto_venta (auto-CXC sin factura) → amount (legacy)
-        return Number(r.montoNeto || r.invoicedAmount || r.monto_venta || r.amount) || 0;
+        // Precedencia: montoNeto (CSV import explícito) → monto_venta (total evento auto-CXC) → invoicedAmount → amount (legacy)
+        // monto_venta va antes de invoicedAmount para que al facturar parcialmente no se pierda el valor total del evento
+        return Number(r.montoNeto || r.monto_venta || r.invoicedAmount || r.amount) || 0;
     }
 
     function getMontoFacturado(r) {
@@ -504,6 +505,8 @@ window.Mazelab.Modules.FinanceModule = (function () {
         html += '  <button class="btn-secondary btn-sm" id="finance-toggle-pending">';
         html += showOnlyPending ? 'Ver Todo' : 'Solo Pendientes';
         html += '  </button>';
+        var hasActiveFilters = Object.keys(columnFilters).some(function(k) { return columnFilters[k]; });
+        html += '  <button class="btn-secondary btn-sm" id="finance-clear-filters"' + (hasActiveFilters ? '' : ' style="opacity:.45"') + '>\u2715 Limpiar filtros</button>';
         html += '</div>';
 
         if (currentView === 'agrupada') {
@@ -513,6 +516,7 @@ window.Mazelab.Modules.FinanceModule = (function () {
             var hasMore = list.length > visibleCount;
             html += '<table class="data-table">';
             html += '<thead><tr>';
+            html += '<th style="font-size:11px;white-space:nowrap">ID</th>';
             html += sortTh('Cliente / Evento', 'clientName');
             html += sortTh('N\u00b0 Factura', 'invoiceNumber');
             html += sortTh('Neto', 'neto');
@@ -525,6 +529,7 @@ window.Mazelab.Modules.FinanceModule = (function () {
             html += '</tr>';
             // Filter row
             html += '<tr style="background:var(--bg-tertiary)">';
+            html += '<th style="padding:2px 4px">' + finFilterInput('sourceId', 'ID...') + '</th>';
             html += '<th style="padding:2px 4px">' + finFilterInput('clientName', 'Cliente/Evento...') + '</th>';
             html += '<th style="padding:2px 4px">' + finFilterInput('invoiceNumber', 'N° Fact...') + '</th>';
             html += '<th></th><th></th><th></th><th></th>';
@@ -532,14 +537,20 @@ window.Mazelab.Modules.FinanceModule = (function () {
             html += '<th style="padding:2px 4px">' + finFilterInput('_status', 'Estado...') + '</th>';
             html += '<th></th></tr>';
             html += '</thead><tbody>';
+            if (!showing.length) {
+                html += '<tr><td colspan="10" style="text-align:center;padding:2rem;color:var(--text-muted)">No se encontraron registros que coincidan con el filtro.</td></tr>';
+            }
             showing.forEach(function (r) {
                 var realStatus = r._realStatus || getRealTimeStatus(r);
                 var neto = getMonto(r);
-                var _facturado = getMontoFacturado(r);
-                var totalIva = _facturado <= 0 ? neto : (r.tipoDoc === 'E' ? _facturado : Math.round(_facturado * 1.19));
+                // totalIva siempre se calcula sobre el neto completo (monto_venta) para no perder valor al facturar parcialmente
+                var totalIva = r.tipoDoc === 'E' ? neto : Math.round(neto * 1.19);
                 var pagado = getTotalPagado(r);
                 var restante = Math.max(0, totalIva - pagado);
+                // ID numérico: sourceId del registro CXC, o saleId si es numérico
+                var displayId = r.sourceId || (/^\d+$/.test(String(r.saleId || '')) ? r.saleId : '') || '-';
                 html += '<tr>';
+                html += '<td style="font-size:12px;font-weight:600;white-space:nowrap">' + displayId + '</td>';
                 html += '<td><strong>' + (r.clientName || 'Sin cliente') + '</strong><br><small>' + (r.eventName || '-') + '</small></td>';
                 html += '<td>' + (r.invoiceNumber || '-') + '</td>';
                 html += '<td>' + formatCLP(neto) + '</td>';
@@ -573,7 +584,7 @@ window.Mazelab.Modules.FinanceModule = (function () {
     }
 
     function renderGroupedCXC(list) {
-        if (!list.length) return '<div class="empty-state"><p>No hay registros.</p></div>';
+        if (!list.length) return '<div style="text-align:center;padding:2rem;color:var(--text-muted)">No se encontraron registros que coincidan con el filtro.</div>';
         var groups = {};
         list.forEach(function (r) {
             var key = r.eventName || 'Sin evento';
@@ -591,8 +602,7 @@ window.Mazelab.Modules.FinanceModule = (function () {
             var rows = grp.items.map(function (r) {
                 var realStatus = r._realStatus || getRealTimeStatus(r);
                 var neto = getMonto(r);
-                var _facturado = getMontoFacturado(r);
-                var totalIva = _facturado <= 0 ? neto : (r.tipoDoc === 'E' ? _facturado : Math.round(_facturado * 1.19));
+                var totalIva = r.tipoDoc === 'E' ? neto : Math.round(neto * 1.19);
                 var pagado = getTotalPagado(r);
                 var restante = Math.max(0, totalIva - pagado);
                 var row = '<tr>';
@@ -648,12 +658,14 @@ window.Mazelab.Modules.FinanceModule = (function () {
         if (searchQuery && searchQuery.trim() !== '') {
             var q = searchQuery.toLowerCase().trim();
             list = list.filter(function (r) {
+                var eventId = r.sourceId || (/^\d+$/.test(String(r.saleId || '')) ? r.saleId : '') || '';
                 var searchable = [
                     r.clientName || '',
                     r.eventName || '',
                     r.invoiceNumber || '',
                     r.tipoDoc || '',
-                    r.billingMonth || ''
+                    r.billingMonth || '',
+                    eventId
                 ].join(' ').toLowerCase();
                 return searchable.includes(q);
             });
@@ -688,7 +700,10 @@ window.Mazelab.Modules.FinanceModule = (function () {
             list = list.filter(function (r) {
                 return activeCols.every(function (col) {
                     var fv = (columnFilters[col] || '').toLowerCase();
-                    var val = col === '_status' ? (r._realStatus || '') : String(r[col] || '');
+                    var val;
+                    if (col === '_status') val = r._realStatus || '';
+                    else if (col === 'sourceId') val = r.sourceId || (/^\d+$/.test(String(r.saleId || '')) ? r.saleId : '') || '';
+                    else val = String(r[col] || '');
                     return val.toLowerCase().includes(fv);
                 });
             });
@@ -866,19 +881,24 @@ window.Mazelab.Modules.FinanceModule = (function () {
             });
         });
 
-        // Column filter inputs (with focus restore)
-        var focusedEl = document.activeElement;
-        var focusedCol = (focusedEl && focusedEl.classList.contains('fin-col-filter')) ? focusedEl.dataset.col : null;
-        var focusCursor = focusedCol ? { s: focusedEl.selectionStart, e: focusedEl.selectionEnd } : null;
+        // Column filter inputs
         document.querySelectorAll('.fin-col-filter').forEach(function (input) {
             input.addEventListener('input', function () {
                 columnFilters[input.dataset.col] = input.value;
                 refreshTable();
             });
         });
-        if (focusedCol) {
-            var focusEl = document.querySelector('.fin-col-filter[data-col="' + focusedCol + '"]');
-            if (focusEl) { focusEl.focus(); if (focusCursor) focusEl.setSelectionRange(focusCursor.s, focusCursor.e); }
+
+        // Limpiar filtros
+        var clearFiltersBtn = document.getElementById('finance-clear-filters');
+        if (clearFiltersBtn) {
+            clearFiltersBtn.addEventListener('click', function () {
+                columnFilters = {};
+                searchQuery = '';
+                var searchEl = document.getElementById('finance-search');
+                if (searchEl) searchEl.value = '';
+                refreshTable();
+            });
         }
 
         // Toggle pending
@@ -933,25 +953,28 @@ window.Mazelab.Modules.FinanceModule = (function () {
     }
 
     function refreshTable() {
-        // Re-render just the table portion while preserving KPIs
         var container = document.getElementById('finance-content');
         if (!container) return;
 
-        // Capture focus before re-render (search input gets destroyed)
-        var searchHadFocus = document.activeElement && document.activeElement.id === 'finance-search';
+        // Capturar foco ANTES de destruir el DOM (el activeElement se pierde al reasignar innerHTML)
+        var focusedEl = document.activeElement;
+        var searchHadFocus = focusedEl && focusedEl.id === 'finance-search';
+        var focusedCol = (focusedEl && focusedEl.classList && focusedEl.classList.contains('fin-col-filter')) ? focusedEl.dataset.col : null;
+        var focusCursor = focusedCol ? { s: focusedEl.selectionStart, e: focusedEl.selectionEnd } : null;
 
-        // Rebuild the table card only
         var kpis = computeKPIs(allReceivables);
         container.innerHTML = renderKPIs(kpis) + renderTable(allReceivables);
         attachTableListeners();
 
-        // Restore focus and cursor position to search input
-        if (searchHadFocus || searchQuery) {
+        // Restaurar foco después del re-render
+        if (focusedCol) {
+            setTimeout(function () {
+                var el = document.querySelector('.fin-col-filter[data-col="' + focusedCol + '"]');
+                if (el) { el.focus(); if (focusCursor) el.setSelectionRange(focusCursor.s, focusCursor.e); }
+            }, 0);
+        } else if (searchHadFocus) {
             var newInput = document.getElementById('finance-search');
-            if (newInput && searchHadFocus) {
-                newInput.focus();
-                newInput.setSelectionRange(newInput.value.length, newInput.value.length);
-            }
+            if (newInput) { newInput.focus(); newInput.setSelectionRange(newInput.value.length, newInput.value.length); }
         }
     }
 

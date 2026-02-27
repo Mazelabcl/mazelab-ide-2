@@ -257,7 +257,7 @@ window.Mazelab.Modules.ImportModule = (function () {
             amount: parseAmount(row.amount),
             status: status,
             jornadas: row.jornadas ? parseInt(row.jornadas, 10) || 0 : 0,
-            closingMonth: parseDate(row.closingMonth),
+            closingDate: parseDate(row.closingMonth || row.closingDate),
             staffName: row.staffName || '',
             comments: row.comments || '',
             refundAmount: refundAmount,
@@ -272,8 +272,10 @@ window.Mazelab.Modules.ImportModule = (function () {
         var paid = parseAmount(row.amountPaid);
         var status = calcReceivableStatus(row);
 
+        var csvSourceId = (row.sourceId || row.eventId || '').toString().trim();
         var rec = {
             id: generateId(),
+            sourceId: csvSourceId || undefined,  // ID numérico del CSV para búsqueda/filtro
             clientName: row.clientName || '',
             eventName: row.eventName || '',
             tipoDoc: row.tipoDoc || '',

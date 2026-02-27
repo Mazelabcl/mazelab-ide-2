@@ -158,13 +158,15 @@ window.Mazelab.Modules.NominasModule = (function () {
 
     function render() {
         return [
-            '<div class="page-header">',
+            '<div class="content-header">',
             '  <div>',
-            '    <h1 class="page-title">N\u00f3minas de Pago</h1>',
-            '    <p class="page-subtitle">Genera y gestiona las transferencias semanales a beneficiarios BH</p>',
+            '    <h1 style="font-size:20px;font-weight:700">N\u00f3minas de Pago</h1>',
+            '    <p style="font-size:13px;color:var(--text-secondary);margin:0">Genera y gestiona las transferencias semanales a beneficiarios BH</p>',
             '  </div>',
             '</div>',
-            '<div id="nominas-root"><div class="empty-state"><p>Cargando...</p></div></div>'
+            '<div class="content-body">',
+            '  <div id="nominas-root"><div class="empty-state"><p>Cargando...</p></div></div>',
+            '</div>'
         ].join('\n');
     }
 
@@ -386,13 +388,13 @@ window.Mazelab.Modules.NominasModule = (function () {
             '<tr style="' + rowDim + '">',
             '  <td><input type="checkbox" class="nomina-bh-check" data-id="' + escAttr(p.id) + '" ' + (s.selected ? 'checked' : '') + '></td>',
             '  <td style="font-weight:700;font-size:13px;color:var(--primary)">' + escHtml(p.eventId || '-') + '</td>',
-            '  <td style="font-size:12px;color:var(--text-secondary)">' + escHtml(p.clientName || '-') + '</td>',
+            '  <td style="font-size:12px">' + escHtml(p.clientName || '-') + '</td>',
             '  <td>',
             '    <div style="font-size:13px;font-weight:600">' + escHtml(p.eventName || '-') + '</div>',
             isParcial ? '<div style="font-size:11px;color:#f39c12;margin-top:1px">&#9679; Pago parcial previo (' + formatCLP(pagado) + ' ya pagado)</div>' : '',
             '  </td>',
-            '  <td style="font-size:12px;color:var(--text-secondary);white-space:nowrap">' + (p.eventDate || '-') + '</td>',
-            '  <td style="font-size:12px;white-space:nowrap;color:var(--text-secondary)">' + formatDateShort(dd) + '</td>',
+            '  <td style="font-size:12px;white-space:nowrap">' + (p.eventDate || '-') + '</td>',
+            '  <td style="font-size:12px;white-space:nowrap">' + formatDateShort(dd) + '</td>',
             '  <td style="text-align:right;font-size:13px">' + formatCLP(amount) + '</td>',
             '  <td style="text-align:right;font-size:13px;color:' + (pagado > 0 ? '#27ae60' : 'var(--text-muted)') + '">' + (pagado > 0 ? formatCLP(pagado) : '-') + '</td>',
             '  <td style="text-align:right">',
@@ -426,7 +428,7 @@ window.Mazelab.Modules.NominasModule = (function () {
                     '<tr>',
                     '<td style="font-weight:700;color:var(--primary)">' + escHtml(p.eventId || '-') + '</td>',
                     '<td style="font-weight:600">' + escHtml(p.vendorName || '-') + '</td>',
-                    '<td style="font-size:12px;color:var(--text-secondary)">' + escHtml(p.clientName || '-') + '</td>',
+                    '<td style="font-size:12px">' + escHtml(p.clientName || '-') + '</td>',
                     '<td style="font-size:13px">' + escHtml(p.eventName || '-') + '</td>',
                     '<td style="font-size:12px;color:var(--text-secondary)">' + (p.eventDate || '-') + '</td>',
                     '<td style="' + urg + '">' + formatDateShort(dd) + ' &middot; ' + diff + 'd</td>',

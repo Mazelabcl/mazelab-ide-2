@@ -37,6 +37,8 @@ window.Mazelab.Modules.SalesModule = (function () {
         if (sale.eventDate && new Date(sale.eventDate) < new Date()) {
             return 'realizada';
         }
+        // 'confirmada' tratada como 'pendiente' (estado eliminado)
+        if (sale.status === 'confirmada') return 'pendiente';
         return sale.status || 'pendiente';
     }
 
@@ -69,7 +71,8 @@ window.Mazelab.Modules.SalesModule = (function () {
                 const clientName = (sale.clientName || getClientName(sale.clientId)).toLowerCase();
                 const eventName = (sale.eventName || '').toLowerCase();
                 const serviceNames = getServiceNames(sale.serviceIds).toLowerCase();
-                return clientName.includes(q) || eventName.includes(q) || serviceNames.includes(q);
+                const sourceId = String(sale.sourceId || '').toLowerCase();
+                return clientName.includes(q) || eventName.includes(q) || serviceNames.includes(q) || sourceId.includes(q);
             }
             return true;
         });
@@ -161,10 +164,10 @@ window.Mazelab.Modules.SalesModule = (function () {
             const utilidad = (Number(sale.amount) || 0) - cost;
             const margenPct = (Number(sale.amount) || 0) > 0 ? utilidad / Number(sale.amount) : null;
             const marginClass = utilidad >= 0 ? 'text-success' : 'text-danger';
-            const displayId = sale.sourceId || String(sale.id || '').slice(-6);
+            const displayId = sale.sourceId || '';
             return `
                 <tr data-id="${sale.id}">
-                    <td style="font-size:11px;color:var(--text-muted);white-space:nowrap">${displayId}</td>
+                    <td style="font-size:12px;font-weight:600;white-space:nowrap">${displayId}</td>
                     <td>${clientName}</td>
                     <td>${serviceNames}</td>
                     <td>${sale.eventName || ''}</td>
@@ -246,14 +249,13 @@ window.Mazelab.Modules.SalesModule = (function () {
 
                     <div class="form-row">
                         <div class="form-group">
-                            <label for="sale-closing-month">Fecha de Venta (Mes)</label>
-                            <input type="month" id="sale-closing-month" class="form-control" />
+                            <label for="sale-closing-date">Fecha Cierre de Venta</label>
+                            <input type="date" id="sale-closing-date" class="form-control" />
                         </div>
                         <div class="form-group">
                             <label for="sale-status">Estado</label>
                             <select id="sale-status" class="form-control">
                                 <option value="pendiente">Pendiente</option>
-                                <option value="confirmada">Confirmada</option>
                                 <option value="realizada">Realizada</option>
                                 <option value="cancelada">Cancelada</option>
                             </select>
@@ -341,7 +343,7 @@ window.Mazelab.Modules.SalesModule = (function () {
 
     function renderTableHeader() {
         const filterRow = `<tr class="filter-row" style="background:var(--bg-tertiary)">
-            <th style="padding:2px 4px;font-weight:400"><span style="font-size:10px;color:var(--text-muted)">ID</span></th>
+            <th style="padding:2px 4px">${filterInput('sourceId', 'ID...')}</th>
             <th style="padding:2px 4px">${filterInput('clientName', 'Cliente...')}</th>
             <th style="padding:2px 4px"></th>
             <th style="padding:2px 4px">${filterInput('eventName', 'Evento...')}</th>
@@ -354,7 +356,7 @@ window.Mazelab.Modules.SalesModule = (function () {
             <th style="padding:2px 4px"></th>
         </tr>`;
         return `<tr>
-            <th style="font-size:11px;color:var(--text-muted);white-space:nowrap">ID</th>
+            ${sortTh('ID', 'sourceId')}
             ${sortTh('Cliente', 'clientName')}
             <th>Servicios</th>
             ${sortTh('Evento', 'eventName')}
@@ -420,7 +422,12 @@ window.Mazelab.Modules.SalesModule = (function () {
             document.getElementById('sale-client').value = sale.clientId || '';
             document.getElementById('sale-event-name').value = sale.eventName || '';
             document.getElementById('sale-event-date').value = sale.eventDate || '';
-            document.getElementById('sale-closing-month').value = sale.closingMonth || '';
+            // Soporta closingDate (nuevo) y closingMonth (legacy mes)
+            var closingVal = sale.closingDate || '';
+            if (!closingVal && sale.closingMonth) {
+                closingVal = /^\d{4}-\d{2}$/.test(sale.closingMonth) ? sale.closingMonth + '-01' : sale.closingMonth;
+            }
+            document.getElementById('sale-closing-date').value = closingVal;
             document.getElementById('sale-jornadas').value = sale.jornadas != null ? sale.jornadas : '';
             document.getElementById('sale-amount').value = sale.amount != null ? sale.amount : '';
             document.getElementById('sale-staff').value = sale.staffId || '';
@@ -471,7 +478,7 @@ window.Mazelab.Modules.SalesModule = (function () {
             clientName: clientName,
             eventName: document.getElementById('sale-event-name').value,
             eventDate: document.getElementById('sale-event-date').value,
-            closingMonth: document.getElementById('sale-closing-month').value,
+            closingDate: document.getElementById('sale-closing-date').value,
             serviceIds: selectedServices,
             jornadas: document.getElementById('sale-jornadas').value ? Number(document.getElementById('sale-jornadas').value) : null,
             amount: document.getElementById('sale-amount').value ? Number(document.getElementById('sale-amount').value) : 0,
