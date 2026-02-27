@@ -521,7 +521,32 @@ window.Mazelab.Modules.SalesModule = (function () {
                 var nextId = String(maxId + 1);
 
                 // Capture the created sale so we can link CXC and CXP to it
-                const createdSale = await DS.create('sales', Object.assign({}, data, { id: nextId, sourceId: nextId }));
+                // Kanban board fields for new sale
+                var kanbanChecklist = [
+                    { key: 'contacto_inicial',      label: 'Contacto inicial con cliente',    group: 'Pre-evento', checked: false, checkedAt: null },
+                    { key: 'diseno_solicitado',     label: 'Dise\u00f1o solicitado',                   group: 'Pre-evento', checked: false, checkedAt: null },
+                    { key: 'diseno_enviado',        label: 'Dise\u00f1o enviado al cliente',           group: 'Pre-evento', checked: false, checkedAt: null },
+                    { key: 'diseno_aprobado',       label: 'Dise\u00f1o aprobado por cliente',         group: 'Pre-evento', checked: false, checkedAt: null },
+                    { key: 'logistica_confirmada',  label: 'Log\u00edstica confirmada',                group: 'Pre-evento', checked: false, checkedAt: null },
+                    { key: 'equipo_asignado',       label: 'Equipo asignado',                 group: 'Pre-evento', checked: false, checkedAt: null },
+                    { key: 'freelance_confirmados', label: 'Freelancers confirmados',         group: 'Pre-evento', checked: false, checkedAt: null },
+                    { key: 'montaje_realizado',     label: 'Montaje realizado',               group: 'D\u00eda del evento', checked: false, checkedAt: null },
+                    { key: 'foto_montaje',          label: 'Foto montaje enviada',            group: 'D\u00eda del evento', checked: false, checkedAt: null },
+                    { key: 'evento_ejecutado',      label: 'Evento ejecutado sin incidentes', group: 'D\u00eda del evento', checked: false, checkedAt: null },
+                    { key: 'desmontaje_correcto',   label: 'Desmontaje correcto',             group: 'Post-evento', checked: false, checkedAt: null },
+                    { key: 'material_respaldado',   label: 'Material respaldado',             group: 'Post-evento', checked: false, checkedAt: null },
+                    { key: 'informe_interno',       label: 'Informe interno completado',      group: 'Post-evento', checked: false, checkedAt: null }
+                ];
+
+                const createdSale = await DS.create('sales', Object.assign({}, data, {
+                    id: nextId,
+                    sourceId: nextId,
+                    boardColumn: 1,
+                    boardOrder: Date.now(),
+                    checklist: kanbanChecklist,
+                    encargado: '',
+                    kanbanNotes: ''
+                }));
                 const saleId = createdSale ? createdSale.id : null;
 
                 // Auto-create CXC (receivable) for this sale
