@@ -39,8 +39,8 @@ window.Mazelab.Modules.ImportModule = (function () {
         eventId: ['id_venta','sale_id','eventid'],
         sourceId: ['id','id_evento','sale_identifier'],
         billingDate: ['fecha_emision','fecha_doc','emision','billing_date','fecha emision'],
-        docType: ['tipo_de_costo','tipo_documento','document_type'],
-        docNumber: ['num_doc','documento','numero_documento','doc_number','valor_documento'],
+        docType: ['documento','tipo_documento','document_type'],
+        docNumber: ['num_doc','numero_documento','doc_number'],
         paymentAmount: ['valor_pago','payment_amount'],
         paidAmount: ['monto_pagado','paid_amount'],
         pendingAmount: ['monto_pendiente','pending_amount'],
@@ -257,7 +257,7 @@ window.Mazelab.Modules.ImportModule = (function () {
             amount: parseAmount(row.amount),
             status: status,
             jornadas: row.jornadas ? parseInt(row.jornadas, 10) || 0 : 0,
-            closingMonth: parseDate(row.closingMonth),
+            closingDate: parseDate(row.closingMonth || row.closingDate),
             staffName: row.staffName || '',
             comments: row.comments || '',
             refundAmount: refundAmount,
@@ -272,8 +272,10 @@ window.Mazelab.Modules.ImportModule = (function () {
         var paid = parseAmount(row.amountPaid);
         var status = calcReceivableStatus(row);
 
+        var csvSourceId = (row.sourceId || row.eventId || '').toString().trim();
         var rec = {
             id: generateId(),
+            sourceId: csvSourceId || undefined,  // ID numérico del CSV para búsqueda/filtro
             clientName: row.clientName || '',
             eventName: row.eventName || '',
             tipoDoc: row.tipoDoc || '',

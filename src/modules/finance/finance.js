@@ -18,8 +18,9 @@ window.Mazelab.Modules.FinanceModule = (function () {
     // =========================================================================
 
     function getMonto(r) {
-        // Precedencia: montoNeto (nativo) → invoicedAmount (CSV import) → monto_venta (auto-CXC sin factura) → amount (legacy)
-        return Number(r.montoNeto || r.invoicedAmount || r.monto_venta || r.amount) || 0;
+        // Precedencia: montoNeto (CSV import explícito) → monto_venta (total evento auto-CXC) → invoicedAmount → amount (legacy)
+        // monto_venta va antes de invoicedAmount para que al facturar parcialmente no se pierda el valor total del evento
+        return Number(r.montoNeto || r.monto_venta || r.invoicedAmount || r.amount) || 0;
     }
 
     function getMontoFacturado(r) {
@@ -128,7 +129,7 @@ window.Mazelab.Modules.FinanceModule = (function () {
         // 3. Pagada
         if (r.status === 'pagado' || r.status === 'pagada') return 'pagada';
         // 4. Pendiente factura by status
-        if (r.status === 'pendiente_factura') return 'pendiente_factura';
+        if (r.status === 'pendiente_factura' || r.status === 'sin_factura') return 'pendiente_factura';
         // 5. montoFacturado <= 0
         if (getMontoFacturado(r) <= 0) return 'pendiente_factura';
         // 6. Pending / overdue states — recalculate dynamically from billingMonth
@@ -504,6 +505,8 @@ window.Mazelab.Modules.FinanceModule = (function () {
         html += '  <button class="btn-secondary btn-sm" id="finance-toggle-pending">';
         html += showOnlyPending ? 'Ver Todo' : 'Solo Pendientes';
         html += '  </button>';
+        var hasActiveFilters = Object.keys(columnFilters).some(function(k) { return columnFilters[k]; });
+        html += '  <button class="btn-secondary btn-sm" id="finance-clear-filters"' + (hasActiveFilters ? '' : ' style="opacity:.45"') + '>\u2715 Limpiar filtros</button>';
         html += '</div>';
 
         if (currentView === 'agrupada') {
@@ -513,6 +516,7 @@ window.Mazelab.Modules.FinanceModule = (function () {
             var hasMore = list.length > visibleCount;
             html += '<table class="data-table">';
             html += '<thead><tr>';
+            html += '<th style="font-size:11px;white-space:nowrap">ID</th>';
             html += sortTh('Cliente / Evento', 'clientName');
             html += sortTh('N\u00b0 Factura', 'invoiceNumber');
             html += sortTh('Neto', 'neto');
@@ -525,6 +529,7 @@ window.Mazelab.Modules.FinanceModule = (function () {
             html += '</tr>';
             // Filter row
             html += '<tr style="background:var(--bg-tertiary)">';
+            html += '<th style="padding:2px 4px">' + finFilterInput('sourceId', 'ID...') + '</th>';
             html += '<th style="padding:2px 4px">' + finFilterInput('clientName', 'Cliente/Evento...') + '</th>';
             html += '<th style="padding:2px 4px">' + finFilterInput('invoiceNumber', 'N° Fact...') + '</th>';
             html += '<th></th><th></th><th></th><th></th>';
@@ -532,13 +537,20 @@ window.Mazelab.Modules.FinanceModule = (function () {
             html += '<th style="padding:2px 4px">' + finFilterInput('_status', 'Estado...') + '</th>';
             html += '<th></th></tr>';
             html += '</thead><tbody>';
+            if (!showing.length) {
+                html += '<tr><td colspan="10" style="text-align:center;padding:2rem;color:var(--text-muted)">No se encontraron registros que coincidan con el filtro.</td></tr>';
+            }
             showing.forEach(function (r) {
                 var realStatus = r._realStatus || getRealTimeStatus(r);
                 var neto = getMonto(r);
-                var totalIva = r.tipoDoc === 'E' ? neto : (getMontoFacturado(r) * 1.19);
+                // totalIva siempre se calcula sobre el neto completo (monto_venta) para no perder valor al facturar parcialmente
+                var totalIva = r.tipoDoc === 'E' ? neto : Math.round(neto * 1.19);
                 var pagado = getTotalPagado(r);
-                var restante = totalIva - pagado;
+                var restante = Math.max(0, totalIva - pagado);
+                // ID numérico: sourceId del registro CXC, o saleId si es numérico
+                var displayId = r.sourceId || (/^\d+$/.test(String(r.saleId || '')) ? r.saleId : '') || '-';
                 html += '<tr>';
+                html += '<td style="font-size:12px;font-weight:600;white-space:nowrap">' + displayId + '</td>';
                 html += '<td><strong>' + (r.clientName || 'Sin cliente') + '</strong><br><small>' + (r.eventName || '-') + '</small></td>';
                 html += '<td>' + (r.invoiceNumber || '-') + '</td>';
                 html += '<td>' + formatCLP(neto) + '</td>';
@@ -551,7 +563,8 @@ window.Mazelab.Modules.FinanceModule = (function () {
                 if (realStatus === 'pendiente_factura') {
                     html += '<button class="btn btn-secondary btn-sm btn-facturar" data-id="' + r.id + '" style="margin-right:4px">Facturar</button>';
                 }
-                if (realStatus !== 'pagada' && realStatus !== 'anulada' && realStatus !== 'nc') {
+                // Abono/Pagado Total solo para facturas emitidas (no para filas residuales sin_factura)
+                if (realStatus !== 'pagada' && realStatus !== 'anulada' && realStatus !== 'nc' && realStatus !== 'pendiente_factura') {
                     html += '<button class="btn-primary btn-sm btn-icon btn-abono" data-id="' + r.id + '" title="Agregar abono">+Abono</button> ';
                     html += '<button class="btn-secondary btn-sm btn-icon btn-pagado-total" data-id="' + r.id + '" title="Marcar pagado total">Pagado Total</button> ';
                 }
@@ -572,7 +585,7 @@ window.Mazelab.Modules.FinanceModule = (function () {
     }
 
     function renderGroupedCXC(list) {
-        if (!list.length) return '<div class="empty-state"><p>No hay registros.</p></div>';
+        if (!list.length) return '<div style="text-align:center;padding:2rem;color:var(--text-muted)">No se encontraron registros que coincidan con el filtro.</div>';
         var groups = {};
         list.forEach(function (r) {
             var key = r.eventName || 'Sin evento';
@@ -590,9 +603,9 @@ window.Mazelab.Modules.FinanceModule = (function () {
             var rows = grp.items.map(function (r) {
                 var realStatus = r._realStatus || getRealTimeStatus(r);
                 var neto = getMonto(r);
-                var totalIva = r.tipoDoc === 'E' ? neto : (getMontoFacturado(r) * 1.19);
+                var totalIva = r.tipoDoc === 'E' ? neto : Math.round(neto * 1.19);
                 var pagado = getTotalPagado(r);
-                var restante = totalIva - pagado;
+                var restante = Math.max(0, totalIva - pagado);
                 var row = '<tr>';
                 row += '<td>' + (r.invoiceNumber || '-') + '</td>';
                 row += '<td>' + formatCLP(neto) + '</td>';
@@ -605,7 +618,7 @@ window.Mazelab.Modules.FinanceModule = (function () {
                 if (realStatus === 'pendiente_factura') {
                     row += '<button class="btn btn-secondary btn-sm btn-facturar" data-id="' + r.id + '" style="margin-right:4px">Facturar</button>';
                 }
-                if (realStatus !== 'pagada' && realStatus !== 'anulada' && realStatus !== 'nc') {
+                if (realStatus !== 'pagada' && realStatus !== 'anulada' && realStatus !== 'nc' && realStatus !== 'pendiente_factura') {
                     row += '<button class="btn-primary btn-sm btn-icon btn-abono" data-id="' + r.id + '">+Abono</button> ';
                     row += '<button class="btn-secondary btn-sm btn-icon btn-pagado-total" data-id="' + r.id + '">Pagado Total</button> ';
                 }
@@ -646,12 +659,14 @@ window.Mazelab.Modules.FinanceModule = (function () {
         if (searchQuery && searchQuery.trim() !== '') {
             var q = searchQuery.toLowerCase().trim();
             list = list.filter(function (r) {
+                var eventId = r.sourceId || (/^\d+$/.test(String(r.saleId || '')) ? r.saleId : '') || '';
                 var searchable = [
                     r.clientName || '',
                     r.eventName || '',
                     r.invoiceNumber || '',
                     r.tipoDoc || '',
-                    r.billingMonth || ''
+                    r.billingMonth || '',
+                    eventId
                 ].join(' ').toLowerCase();
                 return searchable.includes(q);
             });
@@ -686,7 +701,10 @@ window.Mazelab.Modules.FinanceModule = (function () {
             list = list.filter(function (r) {
                 return activeCols.every(function (col) {
                     var fv = (columnFilters[col] || '').toLowerCase();
-                    var val = col === '_status' ? (r._realStatus || '') : String(r[col] || '');
+                    var val;
+                    if (col === '_status') val = r._realStatus || '';
+                    else if (col === 'sourceId') val = r.sourceId || (/^\d+$/.test(String(r.saleId || '')) ? r.saleId : '') || '';
+                    else val = String(r[col] || '');
                     return val.toLowerCase().includes(fv);
                 });
             });
@@ -864,19 +882,24 @@ window.Mazelab.Modules.FinanceModule = (function () {
             });
         });
 
-        // Column filter inputs (with focus restore)
-        var focusedEl = document.activeElement;
-        var focusedCol = (focusedEl && focusedEl.classList.contains('fin-col-filter')) ? focusedEl.dataset.col : null;
-        var focusCursor = focusedCol ? { s: focusedEl.selectionStart, e: focusedEl.selectionEnd } : null;
+        // Column filter inputs
         document.querySelectorAll('.fin-col-filter').forEach(function (input) {
             input.addEventListener('input', function () {
                 columnFilters[input.dataset.col] = input.value;
                 refreshTable();
             });
         });
-        if (focusedCol) {
-            var focusEl = document.querySelector('.fin-col-filter[data-col="' + focusedCol + '"]');
-            if (focusEl) { focusEl.focus(); if (focusCursor) focusEl.setSelectionRange(focusCursor.s, focusCursor.e); }
+
+        // Limpiar filtros
+        var clearFiltersBtn = document.getElementById('finance-clear-filters');
+        if (clearFiltersBtn) {
+            clearFiltersBtn.addEventListener('click', function () {
+                columnFilters = {};
+                searchQuery = '';
+                var searchEl = document.getElementById('finance-search');
+                if (searchEl) searchEl.value = '';
+                refreshTable();
+            });
         }
 
         // Toggle pending
@@ -931,25 +954,28 @@ window.Mazelab.Modules.FinanceModule = (function () {
     }
 
     function refreshTable() {
-        // Re-render just the table portion while preserving KPIs
         var container = document.getElementById('finance-content');
         if (!container) return;
 
-        // Capture focus before re-render (search input gets destroyed)
-        var searchHadFocus = document.activeElement && document.activeElement.id === 'finance-search';
+        // Capturar foco ANTES de destruir el DOM (el activeElement se pierde al reasignar innerHTML)
+        var focusedEl = document.activeElement;
+        var searchHadFocus = focusedEl && focusedEl.id === 'finance-search';
+        var focusedCol = (focusedEl && focusedEl.classList && focusedEl.classList.contains('fin-col-filter')) ? focusedEl.dataset.col : null;
+        var focusCursor = focusedCol ? { s: focusedEl.selectionStart, e: focusedEl.selectionEnd } : null;
 
-        // Rebuild the table card only
         var kpis = computeKPIs(allReceivables);
         container.innerHTML = renderKPIs(kpis) + renderTable(allReceivables);
         attachTableListeners();
 
-        // Restore focus and cursor position to search input
-        if (searchHadFocus || searchQuery) {
+        // Restaurar foco después del re-render
+        if (focusedCol) {
+            setTimeout(function () {
+                var el = document.querySelector('.fin-col-filter[data-col="' + focusedCol + '"]');
+                if (el) { el.focus(); if (focusCursor) el.setSelectionRange(focusCursor.s, focusCursor.e); }
+            }, 0);
+        } else if (searchHadFocus) {
             var newInput = document.getElementById('finance-search');
-            if (newInput && searchHadFocus) {
-                newInput.focus();
-                newInput.setSelectionRange(newInput.value.length, newInput.value.length);
-            }
+            if (newInput) { newInput.focus(); newInput.setSelectionRange(newInput.value.length, newInput.value.length); }
         }
     }
 
@@ -1068,7 +1094,7 @@ window.Mazelab.Modules.FinanceModule = (function () {
         var mm = String(today.getMonth() + 1).padStart(2, '0');
         var yyyy = today.getFullYear();
         var todayDMY = dd + '/' + mm + '/' + yyyy;
-        var refAmount = rec.monto_venta || rec.amount || 0;
+        var refAmount = getMonto(rec); // neto restante a facturar
 
         var html = '';
         html += '<div class="modal-overlay active" id="facturar-modal-overlay">';
@@ -1077,8 +1103,12 @@ window.Mazelab.Modules.FinanceModule = (function () {
         html += '    <h3>Registrar Factura</h3>';
         html += '    <button class="modal-close" id="fac-close-x">&times;</button>';
         html += '  </div>';
-        html += '  <p style="color:var(--text-secondary);font-size:13px;margin-bottom:16px;">';
+        html += '  <p style="color:var(--text-secondary);font-size:13px;margin-bottom:8px;">';
         html += '    <strong>' + (rec.clientName || '') + '</strong> — ' + (rec.eventName || '') + '</p>';
+        html += '  <div style="background:#f0f7ff;border:1px solid #bdd7f5;border-radius:6px;padding:10px 14px;margin-bottom:16px;font-size:13px;">';
+        html += '    <span style="color:#212529">Neto pendiente de facturar: </span><strong style="color:#212529">' + formatCLP(refAmount) + '</strong>';
+        html += '    <span style="color:#555;margin-left:12px;font-size:12px">(puedes facturar una parte o el total)</span>';
+        html += '  </div>';
         html += '  <div class="form-row">';
         html += '    <div class="form-group">';
         html += '      <label>N\u00b0 Factura</label>';
@@ -1097,6 +1127,15 @@ window.Mazelab.Modules.FinanceModule = (function () {
         html += '    <div class="form-group">';
         html += '      <label>Cond. de Pago (d\u00edas)</label>';
         html += '      <input type="number" class="form-control" id="fac-terms" value="30" min="1" step="1" placeholder="30">';
+        html += '    </div>';
+        html += '  </div>';
+        html += '  <div class="form-row" style="margin-bottom:8px">';
+        html += '    <div class="form-group" style="margin-bottom:0">';
+        html += '      <label>Tipo de documento</label>';
+        html += '      <select class="form-control" id="fac-tipo">';
+        html += '        <option value="F">Factura (+ 19% IVA)</option>';
+        html += '        <option value="E">Factura Exenta (sin IVA)</option>';
+        html += '      </select>';
         html += '    </div>';
         html += '  </div>';
         html += '  <div style="background:var(--bg-tertiary);border-radius:var(--radius-sm);padding:12px;margin-bottom:16px;font-size:13px;">';
@@ -1121,17 +1160,22 @@ window.Mazelab.Modules.FinanceModule = (function () {
         });
 
         // Live IVA preview
-        document.getElementById('fac-amount').addEventListener('input', function () {
-            var neto = Number(this.value) || 0;
-            document.getElementById('fac-iva-preview').textContent = formatCLP(neto * 0.19);
-            document.getElementById('fac-total-preview').textContent = formatCLP(neto * 1.19);
-        });
+        function updateIvaPreview() {
+            var neto = Number(document.getElementById('fac-amount').value) || 0;
+            var tipo = document.getElementById('fac-tipo').value;
+            var iva  = tipo === 'E' ? 0 : Math.round(neto * 0.19);
+            document.getElementById('fac-iva-preview').textContent = tipo === 'E' ? '$0 (exenta)' : formatCLP(iva);
+            document.getElementById('fac-total-preview').textContent = formatCLP(neto + iva);
+        }
+        document.getElementById('fac-amount').addEventListener('input', updateIvaPreview);
+        document.getElementById('fac-tipo').addEventListener('change', updateIvaPreview);
 
         document.getElementById('fac-save-btn').addEventListener('click', async function () {
             var invoiceNumber = document.getElementById('fac-number').value.trim();
             var billingMonth = document.getElementById('fac-date').value.trim();
             var invoicedAmount = Number(document.getElementById('fac-amount').value) || 0;
             var paymentTerms = Number(document.getElementById('fac-terms').value) || 30;
+            var tipoDoc = document.getElementById('fac-tipo').value;
 
             // Validate DD/MM/YYYY
             if (!/^\d{2}\/\d{2}\/\d{4}$/.test(billingMonth)) {
@@ -1143,13 +1187,44 @@ window.Mazelab.Modules.FinanceModule = (function () {
                 return;
             }
             try {
-                await window.Mazelab.DataService.update('receivables', rec.id, {
-                    invoiceNumber: invoiceNumber,
-                    billingMonth: billingMonth,
+                var netoTotal = getMonto(rec); // monto_venta del registro residual
+                if (invoicedAmount > netoTotal) {
+                    alert('El monto facturado (' + formatCLP(invoicedAmount) + ') no puede superar el neto pendiente (' + formatCLP(netoTotal) + ').');
+                    return;
+                }
+                var netoRestante = netoTotal - invoicedAmount;
+
+                // 1. Crear una nueva CXC row para esta factura específica
+                var linkedSaleId = rec.saleId || (/^\d+$/.test(String(rec.id || '')) ? rec.id : null);
+                await window.Mazelab.DataService.create('receivables', {
+                    eventName:      rec.eventName  || '',
+                    eventDate:      rec.eventDate  || '',
+                    clientName:     rec.clientName || '',
+                    montoNeto:      invoicedAmount,
                     invoicedAmount: invoicedAmount,
-                    paymentTerms: paymentTerms,
-                    status: 'pendiente_pago'
+                    monto_venta:    invoicedAmount,
+                    invoiceNumber:  invoiceNumber,
+                    billingMonth:   billingMonth,
+                    paymentTerms:   paymentTerms,
+                    tipoDoc:        tipoDoc,
+                    status:         'pendiente_pago',
+                    saleId:         linkedSaleId,
+                    sourceType:     'factura',
+                    payments:       []
                 });
+
+                // 2. Actualizar o eliminar la CXC residual (por facturar)
+                if (netoRestante <= 0) {
+                    // Completamente facturado: eliminar la fila residual
+                    await window.Mazelab.DataService.remove('receivables', rec.id);
+                } else {
+                    // Parcialmente facturado: reducir el monto restante
+                    await window.Mazelab.DataService.update('receivables', rec.id, {
+                        monto_venta: netoRestante,
+                        status:      'sin_factura'
+                    });
+                }
+
                 closeModal();
                 await loadAndRender();
             } catch (err) { alert('Error: ' + err.message); }
