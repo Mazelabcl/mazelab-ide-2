@@ -581,8 +581,10 @@ window.Mazelab.Modules.KanbanModule = (function () {
                 var checkedClass = item.checked ? ' checked' : '';
                 var dateStr = item.checkedAt ? formatShortDate(item.checkedAt) : '';
                 return '<div class="checklist-item' + checkedClass + '">' +
+                    '<div>' + 
                     '<input type="checkbox" id="cl-' + item.key + '"' + (item.checked ? ' checked' : '') + ' data-key="' + item.key + '">' +
                     '<label for="cl-' + item.key + '">' + item.label + '</label>' +
+                    '</div>' + 
                     (dateStr ? '<span class="checklist-date">' + dateStr + '</span>' : '') +
                     '</div>';
             }).join('');
