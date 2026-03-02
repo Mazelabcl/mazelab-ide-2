@@ -373,15 +373,52 @@ window.Mazelab.Modules.SalesModule = (function () {
                             <span>${cat}</span> 
                             <span class="accordion-arrow" style="font-size: 12px; opacity: 0.6; transition: transform 0.2s; display: inline-block;">▼</span>
                         </button>
-                        <div class="accordion-content checkbox-group" style="padding: 16px; background: rgba(255, 255, 255, 0.02); border-top: 1px solid var(--border); display: none; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 12px;">
-                            ${grouped[cat].map(svc => {
-                    const name = svc.name || svc.nombre || '';
-                    return `
-                                    <label class="checkbox-label" style="margin: 0; background: var(--bg-card); padding: 8px 12px; border-radius: 6px; border: 1px solid var(--border); width: 100%; box-sizing: border-box; display: flex; align-items: center; gap: 8px; cursor: pointer;">
-                                        <input type="checkbox" class="sale-service-cb" value="${svc.id}" style="margin: 0; cursor: pointer;" />
-                                        <span style="white-space: nowrap; overflow: hidden; text-overflow: ellipsis;" title="${escapeHtml(name)}">${escapeHtml(name)}</span>
-                                    </label>`;
-                }).join('')}
+                        <div class="accordion-content checkbox-group" style="padding: 16px; background: rgba(255, 255, 255, 0.02); border-top: 1px solid var(--border); display: none; flex-direction: column; gap: 12px;">
+                            ${(function () {
+                        const featured = grouped[cat].filter(s => s.featured);
+                        const regular = grouped[cat].filter(s => !s.featured);
+
+                        const renderSvc = (svc) => {
+                            const name = svc.name || svc.nombre || '';
+                            return `
+                                        <label class="checkbox-label" style="margin: 0; background: var(--bg-card); padding: 8px 12px; border-radius: 6px; border: 1px solid var(--border); width: 100%; box-sizing: border-box; display: flex; align-items: center; gap: 8px; cursor: pointer;">
+                                            <input type="checkbox" class="sale-service-cb" value="${svc.id}" style="margin: 0; cursor: pointer;" />
+                                            <span style="white-space: nowrap; overflow: hidden; text-overflow: ellipsis;" title="${escapeHtml(name)}">${escapeHtml(name)}</span>
+                                            ${svc.featured ? '<span style="font-size:12px;color:var(--warning);margin-left:auto" title="Destacado">★</span>' : ''}
+                                        </label>`;
+                        };
+
+                        let innerHtml = '<div style="display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 12px;">';
+                        if (featured.length > 0) {
+                            innerHtml += featured.map(renderSvc).join('');
+                        } else if (regular.length > 0) {
+                            // Make sure nothing is hidden if no "featured" is available
+                            innerHtml += regular.map(renderSvc).join('');
+                            regular.length = 0;
+                        }
+                        innerHtml += '</div>';
+
+                        if (regular.length > 0) {
+                            const moreId = 'more-btn-' + cat.replace(/[^a-zA-Z0-9]/g, '');
+                            innerHtml += `
+                                    <div style="margin-top: 8px; border-top: 1px dashed rgba(255,255,255,0.1); padding-top: 12px;">
+                                        <button type="button" class="btn-sm btn-secondary" style="width: 100%; margin-bottom: 12px; background: transparent; border: 1px solid rgba(255,255,255,0.1);" onclick="
+                                            var d = document.getElementById('${moreId}');
+                                            if (d.style.display === 'none' || d.style.display === '') {
+                                                d.style.display = 'grid';
+                                                this.innerHTML = 'Mostrar menos ▲';
+                                            } else {
+                                                d.style.display = 'none';
+                                                this.innerHTML = 'Mostrar ${regular.length} más ▼';
+                                            }
+                                        ">Mostrar ${regular.length} más ▼</button>
+                                        <div id="${moreId}" style="display: none; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 12px;">
+                                            ${regular.map(renderSvc).join('')}
+                                        </div>
+                                    </div>`;
+                        }
+                        return innerHtml;
+                    })()}
                         </div>
                     </div>`;
             });
