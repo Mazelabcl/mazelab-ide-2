@@ -321,6 +321,7 @@
     font-size: 14px;
     font-family: var(--font-family);
     transition: all var(--transition-normal);
+    color-scheme: dark;
 }
 
 .form-control:focus {
@@ -336,6 +337,11 @@ select.form-control {
     background-repeat: no-repeat;
     background-position: right 16px center;
     padding-right: 40px;
+}
+
+input[type="date"].form-control::-webkit-calendar-picker-indicator {
+    opacity: 0.7;
+    cursor: pointer;
 }
 
 textarea.form-control {
