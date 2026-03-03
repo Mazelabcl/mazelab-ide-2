@@ -17,6 +17,11 @@ window.Mazelab.Modules.SalesModule = (function () {
         return '$' + Number(amount).toFixed(0).replace(/\B(?=(\d{3})+(?!\d))/g, '.');
     }
 
+    function escapeHtml(str) {
+        if (!str) return '';
+        return String(str).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+    }
+
     function getStatusBadgeClass(status) {
         const map = {
             realizada: 'badge-success',
@@ -158,9 +163,9 @@ window.Mazelab.Modules.SalesModule = (function () {
             const statusLabel = effectiveStatus ? effectiveStatus.charAt(0).toUpperCase() + effectiveStatus.slice(1) : '';
             const _sn = (sale.eventName || '').trim().toLowerCase();
             const cost = eventCosts[String(sale.id)]
-                      || (sale.sourceId ? eventCosts[String(sale.sourceId)] : 0)
-                      || (_sn ? eventCosts['__n__' + _sn] : 0)
-                      || 0;
+                || (sale.sourceId ? eventCosts[String(sale.sourceId)] : 0)
+                || (_sn ? eventCosts['__n__' + _sn] : 0)
+                || 0;
             const utilidad = (Number(sale.amount) || 0) - cost;
             const margenPct = (Number(sale.amount) || 0) > 0 ? utilidad / Number(sale.amount) : null;
             const marginClass = utilidad >= 0 ? 'text-success' : 'text-danger';
@@ -264,7 +269,7 @@ window.Mazelab.Modules.SalesModule = (function () {
 
                     <div class="form-group">
                         <label>Servicios</label>
-                        <div id="sale-services-checkboxes" class="checkbox-group">
+                        <div id="sale-services-accordion" class="services-accordion">
                         </div>
                     </div>
 
@@ -327,17 +332,97 @@ window.Mazelab.Modules.SalesModule = (function () {
                 }).join('');
         }
 
-        // Services checkboxes
-        const servicesContainer = document.getElementById('sale-services-checkboxes');
+        // Services accordion
+        const servicesContainer = document.getElementById('sale-services-accordion');
         if (servicesContainer) {
-            servicesContainer.innerHTML = services.map(svc => {
-                const name = svc.name || svc.nombre || '';
-                return `
-                    <label class="checkbox-label">
-                        <input type="checkbox" class="sale-service-cb" value="${svc.id}" />
-                        ${name}
-                    </label>`;
-            }).join('');
+            // Group by category
+            const grouped = {};
+            services.forEach(svc => {
+                let cat = (svc.categoria || svc.category || 'Otros').trim();
+                // Standardize common cases
+                if (cat.toLowerCase() === 'fotográficas' || cat.toLowerCase() === 'fotograficas') cat = 'Fotograficas';
+                if (!grouped[cat]) grouped[cat] = [];
+                grouped[cat].push(svc);
+            });
+
+            // Sort categories alphabetically
+            const categories = Object.keys(grouped).sort();
+
+            let html = '';
+            categories.forEach(cat => {
+                // Sort services alphabetically within category
+                grouped[cat].sort((a, b) => {
+                    const nameA = (a.name || a.nombre || '').toLowerCase();
+                    const nameB = (b.name || b.nombre || '').toLowerCase();
+                    return nameA.localeCompare(nameB);
+                });
+
+                html += `
+                    <div class="accordion-item" style="margin-bottom: 8px; border: 1px solid var(--border); border-radius: 8px; overflow: hidden; background: var(--bg-tertiary);">
+                        <button type="button" class="accordion-header" style="width: 100%; text-align: left; padding: 12px 16px; background: transparent; border: none; color: var(--text-primary); font-weight: 600; display: flex; justify-content: space-between; align-items: center; cursor: pointer;" onclick="
+                            var content = this.nextElementSibling;
+                            var arrow = this.querySelector('.accordion-arrow');
+                            if (content.style.display === 'none' || content.style.display === '') {
+                                content.style.display = 'grid';
+                                arrow.style.transform = 'rotate(180deg)';
+                            } else {
+                                content.style.display = 'none';
+                                arrow.style.transform = 'rotate(0deg)';
+                            }
+                        ">
+                            <span>${cat}</span> 
+                            <span class="accordion-arrow" style="font-size: 12px; opacity: 0.6; transition: transform 0.2s; display: inline-block;">▼</span>
+                        </button>
+                        <div class="accordion-content checkbox-group" style="padding: 16px; background: rgba(255, 255, 255, 0.02); border-top: 1px solid var(--border); display: none; flex-direction: column; gap: 12px;">
+                            ${(function () {
+                        const featured = grouped[cat].filter(s => s.featured);
+                        const regular = grouped[cat].filter(s => !s.featured);
+
+                        const renderSvc = (svc) => {
+                            const name = svc.name || svc.nombre || '';
+                            return `
+                                        <label class="checkbox-label" style="margin: 0; background: var(--bg-card); padding: 8px 12px; border-radius: 6px; border: 1px solid var(--border); width: 100%; box-sizing: border-box; display: flex; align-items: center; gap: 8px; cursor: pointer;">
+                                            <input type="checkbox" class="sale-service-cb" value="${svc.id}" style="margin: 0; cursor: pointer;" />
+                                            <span style="white-space: nowrap; overflow: hidden; text-overflow: ellipsis;" title="${escapeHtml(name)}">${escapeHtml(name)}</span>
+                                            ${svc.featured ? '<span style="font-size:12px;color:var(--warning);margin-left:auto" title="Destacado">★</span>' : ''}
+                                        </label>`;
+                        };
+
+                        let innerHtml = '<div style="display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 12px;">';
+                        if (featured.length > 0) {
+                            innerHtml += featured.map(renderSvc).join('');
+                        } else if (regular.length > 0) {
+                            // Make sure nothing is hidden if no "featured" is available
+                            innerHtml += regular.map(renderSvc).join('');
+                            regular.length = 0;
+                        }
+                        innerHtml += '</div>';
+
+                        if (regular.length > 0) {
+                            const moreId = 'more-btn-' + cat.replace(/[^a-zA-Z0-9]/g, '');
+                            innerHtml += `
+                                    <div style="margin-top: 8px; border-top: 1px dashed rgba(255,255,255,0.1); padding-top: 12px;">
+                                        <button type="button" class="btn-sm btn-secondary" style="width: 100%; margin-bottom: 12px; background: transparent; border: 1px solid rgba(255,255,255,0.1);" onclick="
+                                            var d = document.getElementById('${moreId}');
+                                            if (d.style.display === 'none' || d.style.display === '') {
+                                                d.style.display = 'grid';
+                                                this.innerHTML = 'Mostrar menos ▲';
+                                            } else {
+                                                d.style.display = 'none';
+                                                this.innerHTML = 'Mostrar ${regular.length} más ▼';
+                                            }
+                                        ">Mostrar ${regular.length} más ▼</button>
+                                        <div id="${moreId}" style="display: none; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 12px;">
+                                            ${regular.map(renderSvc).join('')}
+                                        </div>
+                                    </div>`;
+                        }
+                        return innerHtml;
+                    })()}
+                        </div>
+                    </div>`;
+            });
+            servicesContainer.innerHTML = html;
         }
     }
 
@@ -500,21 +585,21 @@ window.Mazelab.Modules.SalesModule = (function () {
                 await DS.update('sales', editingId, data);
                 // Sincronizar la CXC auto-generada con los datos actualizados de la venta
                 const allReceivables = await DS.getAll('receivables') || [];
-                const linkedCXC = allReceivables.find(function(r) {
+                const linkedCXC = allReceivables.find(function (r) {
                     return String(r.saleId) === String(editingId) && r.sourceType === 'auto';
                 });
                 if (linkedCXC) {
                     await DS.update('receivables', linkedCXC.id, {
-                        eventName:   data.eventName   || linkedCXC.eventName,
-                        eventDate:   data.eventDate   || linkedCXC.eventDate,
-                        clientName:  data.clientName  || linkedCXC.clientName,
-                        monto_venta: data.amount      || 0
+                        eventName: data.eventName || linkedCXC.eventName,
+                        eventDate: data.eventDate || linkedCXC.eventDate,
+                        clientName: data.clientName || linkedCXC.clientName,
+                        monto_venta: data.amount || 0
                     });
                 }
             } else {
                 // Asignar ID numérico auto-incremental (max existente + 1)
                 var maxId = 0;
-                sales.forEach(function(s) {
+                sales.forEach(function (s) {
                     var numId = parseInt(s.sourceId || s.id, 10);
                     if (!isNaN(numId) && numId > maxId) maxId = numId;
                 });
@@ -523,19 +608,19 @@ window.Mazelab.Modules.SalesModule = (function () {
                 // Capture the created sale so we can link CXC and CXP to it
                 // Kanban board fields for new sale
                 var kanbanChecklist = [
-                    { key: 'contacto_inicial',      label: 'Contacto inicial con cliente',    group: 'Pre-evento', checked: false, checkedAt: null },
-                    { key: 'diseno_solicitado',     label: 'Dise\u00f1o solicitado',                   group: 'Pre-evento', checked: false, checkedAt: null },
-                    { key: 'diseno_enviado',        label: 'Dise\u00f1o enviado al cliente',           group: 'Pre-evento', checked: false, checkedAt: null },
-                    { key: 'diseno_aprobado',       label: 'Dise\u00f1o aprobado por cliente',         group: 'Pre-evento', checked: false, checkedAt: null },
-                    { key: 'logistica_confirmada',  label: 'Log\u00edstica confirmada',                group: 'Pre-evento', checked: false, checkedAt: null },
-                    { key: 'equipo_asignado',       label: 'Equipo asignado',                 group: 'Pre-evento', checked: false, checkedAt: null },
-                    { key: 'freelance_confirmados', label: 'Freelancers confirmados',         group: 'Pre-evento', checked: false, checkedAt: null },
-                    { key: 'montaje_realizado',     label: 'Montaje realizado',               group: 'D\u00eda del evento', checked: false, checkedAt: null },
-                    { key: 'foto_montaje',          label: 'Foto montaje enviada',            group: 'D\u00eda del evento', checked: false, checkedAt: null },
-                    { key: 'evento_ejecutado',      label: 'Evento ejecutado sin incidentes', group: 'D\u00eda del evento', checked: false, checkedAt: null },
-                    { key: 'desmontaje_correcto',   label: 'Desmontaje correcto',             group: 'Post-evento', checked: false, checkedAt: null },
-                    { key: 'material_respaldado',   label: 'Material respaldado',             group: 'Post-evento', checked: false, checkedAt: null },
-                    { key: 'informe_interno',       label: 'Informe interno completado',      group: 'Post-evento', checked: false, checkedAt: null }
+                    { key: 'contacto_inicial', label: 'Contacto inicial con cliente', group: 'Pre-evento', checked: false, checkedAt: null },
+                    { key: 'diseno_solicitado', label: 'Dise\u00f1o solicitado', group: 'Pre-evento', checked: false, checkedAt: null },
+                    { key: 'diseno_enviado', label: 'Dise\u00f1o enviado al cliente', group: 'Pre-evento', checked: false, checkedAt: null },
+                    { key: 'diseno_aprobado', label: 'Dise\u00f1o aprobado por cliente', group: 'Pre-evento', checked: false, checkedAt: null },
+                    { key: 'logistica_confirmada', label: 'Log\u00edstica confirmada', group: 'Pre-evento', checked: false, checkedAt: null },
+                    { key: 'equipo_asignado', label: 'Equipo asignado', group: 'Pre-evento', checked: false, checkedAt: null },
+                    { key: 'freelance_confirmados', label: 'Freelancers confirmados', group: 'Pre-evento', checked: false, checkedAt: null },
+                    { key: 'montaje_realizado', label: 'Montaje realizado', group: 'D\u00eda del evento', checked: false, checkedAt: null },
+                    { key: 'foto_montaje', label: 'Foto montaje enviada', group: 'D\u00eda del evento', checked: false, checkedAt: null },
+                    { key: 'evento_ejecutado', label: 'Evento ejecutado sin incidentes', group: 'D\u00eda del evento', checked: false, checkedAt: null },
+                    { key: 'desmontaje_correcto', label: 'Desmontaje correcto', group: 'Post-evento', checked: false, checkedAt: null },
+                    { key: 'material_respaldado', label: 'Material respaldado', group: 'Post-evento', checked: false, checkedAt: null },
+                    { key: 'informe_interno', label: 'Informe interno completado', group: 'Post-evento', checked: false, checkedAt: null }
                 ];
 
                 const createdSale = await DS.create('sales', Object.assign({}, data, {

@@ -38,7 +38,7 @@ window.Mazelab.Modules.NominasModule = (function () {
     function formatDateShort(d) {
         if (!d) return '-';
         return d.getDate().toString().padStart(2, '0') + '/' +
-               (d.getMonth() + 1).toString().padStart(2, '0') + '/' + d.getFullYear();
+            (d.getMonth() + 1).toString().padStart(2, '0') + '/' + d.getFullYear();
     }
 
     function getTotalPagado(p) {
@@ -175,7 +175,7 @@ window.Mazelab.Modules.NominasModule = (function () {
     function renderContent() {
         var eligible = getEligibleBH();
         var upcoming = getUpcomingBH(14);
-        var paid     = getPaidBH();
+        var paid = getPaidBH();
         initSelectionState(eligible);
 
         var root = document.getElementById('nominas-root');
@@ -187,9 +187,9 @@ window.Mazelab.Modules.NominasModule = (function () {
             renderControls(eligible),
             renderTabs(eligible.length, upcoming.length),
             '<div id="nominas-tab-content">',
-            activeTab === 'nomina'    ? renderNominaTab(eligible, totalBHInSystem)  : '',
-            activeTab === 'proximas'  ? renderProximasTab(upcoming)                 : '',
-            activeTab === 'historial' ? renderHistorialTab(paid)                    : '',
+            activeTab === 'nomina' ? renderNominaTab(eligible, totalBHInSystem) : '',
+            activeTab === 'proximas' ? renderProximasTab(upcoming) : '',
+            activeTab === 'historial' ? renderHistorialTab(paid) : '',
             '</div>'
         ].join('\n');
 
@@ -229,16 +229,15 @@ window.Mazelab.Modules.NominasModule = (function () {
         function tab(id, label, count, danger) {
             var active = activeTab === id;
             var badge = count > 0
-                ? ' <span style="background:' + (danger ? '#e74c3c' : '#f39c12') + ';color:#fff;border-radius:10px;padding:1px 7px;font-size:11px;font-weight:600;margin-left:4px">' + count + '</span>'
+                ? ' <span class="badge ' + (danger ? 'badge-danger' : 'badge-warning') + '" style="margin-left:4px">' + count + '</span>'
                 : '';
-            return '<div class="tab-btn' + (active ? ' active' : '') + '" data-tab="' + id + '" style="cursor:pointer;padding:8px 18px;border-radius:8px;font-size:14px;font-weight:500;' +
-                   (active ? 'background:var(--primary);color:#fff;' : 'color:var(--text-secondary);') + '">' + label + badge + '</div>';
+            return '<button class="tab' + (active ? ' active' : '') + '" data-tab="' + id + '">' + label + badge + '</button>';
         }
         return [
-            '<div style="display:flex;gap:6px;margin-bottom:var(--space-lg);border-bottom:1px solid var(--border);padding-bottom:var(--space-sm)">',
-            tab('nomina',    'N\u00f3mina actual', eligibleCount, true),
-            tab('proximas',  'Pr\u00f3ximas 14d',  upcomingCount, false),
-            tab('historial', 'Historial',           0,             false),
+            '<div class="tabs">',
+            tab('nomina', 'N\u00f3mina actual', eligibleCount, true),
+            tab('proximas', 'Pr\u00f3ximas 14d', upcomingCount, false),
+            tab('historial', 'Historial', 0, false),
             '</div>'
         ].join('\n');
     }
@@ -258,7 +257,7 @@ window.Mazelab.Modules.NominasModule = (function () {
                 if (dd && (!nearestDD || dd < nearestDD)) nearestDD = dd;
             });
             html += [
-                '<div style="background:#fff3cd;border:1px solid #ffc107;border-radius:8px;padding:16px;margin-bottom:var(--space-md)">',
+                '<div style="background:var(--warning-bg);border:1px solid var(--warning);border-radius:8px;padding:16px;margin-bottom:var(--space-md)">',
                 '  <div style="font-weight:600;margin-bottom:4px">&#9888; Sin pagos a la fecha de corte</div>',
                 '  <div style="font-size:13px">Hay <strong>' + pendientesBH.length + '</strong> BH pendientes que a\u00fan no cumplen los 30 d\u00edas.',
                 nearestDD ? ' El pr\u00f3ximo vencimiento es el <strong>' + formatDateShort(nearestDD) + '</strong>.' : '',
@@ -288,9 +287,9 @@ window.Mazelab.Modules.NominasModule = (function () {
     // ── Tarjeta por beneficiario ───────────────────────────────────────
 
     function renderBeneficiaryCard(vendor, items) {
-        var totalAmount  = 0; // suma de p.amount de los seleccionados
-        var totalPagado  = 0;
-        var totalPend    = 0;
+        var totalAmount = 0; // suma de p.amount de los seleccionados
+        var totalPagado = 0;
+        var totalPend = 0;
         var selectedItems = [];
 
         items.forEach(function (p) {
@@ -298,15 +297,15 @@ window.Mazelab.Modules.NominasModule = (function () {
             if (s.selected) {
                 totalAmount += Number(p.amount) || 0;
                 totalPagado += getTotalPagado(p);
-                totalPend   += s.amount;
+                totalPend += s.amount;
                 selectedItems.push(p);
             }
         });
 
-        var comment     = buildTransferComment(selectedItems);
-        var commentLen  = comment.length;
-        var lenColor    = commentLen > 40 ? '#e74c3c' : commentLen > 32 ? '#f39c12' : '#27ae60';
-        var cardId      = 'card-' + vendor.replace(/[^a-z0-9]/gi, '_');
+        var comment = buildTransferComment(selectedItems);
+        var commentLen = comment.length;
+        var lenColor = commentLen > 40 ? 'var(--danger)' : commentLen > 32 ? 'var(--warning)' : 'var(--success)';
+        var cardId = 'card-' + vendor.replace(/[^a-z0-9]/gi, '_');
         var allSelected = selectedItems.length === items.length;
 
         return [
@@ -347,11 +346,11 @@ window.Mazelab.Modules.NominasModule = (function () {
             '  </div>',
 
             // Comentario transferencia
-            '  <div style="background:#f8f9fa;border:1px solid #dee2e6;border-radius:8px;padding:14px;margin-bottom:var(--space-md)">',
+            '  <div style="background:rgba(255,255,255,0.02);border:1px solid rgba(255,255,255,0.1);border-radius:8px;padding:14px;margin-bottom:var(--space-md)">',
             '    <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px">',
-            '      <span style="font-size:12px;font-weight:700;color:#495057;text-transform:uppercase;letter-spacing:.4px">Glosa para transferencia</span>',
+            '      <span style="font-size:12px;font-weight:700;color:var(--text-secondary);text-transform:uppercase;letter-spacing:.4px">Glosa para transferencia</span>',
             '      <span style="font-size:12px;font-weight:700;color:' + lenColor + '">' + commentLen + '/40</span>',
-            commentLen > 40 ? '      <span style="font-size:11px;color:#e74c3c;background:#ffeaea;padding:2px 8px;border-radius:4px">&#9888; Excede 40 caracteres</span>' : '',
+            commentLen > 40 ? '      <span style="font-size:11px;color:var(--danger);background:var(--danger-bg);padding:2px 8px;border-radius:4px">&#9888; Excede 40 caracteres</span>' : '',
             '    </div>',
             '    <div style="display:flex;gap:8px;align-items:center">',
             '      <input type="text" class="form-control nomina-comment-input" data-vendor="' + escAttr(vendor) + '"',
@@ -359,7 +358,7 @@ window.Mazelab.Modules.NominasModule = (function () {
             '             style="font-family:monospace;font-size:15px;font-weight:700;flex:1">',
             '      <button class="btn btn-secondary nomina-copy-btn" data-vendor="' + escAttr(vendor) + '">&#128203; Copiar</button>',
             '    </div>',
-            '    <div style="font-size:11px;color:#868e96;margin-top:6px">',
+            '    <div style="font-size:11px;color:var(--text-muted);margin-top:6px">',
             '      Los IDs corresponden al n\u00famero de evento del CSV. Edit\u00e1 el texto antes de copiar si necesit\u00e1s ajustarlo.',
             '    </div>',
             '  </div>',
@@ -376,13 +375,13 @@ window.Mazelab.Modules.NominasModule = (function () {
     }
 
     function renderBHRow(p) {
-        var s        = selectionState[p.id] || { selected: true, amount: getPendiente(p) };
-        var amount   = Number(p.amount) || 0;
-        var pagado   = getTotalPagado(p);
-        var pend     = getPendiente(p);
-        var dd       = calcDueDate(p.eventDate);
+        var s = selectionState[p.id] || { selected: true, amount: getPendiente(p) };
+        var amount = Number(p.amount) || 0;
+        var pagado = getTotalPagado(p);
+        var pend = getPendiente(p);
+        var dd = calcDueDate(p.eventDate);
         var isParcial = getStatusDerived(p) === 'parcial';
-        var rowDim   = s.selected ? '' : 'opacity:.45';
+        var rowDim = s.selected ? '' : 'opacity:.45';
 
         return [
             '<tr style="' + rowDim + '">',
@@ -391,12 +390,12 @@ window.Mazelab.Modules.NominasModule = (function () {
             '  <td style="font-size:12px">' + escHtml(p.clientName || '-') + '</td>',
             '  <td>',
             '    <div style="font-size:13px;font-weight:600">' + escHtml(p.eventName || '-') + '</div>',
-            isParcial ? '<div style="font-size:11px;color:#f39c12;margin-top:1px">&#9679; Pago parcial previo (' + formatCLP(pagado) + ' ya pagado)</div>' : '',
+            isParcial ? '<div style="font-size:11px;color:var(--warning);margin-top:1px">&#9679; Pago parcial previo (' + formatCLP(pagado) + ' ya pagado)</div>' : '',
             '  </td>',
             '  <td style="font-size:12px;white-space:nowrap">' + (p.eventDate || '-') + '</td>',
             '  <td style="font-size:12px;white-space:nowrap">' + formatDateShort(dd) + '</td>',
             '  <td style="text-align:right;font-size:13px">' + formatCLP(amount) + '</td>',
-            '  <td style="text-align:right;font-size:13px;color:' + (pagado > 0 ? '#27ae60' : 'var(--text-muted)') + '">' + (pagado > 0 ? formatCLP(pagado) : '-') + '</td>',
+            '  <td style="text-align:right;font-size:13px;color:' + (pagado > 0 ? 'var(--success)' : 'var(--text-muted)') + '">' + (pagado > 0 ? formatCLP(pagado) : '-') + '</td>',
             '  <td style="text-align:right">',
             '    <input type="number" class="form-control nomina-amount-input" data-id="' + escAttr(p.id) + '"',
             '           value="' + s.amount + '" min="0" max="' + pend + '" step="1"',
@@ -412,10 +411,10 @@ window.Mazelab.Modules.NominasModule = (function () {
         if (!upcoming.length) {
             return '<div class="empty-state"><p>No hay BH que venzan en los pr\u00f3ximos 14 d\u00edas.</p></div>';
         }
-        var today = new Date(); today.setHours(0,0,0,0);
+        var today = new Date(); today.setHours(0, 0, 0, 0);
         return [
             '<div class="card">',
-            '  <div style="font-size:14px;font-weight:700;color:#f39c12;margin-bottom:var(--space-md)">&#9888; Pr\u00f3ximas a vencer &mdash; 14 d\u00edas</div>',
+            '  <div style="font-size:14px;font-weight:700;color:var(--warning);margin-bottom:var(--space-md)">&#9888; Pr\u00f3ximas a vencer &mdash; 14 d\u00edas</div>',
             '  <table class="data-table" style="margin:0">',
             '    <thead><tr>',
             '      <th>ID</th><th>Beneficiario</th><th>Cliente</th><th>Evento</th><th>Fecha evento</th><th>Vence</th><th style="text-align:right">Pendiente</th>',
@@ -423,7 +422,7 @@ window.Mazelab.Modules.NominasModule = (function () {
             upcoming.map(function (p) {
                 var dd = calcDueDate(p.eventDate);
                 var diff = Math.round((dd - today) / 86400000);
-                var urg = diff <= 3 ? 'color:#e74c3c;font-weight:700' : 'color:#f39c12;font-weight:600';
+                var urg = diff <= 3 ? 'color:var(--danger);font-weight:700' : 'color:var(--warning);font-weight:600';
                 return [
                     '<tr>',
                     '<td style="font-weight:700;color:var(--primary)">' + escHtml(p.eventId || '-') + '</td>',
@@ -481,8 +480,8 @@ window.Mazelab.Modules.NominasModule = (function () {
 
             var vendorSummary = Object.keys(byVendor).map(function (v) {
                 var total = byVendor[v].reduce(function (s, p) { return s + getTotalPagado(p); }, 0);
-                return '<span style="display:inline-flex;align-items:center;gap:6px;background:#f1f3f5;border:1px solid #dee2e6;border-radius:6px;padding:5px 12px;font-size:13px;margin:3px;color:#212529">' +
-                       '<strong style="color:#212529">' + escHtml(v) + '</strong><span style="margin-left:4px;color:#212529">' + formatCLP(total) + '</span></span>';
+                return '<span style="display:inline-flex;align-items:center;gap:6px;background:rgba(255,255,255,0.05);border:1px solid rgba(255,255,255,0.1);border-radius:6px;padding:5px 12px;font-size:13px;margin:3px;color:var(--text-primary)">' +
+                    '<strong style="color:var(--text-primary)">' + escHtml(v) + '</strong><span style="margin-left:4px;color:var(--text-primary)">' + formatCLP(total) + '</span></span>';
             }).join('');
 
             var detailRows = isExpanded ? Object.keys(byVendor).map(function (v) {
@@ -492,42 +491,42 @@ window.Mazelab.Modules.NominasModule = (function () {
                         ? p.payments.reduce(function (a, b) { return a.date > b.date ? a : b; })
                         : null;
                     return [
-                        '<tr style="background:#fafafa">',
-                        '<td style="font-size:12px;font-weight:700;color:#212529">' + escHtml(p.eventId || '-') + '</td>',
-                        '<td style="font-weight:600;font-size:13px;color:#212529">' + escHtml(v) + '</td>',
-                        '<td style="font-size:12px;color:#212529">' + escHtml(p.clientName || '-') + '</td>',
-                        '<td style="font-size:13px;color:#212529">' + escHtml(p.eventName || '-') + '</td>',
-                        '<td style="font-size:12px;color:#212529">' + (p.eventDate || '-') + '</td>',
-                        '<td style="font-size:12px;color:#212529">' + (lastPay ? lastPay.date : '-') + '</td>',
-                        '<td style="text-align:right;font-weight:700;color:#27ae60">' + formatCLP(pagado) + '</td>',
+                        '<tr style="background:rgba(255,255,255,0.02)">',
+                        '<td style="font-size:12px;font-weight:700;color:var(--text-primary)">' + escHtml(p.eventId || '-') + '</td>',
+                        '<td style="font-weight:600;font-size:13px;color:var(--text-primary)">' + escHtml(v) + '</td>',
+                        '<td style="font-size:12px;color:var(--text-primary)">' + escHtml(p.clientName || '-') + '</td>',
+                        '<td style="font-size:13px;color:var(--text-primary)">' + escHtml(p.eventName || '-') + '</td>',
+                        '<td style="font-size:12px;color:var(--text-primary)">' + (p.eventDate || '-') + '</td>',
+                        '<td style="font-size:12px;color:var(--text-primary)">' + (lastPay ? lastPay.date : '-') + '</td>',
+                        '<td style="text-align:right;font-weight:700;color:var(--success)">' + formatCLP(pagado) + '</td>',
                         '</tr>'
                     ].join('');
                 }).join('');
             }).join('') : '';
 
             return [
-                '<div style="border:1px solid #dee2e6;border-radius:10px;margin-bottom:12px;overflow:hidden">',
+                '<div style="border:1px solid rgba(255,255,255,0.1);border-radius:10px;margin-bottom:12px;overflow:hidden">',
 
                 // Header de mes (siempre visible)
-                '  <div style="display:flex;align-items:center;justify-content:space-between;padding:14px 18px;background:#fff;cursor:pointer" class="hist-month-header" data-mkey="' + escAttr(mKey) + '">',
-                '    <div style="font-size:16px;font-weight:700;color:#212529;text-transform:capitalize">' + label + '</div>',
+                '  <div style="display:flex;align-items:center;justify-content:space-between;padding:14px 18px;background:var(--bg-card);cursor:pointer" class="hist-month-header" data-mkey="' + escAttr(mKey) + '">',
+                '    <div style="font-size:16px;font-weight:700;color:var(--text-primary);text-transform:capitalize">' + label + '</div>',
                 '    <div style="display:flex;align-items:center;gap:12px">',
-                '      <div style="font-size:16px;font-weight:700;color:#2563eb">' + formatCLP(totalPagado) + '</div>',
-                '      <div style="font-size:13px;color:#495057;">' + items.length + ' BH &middot; ' + Object.keys(byVendor).length + ' personas</div>',
-                '      <div style="font-size:12px;color:#868e96">' + (isExpanded ? '&#9650;' : '&#9660;') + '</div>',
+                '      <div style="font-size:16px;font-weight:700;color:var(--accent-primary)">' + formatCLP(totalPagado) + '</div>',
+                '      <div style="font-size:13px;color:var(--text-secondary);">' + items.length + ' BH &middot; ' + Object.keys(byVendor).length + ' personas</div>',
+                '      <div style="font-size:12px;color:var(--text-muted)">' + (isExpanded ? '&#9650;' : '&#9660;') + '</div>',
                 '    </div>',
                 '  </div>',
 
                 // Resumen por beneficiario (siempre visible)
-                '  <div style="padding:8px 18px 12px;background:#fff;border-top:1px solid #f1f3f5">',
+                '  <div style="padding:8px 18px 12px;background:var(--bg-card);border-top:1px solid rgba(255,255,255,0.05)">',
                 '    ' + vendorSummary,
                 '  </div>',
 
                 // Detalle expandible
                 isExpanded ? [
-                    '  <div style="background:#f8f9fa;border-top:1px solid #dee2e6;padding:8px 18px 14px">',
-                    '  <table class="data-table" style="margin:0;background:#fff">',
-                    '    <thead><tr style="background:#f1f3f5">',
+                    '  <div style="background:rgba(255,255,255,0.02);border-top:1px solid rgba(255,255,255,0.1);padding:8px 18px 14px">',
+                    '  <table class="data-table" style="margin:0;background:var(--bg-card)">',
+                    '    <thead><tr style="background:rgba(255,255,255,0.05)">',
                     '      <th style="font-size:11px">ID</th><th style="font-size:11px">Beneficiario</th><th style="font-size:11px">Cliente</th>',
                     '      <th style="font-size:11px">Evento</th><th style="font-size:11px">Fecha evento</th><th style="font-size:11px">Fecha pago</th>',
                     '      <th style="text-align:right;font-size:11px">Transferido</th>',
@@ -557,7 +556,7 @@ window.Mazelab.Modules.NominasModule = (function () {
         }
 
         // Tabs
-        document.querySelectorAll('.tab-btn').forEach(function (btn) {
+        document.querySelectorAll('.tab').forEach(function (btn) {
             if (!btn._bound) {
                 btn._bound = true;
                 btn.addEventListener('click', function () {
@@ -670,15 +669,15 @@ window.Mazelab.Modules.NominasModule = (function () {
     // ── Confirmar pago ─────────────────────────────────────────────────
 
     async function handleConfirmPago(vendor) {
-        var eligible    = getEligibleBH();
+        var eligible = getEligibleBH();
         var vendorItems = eligible.filter(function (p) { return (p.vendorName || 'Sin beneficiario').trim() === vendor; });
-        var toPay       = vendorItems.filter(function (p) { return selectionState[p.id] && selectionState[p.id].selected; });
+        var toPay = vendorItems.filter(function (p) { return selectionState[p.id] && selectionState[p.id].selected; });
 
         if (!toPay.length) { alert('No hay BH seleccionadas.'); return; }
 
         var totalTransfer = toPay.reduce(function (s, p) { return s + (selectionState[p.id].amount || 0); }, 0);
-        var inputEl       = document.querySelector('.nomina-comment-input[data-vendor="' + vendor + '"]');
-        var comment       = inputEl ? inputEl.value : buildTransferComment(toPay);
+        var inputEl = document.querySelector('.nomina-comment-input[data-vendor="' + vendor + '"]');
+        var comment = inputEl ? inputEl.value : buildTransferComment(toPay);
 
         var confirmMsg = '\u00bfConfirmar pago a ' + vendor + '?\n\n' +
             'Monto: ' + formatCLP(totalTransfer) + '\n' +
@@ -689,7 +688,7 @@ window.Mazelab.Modules.NominasModule = (function () {
         var dateStr = todayStr();
         try {
             for (var i = 0; i < toPay.length; i++) {
-                var p   = toPay[i];
+                var p = toPay[i];
                 var amt = selectionState[p.id].amount || 0;
                 if (amt <= 0) continue;
                 var newPayments = (p.payments || []).concat([{
@@ -711,7 +710,7 @@ window.Mazelab.Modules.NominasModule = (function () {
 
     function showSuccessToast(vendor, amount, comment) {
         var toast = document.createElement('div');
-        toast.style.cssText = 'position:fixed;bottom:24px;right:24px;z-index:9999;background:#27ae60;color:#fff;border-radius:10px;padding:16px 20px;max-width:340px;box-shadow:0 4px 20px rgba(0,0,0,.25);font-size:14px';
+        toast.style.cssText = 'position:fixed;bottom:24px;right:24px;z-index:9999;background:var(--success);color:var(--text-primary);border-radius:10px;padding:16px 20px;max-width:340px;box-shadow:0 4px 20px rgba(0,0,0,.25);font-size:14px';
         toast.innerHTML = '<div style="font-weight:700;margin-bottom:4px">&#10003; Pago registrado</div>' +
             '<div>' + escHtml(vendor) + ' &middot; ' + formatCLP(amount) + '</div>' +
             '<div style="font-family:monospace;font-size:12px;margin-top:6px;opacity:.9">' + escHtml(comment) + '</div>';
