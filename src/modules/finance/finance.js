@@ -4,6 +4,7 @@ window.Mazelab.Modules.FinanceModule = (function () {
     // STATE
     // =========================================================================
     let allReceivables = [];
+    let cachedSales = [];
     let filteredList = [];
     let showOnlyPending = true;
     let visibleCount = 25;
@@ -92,6 +93,18 @@ window.Mazelab.Modules.FinanceModule = (function () {
         return Math.max(0, neto - pagado);
     }
 
+    // Returns the current eventDate from the linked sale (if loaded), falling back to stored copy.
+    // Keeps CXC dates in sync when a sale's eventDate is edited.
+    function getEffectiveEventDate(r) {
+        if (r.saleId && cachedSales.length) {
+            var sale = cachedSales.find(function (s) {
+                return String(s.id) === String(r.saleId) || String(s.sourceId) === String(r.saleId);
+            });
+            if (sale && sale.eventDate) return sale.eventDate;
+        }
+        return r.eventDate || '';
+    }
+
     // =========================================================================
     // STATUS CALCULATION
     // =========================================================================
@@ -116,8 +129,9 @@ window.Mazelab.Modules.FinanceModule = (function () {
             var my = str.match(/^(\d{1,2})\/(\d{4})$/);
             if (my) return new Date(Number(my[2]), Number(my[1]) - 1, 1);
         }
-        // Fallback: fecha del evento
-        if (r.eventDate) return new Date(r.eventDate);
+        // Fallback: fecha del evento (uses linked sale date if available)
+        var effDate = getEffectiveEventDate(r);
+        if (effDate) return new Date(effDate);
         return null;
     }
 
@@ -502,9 +516,10 @@ window.Mazelab.Modules.FinanceModule = (function () {
         html += '    <button class="toggle-option' + (currentView === 'lista' ? ' active' : '') + '" data-finview="lista">Lista</button>';
         html += '    <button class="toggle-option' + (currentView === 'agrupada' ? ' active' : '') + '" data-finview="agrupada">Por Evento</button>';
         html += '  </div>';
-        html += '  <button class="btn-secondary btn-sm" id="finance-toggle-pending">';
-        html += showOnlyPending ? 'Ver Todo' : 'Solo Pendientes';
-        html += '  </button>';
+        html += '  <div class="toggle-group" id="finance-pending-toggle">';
+        html += '    <button class="toggle-option' + (!showOnlyPending ? ' active' : '') + '" data-pending="false">Mostrar todos</button>';
+        html += '    <button class="toggle-option' + (showOnlyPending ? ' active' : '') + '" data-pending="true">Mostrar pendientes</button>';
+        html += '  </div>';
         var hasActiveFilters = Object.keys(columnFilters).some(function(k) { return columnFilters[k]; });
         html += '  <button class="btn-secondary btn-sm" id="finance-clear-filters"' + (hasActiveFilters ? '' : ' style="opacity:.45"') + '>\u2715 Limpiar filtros</button>';
         html += '</div>';
@@ -557,7 +572,7 @@ window.Mazelab.Modules.FinanceModule = (function () {
                 html += '<td>' + formatCLP(totalIva) + '</td>';
                 html += '<td>' + formatCLP(pagado) + '</td>';
                 html += '<td>' + formatCLP(restante) + '</td>';
-                html += '<td>' + formatDate(r.eventDate) + '</td>';
+                html += '<td>' + formatDate(getEffectiveEventDate(r)) + '</td>';
                 html += '<td>' + getStatusBadge(realStatus) + '</td>';
                 html += '<td>';
                 if (realStatus === 'pendiente_factura') {
@@ -822,8 +837,18 @@ window.Mazelab.Modules.FinanceModule = (function () {
 
     async function loadAndRender() {
         try {
-            allReceivables = await window.Mazelab.DataService.getAll('receivables');
-            if (!Array.isArray(allReceivables)) allReceivables = [];
+            var results = await Promise.all([
+                window.Mazelab.DataService.getAll('receivables'),
+                window.Mazelab.DataService.getAll('sales')
+            ]);
+            allReceivables = Array.isArray(results[0]) ? results[0] : [];
+            cachedSales    = Array.isArray(results[1]) ? results[1] : [];
+            // ── DB MIGRATION STATUS ───────────────────────────────────────
+            // Schema: tabla 'facturas' en PostgreSQL (Replit) / 'receivables' en Supabase
+            // eventDate en CXC es una copia de ventas.eventDate al momento de crear el registro.
+            // getEffectiveEventDate() lo resuelve dinámicamente via saleId → ventas.
+            // ESTADO: en branch pr-1, aún no mergeado a master.
+            console.log('[CXC] Loaded', allReceivables.length, 'receivables,', cachedSales.length, 'sales. Using Supabase:', window.Mazelab.DataService.isUsingSupabase());
 
             // Compute real-time status for all
             allReceivables.forEach(function (r) {
@@ -903,12 +928,14 @@ window.Mazelab.Modules.FinanceModule = (function () {
         }
 
         // Toggle pending
-        var toggleBtn = document.getElementById('finance-toggle-pending');
-        if (toggleBtn) {
-            toggleBtn.addEventListener('click', function () {
-                showOnlyPending = !showOnlyPending;
-                visibleCount = 25;
-                refreshTable();
+        var pendingToggle = document.getElementById('finance-pending-toggle');
+        if (pendingToggle) {
+            pendingToggle.querySelectorAll('.toggle-option').forEach(function (btn) {
+                btn.addEventListener('click', function () {
+                    showOnlyPending = btn.dataset.pending === 'true';
+                    visibleCount = 25;
+                    refreshTable();
+                });
             });
         }
 

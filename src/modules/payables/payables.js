@@ -4,6 +4,9 @@ window.Mazelab.Modules.PayablesModule = (function () {
     let payables = [];
     let currentView = 'lista';        // 'lista' | 'agrupada'
     let currentCategory = 'todos';    // 'todos' | 'evento' | 'general'
+    let showOnlyPending = true;
+    let cachedSales = [];
+    let cachedClients = [];
     let searchQuery = '';
     let sortCol = null;
     let sortDir = 'asc';
@@ -22,6 +25,10 @@ window.Mazelab.Modules.PayablesModule = (function () {
             parts.unshift(str.substring(Math.max(0, i - 3), i));
         }
         return (num < 0 ? '-' : '') + '$' + parts.join('.');
+    }
+
+    function escapeHtml(str) {
+        return String(str || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
     }
 
     // Retención BH configurable por año (SII Chile)
@@ -82,11 +89,21 @@ window.Mazelab.Modules.PayablesModule = (function () {
         return p.status || 'pendiente';
     }
 
+    // Returns the current eventDate from the linked sale (if loaded), falling back to stored copy.
+    // This keeps CXP dates in sync when a sale's eventDate is edited.
+    function getEffectiveEventDate(p) {
+        if (p.eventId) {
+            var sale = cachedSales.find(function (s) { return String(s.id) === String(p.eventId); });
+            if (sale && sale.eventDate) return sale.eventDate;
+        }
+        return p.eventDate || '';
+    }
+
     // ── Due date info ──────────────────────────────────────────────────
 
     function getDueDateInfo(p) {
         if (getStatusDerived(p) === 'pagada') return { status: 'pagada', label: '-', rowStyle: '', cellStyle: '' };
-        var dueDate = calcDueDate(p.eventDate);
+        var dueDate = calcDueDate(getEffectiveEventDate(p));
         if (!dueDate) return { status: 'sin_fecha', label: 'Sin fecha', rowStyle: '', cellStyle: 'color:var(--text-muted)' };
         var today = new Date(); today.setHours(0, 0, 0, 0);
         var diff = Math.floor((dueDate - today) / 86400000);
@@ -103,6 +120,7 @@ window.Mazelab.Modules.PayablesModule = (function () {
         var list = payables;
         if (currentCategory === 'evento')  list = list.filter(function (p) { return p.category === 'evento'; });
         if (currentCategory === 'general') list = list.filter(function (p) { return !p.category || p.category === 'general'; });
+        if (showOnlyPending) list = list.filter(function (p) { return getStatusDerived(p) !== 'pagada'; });
         if (searchQuery) {
             var q = searchQuery.toLowerCase();
             list = list.filter(function (p) {
@@ -115,7 +133,15 @@ window.Mazelab.Modules.PayablesModule = (function () {
             list = list.filter(function(p) {
                 return activeCols.every(function(col) {
                     var fv = (columnFilters[col] || '').toLowerCase();
-                    var val = col === '_status' ? getStatusDerived(p) : String(p[col] || '');
+                    var val;
+                    if (col === '_status') {
+                        val = getStatusDerived(p);
+                    } else if (col === '_sourceId') {
+                        var ls = cachedSales.find(function (s) { return String(s.id) === String(p.eventId); });
+                        val = ls ? String(ls.sourceId || '') : '';
+                    } else {
+                        val = String(p[col] || '');
+                    }
                     return val.toLowerCase().includes(fv);
                 });
             });
@@ -226,6 +252,10 @@ window.Mazelab.Modules.PayablesModule = (function () {
             '  <div class="toolbar">',
             '    <input type="text" id="payables-search" class="form-control" placeholder="Buscar proveedor, evento, concepto..." style="max-width:280px" value="' + searchQuery + '">',
             '    <button id="payables-clear-filters" class="btn btn-secondary btn-sm" style="white-space:nowrap" title="Limpiar todos los filtros">&#10006; Limpiar filtros</button>',
+            '    <div class="toggle-group" id="payables-pending-toggle">',
+            '      <button class="toggle-option' + (!showOnlyPending ? ' active' : '') + '" data-pending="false">Mostrar todos</button>',
+            '      <button class="toggle-option' + (showOnlyPending ? ' active' : '') + '" data-pending="true">Mostrar pendientes</button>',
+            '    </div>',
             '    <div class="toggle-group" id="payables-category-toggle">',
             '      <button class="toggle-option active" data-cat="todos">Todos</button>',
             '      <button class="toggle-option" data-cat="evento">Por Evento</button>',
@@ -266,10 +296,31 @@ window.Mazelab.Modules.PayablesModule = (function () {
             var di = getDueDateInfo(p);
             var catBadge = p.category === 'general' ? ' <span class="badge badge-secondary" style="font-size:10px">General</span>' : '';
             var docStr = docTypeLabel(p.docType) + (p.docNumber ? ' #' + p.docNumber : '');
-            var eventCell = (p.eventName || '-') + catBadge + (p.eventDate ? '<div style="font-size:11px;color:var(--text-muted)">' + p.eventDate + '</div>' : '');
-            var abonarBtn = st !== 'pagada' ? '<button class="btn btn-sm btn-success payable-abonar" data-id="' + p.id + '">Pagar</button>' : '';
+            var effDate = getEffectiveEventDate(p);
+            var eventCell = (p.eventName || '-') + catBadge + (effDate ? '<div style="font-size:11px;color:var(--text-muted)">' + effDate + '</div>' : '');
+            // "Pagar" when pending, "Pagos" (always accessible) when paid — allows viewing/reversing payments
+            var abonarBtn = st !== 'pagada'
+                ? '<button class="btn btn-sm btn-success payable-abonar" data-id="' + p.id + '">Pagar</button>'
+                : '<button class="btn btn-sm btn-secondary payable-abonar" data-id="' + p.id + '" title="Ver historial de pagos">Pagos</button>';
 
-            var eventIdCell = p.eventId ? '<span style="font-size:11px;color:var(--text-muted)">' + p.eventId + '</span>' : '-';
+            // Show actual payment date when paid, scheduled due date when pending
+            var dueCellLabel, dueCellStyle;
+            if (st === 'pagada') {
+                var lastPay = p.payments && p.payments.length
+                    ? p.payments.reduce(function (a, b) { return (a.date || '') > (b.date || '') ? a : b; })
+                    : null;
+                dueCellLabel = lastPay ? lastPay.date : '-';
+                dueCellStyle = 'color:var(--success)';
+            } else {
+                dueCellLabel = di.label;
+                dueCellStyle = di.cellStyle;
+            }
+
+            var linkedSale = p.eventId ? cachedSales.find(function (s) { return String(s.id) === String(p.eventId); }) : null;
+            var sourceId = linkedSale ? String(linkedSale.sourceId || '') : '';
+            var eventIdCell = sourceId
+                ? '<span style="font-size:12px;font-weight:600">' + sourceId + '</span>'
+                : (p.eventId ? '<span style="font-size:10px;color:var(--text-muted)">' + p.eventId.substring(0, 8) + '\u2026</span>' : '-');
             return '<tr style="' + di.rowStyle + '">' +
                 '<td style="white-space:nowrap">' + eventIdCell + '</td>' +
                 '<td>' + (p.clientName || '-') + '</td>' +
@@ -279,7 +330,7 @@ window.Mazelab.Modules.PayablesModule = (function () {
                 '<td>' + docStr + docInfoHTML(p) + '</td>' +
                 '<td class="text-right">' + formatCLP(p.amount) + '</td>' +
                 '<td class="text-right" style="' + (pending > 0 ? 'color:var(--danger)' : '') + '">' + formatCLP(pending) + '</td>' +
-                '<td style="white-space:nowrap;' + di.cellStyle + '">' + di.label + '</td>' +
+                '<td style="white-space:nowrap;' + dueCellStyle + '">' + dueCellLabel + '</td>' +
                 '<td><span class="badge ' + bClass + '">' + stLabel + '</span></td>' +
                 '<td><div class="flex gap-sm">' +
                 '  <button class="btn-icon payable-edit" data-id="' + p.id + '" title="Editar">&#9998;</button>' +
@@ -290,7 +341,7 @@ window.Mazelab.Modules.PayablesModule = (function () {
         }).join('');
 
         var filterRow = '<tr style="background:var(--bg-tertiary)">' +
-            '<th style="padding:2px 4px"><span style="font-size:10px;color:var(--text-muted)">ID</span></th>' +
+            '<th style="padding:2px 4px">' + payFilterInput('_sourceId', 'ID...') + '</th>' +
             '<th style="padding:2px 4px">' + payFilterInput('clientName', 'Cliente...') + '</th>' +
             '<th style="padding:2px 4px">' + payFilterInput('eventName', 'Evento...') + '</th>' +
             '<th style="padding:2px 4px">' + payFilterInput('concept', 'Concepto...') + '</th>' +
@@ -298,7 +349,7 @@ window.Mazelab.Modules.PayablesModule = (function () {
             '<th></th><th></th><th></th><th></th>' +
             '<th style="padding:2px 4px">' + payFilterInput('_status', 'Estado...') + '</th>' +
             '<th></th></tr>';
-        return '<div style="overflow-x:auto"><table class="data-table" id="payables-list-table">' +
+        return '<table class="data-table" id="payables-list-table">' +
             '<thead><tr>' +
             '<th style="font-size:11px;color:var(--text-muted)">ID Evento</th>' +
             sortTh('Cliente', 'clientName') +
@@ -310,7 +361,7 @@ window.Mazelab.Modules.PayablesModule = (function () {
             sortTh('Pendiente', 'pending') +
             sortTh('Fecha Pago', 'eventDate') +
             sortTh('Estado', '_status') + '<th>Acciones</th>' +
-            '</tr>' + filterRow + '</thead><tbody>' + rows + '</tbody></table></div>';
+            '</tr>' + filterRow + '</thead><tbody>' + rows + '</tbody></table>';
     }
 
     // ── Grouped view ───────────────────────────────────────────────────
@@ -347,7 +398,20 @@ window.Mazelab.Modules.PayablesModule = (function () {
                 var stLabel = { pagada: 'Pagada', parcial: 'Parcial', pendiente: 'Pendiente' }[st] || st;
                 var di = getDueDateInfo(p);
                 var docStr = docTypeLabel(p.docType) + (p.docNumber ? ' #' + p.docNumber : '');
-                var abonarBtn = st !== 'pagada' ? '<button class="btn btn-sm btn-success payable-abonar" data-id="' + p.id + '">Pagar</button>' : '';
+                var abonarBtn = st !== 'pagada'
+                    ? '<button class="btn btn-sm btn-success payable-abonar" data-id="' + p.id + '">Pagar</button>'
+                    : '<button class="btn btn-sm btn-secondary payable-abonar" data-id="' + p.id + '" title="Ver historial de pagos">Pagos</button>';
+                var grpDueLabel, grpDueStyle;
+                if (st === 'pagada') {
+                    var lastPay = p.payments && p.payments.length
+                        ? p.payments.reduce(function (a, b) { return (a.date || '') > (b.date || '') ? a : b; })
+                        : null;
+                    grpDueLabel = lastPay ? lastPay.date : '-';
+                    grpDueStyle = 'color:var(--success)';
+                } else {
+                    grpDueLabel = di.label;
+                    grpDueStyle = di.cellStyle;
+                }
 
                 return '<tr style="' + di.rowStyle + '">' +
                     '<td>' + (p.concept || '-') + '</td>' +
@@ -355,7 +419,7 @@ window.Mazelab.Modules.PayablesModule = (function () {
                     '<td>' + docStr + docInfoHTML(p) + '</td>' +
                     '<td class="text-right">' + formatCLP(p.amount) + '</td>' +
                     '<td class="text-right" style="' + (pending > 0 ? 'color:var(--danger)' : '') + '">' + formatCLP(pending) + '</td>' +
-                    '<td style="white-space:nowrap;' + di.cellStyle + '">' + di.label + '</td>' +
+                    '<td style="white-space:nowrap;' + grpDueStyle + '">' + grpDueLabel + '</td>' +
                     '<td><span class="badge ' + bClass + '">' + stLabel + '</span></td>' +
                     '<td><div class="flex gap-sm">' +
                     '<button class="btn-icon payable-edit" data-id="' + p.id + '">&#9998;</button>' +
@@ -407,14 +471,33 @@ window.Mazelab.Modules.PayablesModule = (function () {
             '        </select>',
             '      </div>',
             '    </div>',
-            '    <div class="form-row">',
-            '      <div class="form-group">',
-            '        <label>Evento / Descripci\u00f3n</label>',
-            '        <input type="text" class="form-control" id="pay-eventName">',
+            '    <input type="hidden" id="pay-eventName">',
+            '    <input type="hidden" id="pay-clientName">',
+            '    <input type="hidden" id="pay-linked-eventId">',
+            '    <div id="pay-evento-selector">',
+            '      <div class="form-group" style="margin-bottom:var(--space-sm)">',
+            '        <label>Buscar por ID de evento <span style="color:var(--text-muted);font-weight:400">(escribe el n\u00famero de venta)</span></label>',
+            '        <input type="text" class="form-control" id="pay-id-search" placeholder="Ej. 42 \u2192 busca y selecciona autom\u00e1ticamente" autocomplete="off">',
             '      </div>',
-            '      <div class="form-group" id="pay-clientName-group">',
-            '        <label>Cliente</label>',
-            '        <input type="text" class="form-control" id="pay-clientName">',
+            '      <div class="form-row">',
+            '        <div class="form-group">',
+            '          <label>Cliente</label>',
+            '          <select class="form-control" id="pay-clientSelect">',
+            '            <option value="">— Seleccionar cliente —</option>',
+            '          </select>',
+            '        </div>',
+            '        <div class="form-group">',
+            '          <label>Evento</label>',
+            '          <select class="form-control" id="pay-eventSelect">',
+            '            <option value="">— Seleccionar evento —</option>',
+            '          </select>',
+            '        </div>',
+            '      </div>',
+            '    </div>',
+            '    <div id="pay-general-desc" style="display:none">',
+            '      <div class="form-group">',
+            '        <label>Descripci\u00f3n</label>',
+            '        <input type="text" class="form-control" id="pay-eventName-text" placeholder="Descripci\u00f3n del gasto general...">',
             '      </div>',
             '    </div>',
             '    <div class="form-row">',
@@ -430,11 +513,13 @@ window.Mazelab.Modules.PayablesModule = (function () {
             '    <div class="form-row">',
             '      <div class="form-group">',
             '        <label>Concepto</label>',
-            '        <input type="text" class="form-control" id="pay-concept" required>',
+            '        <input type="text" class="form-control" id="pay-concept" required list="pay-concept-list" autocomplete="off">',
+            '        <datalist id="pay-concept-list"></datalist>',
             '      </div>',
             '      <div class="form-group">',
             '        <label>Proveedor / Beneficiario</label>',
-            '        <input type="text" class="form-control" id="pay-vendorName">',
+            '        <input type="text" class="form-control" id="pay-vendorName" list="pay-vendor-list" autocomplete="off">',
+            '        <datalist id="pay-vendor-list"></datalist>',
             '      </div>',
             '    </div>',
             '    <div class="form-row">',
@@ -443,7 +528,7 @@ window.Mazelab.Modules.PayablesModule = (function () {
             '        <input type="text" class="form-control" id="pay-docNumber">',
             '      </div>',
             '      <div class="form-group">',
-            '        <label>Monto Bruto</label>',
+            '        <label id="pay-amount-label">Monto a transferir al proveedor</label>',
             '        <input type="number" class="form-control" id="pay-amount" min="0" step="1" required>',
             '      </div>',
             '    </div>',
@@ -517,10 +602,19 @@ window.Mazelab.Modules.PayablesModule = (function () {
 
     async function loadData() {
         try {
-            payables = await window.Mazelab.DataService.getAll('payables') || [];
+            var results = await Promise.all([
+                window.Mazelab.DataService.getAll('payables'),
+                window.Mazelab.DataService.getAll('sales'),
+                window.Mazelab.DataService.getAll('clients')
+            ]);
+            payables      = results[0] || [];
+            cachedSales   = results[1] || [];
+            cachedClients = results[2] || [];
         } catch (e) {
             console.warn('PayablesModule: Error loading data', e);
             payables = [];
+            cachedSales = [];
+            cachedClients = [];
         }
     }
 
@@ -528,7 +622,8 @@ window.Mazelab.Modules.PayablesModule = (function () {
         var kpi = document.getElementById('payables-kpis');
         if (kpi) kpi.innerHTML = renderKPIs();
         var content = document.getElementById('payables-content');
-        if (content) content.innerHTML = currentView === 'lista' ? renderListView() : renderGroupedView();
+        if (content) content.innerHTML = currentView === 'lista' ? renderListView()
+            : renderGroupedView();
         bindTableActions();
     }
 
@@ -557,21 +652,87 @@ window.Mazelab.Modules.PayablesModule = (function () {
         var billingDate = (document.getElementById('pay-billingDate') || {}).value
                        || (document.getElementById('pay-eventDate') || {}).value || '';
 
+        var amountLabel = document.getElementById('pay-amount-label');
         if (docType === 'bh' && amount > 0) {
+            // amount = BRUTO (lo que figura en el documento BH) → calcular retención y neto a transferir
             var rate = getBHRetentionRate(billingDate);
             var ret  = Math.round(amount * rate);
             var neto = amount - ret;
+            if (amountLabel) amountLabel.textContent = 'Monto bruto del BH (lo que figura en el documento)';
             preview.style.display = 'block';
-            preview.innerHTML = '\u24d8 BH &middot; Retenci\u00f3n ' + (rate * 100).toFixed(2) + '%: <strong>' + formatCLP(ret) + '</strong>' +
-                '<br>Neto a transferir al proveedor: <strong>' + formatCLP(neto) + '</strong>' +
-                '<br><span style="color:var(--text-muted);font-size:11px">La retenci\u00f3n queda en tu cuenta para pagar al SII.</span>';
+            preview.innerHTML = '\u24d8 BH &middot; Retenci\u00f3n ' + (rate * 100).toFixed(2) + '%: <strong>' + formatCLP(ret) + '</strong> (queda en tu cuenta para SII)' +
+                '<br>Transferencia al proveedor: <strong>' + formatCLP(neto) + '</strong>';
         } else if (docType === 'factura' && amount > 0) {
+            // amount = NETO (monto en la factura, sin IVA) → calcular IVA y total a pagar
+            var iva   = Math.round(amount * 0.19);
+            var total = amount + iva;
+            if (amountLabel) amountLabel.textContent = 'Monto neto de la factura (sin IVA)';
             preview.style.display = 'block';
-            preview.innerHTML = '\u24d8 Factura &middot; IVA cr\u00e9dito fiscal (19%): <strong>' + formatCLP(Math.round(amount * 0.19)) + '</strong>' +
-                '<br><span style="color:var(--text-muted);font-size:11px">Este IVA se descuenta de tu d\u00e9bito fiscal del mes.</span>';
+            preview.innerHTML = '\u24d8 Factura &middot; IVA cr\u00e9dito fiscal (19%): <strong>' + formatCLP(iva) + '</strong>' +
+                '<br>Total a pagar al proveedor: <strong>' + formatCLP(total) + '</strong>' +
+                '<br><span style="color:var(--text-muted);font-size:11px">El IVA se descuenta de tu d\u00e9bito fiscal del mes.</span>';
         } else {
+            if (amountLabel) amountLabel.textContent = 'Monto';
             preview.style.display = 'none';
         }
+    }
+
+    function populatePayClientDropdown() {
+        var sel = document.getElementById('pay-clientSelect');
+        if (!sel) return;
+        // Key by clientName (ventas table has clientName, not clientId, in PostgreSQL)
+        var names = {};
+        cachedSales.forEach(function (s) { if (s.clientName) names[s.clientName] = true; });
+        cachedClients.forEach(function (c) {
+            var n = c.name || c.nombre;
+            if (n) names[n] = true;
+        });
+        var opts = '<option value="">— Seleccionar cliente —</option>';
+        Object.keys(names).sort(function (a, b) { return a.localeCompare(b); }).forEach(function (n) {
+            opts += '<option value="' + escapeHtml(n) + '">' + escapeHtml(n) + '</option>';
+        });
+        sel.innerHTML = opts;
+    }
+
+    // clientKey = clientName string (value of the client select)
+    function populatePayEventDropdown(clientKey) {
+        var sel = document.getElementById('pay-eventSelect');
+        if (!sel) return;
+        var filtered = !clientKey ? [] : cachedSales.filter(function (s) { return s.clientName === clientKey; });
+        filtered.sort(function (a, b) { return (b.eventDate || '').localeCompare(a.eventDate || ''); });
+        var opts = '<option value="">— Seleccionar evento —</option>';
+        filtered.forEach(function (s) {
+            var label = (s.eventName || 'Sin nombre') +
+                (s.eventDate ? '  ·  ' + s.eventDate : '') +
+                (s.sourceId ? '  #' + s.sourceId : '');
+            opts += '<option value="' + s.id + '" data-ename="' + escapeHtml(s.eventName || '') +
+                '" data-cname="' + escapeHtml(s.clientName || '') +
+                '" data-edate="' + (s.eventDate || '') + '">' + escapeHtml(label) + '</option>';
+        });
+        sel.innerHTML = opts;
+        sel.disabled = filtered.length === 0;
+    }
+
+    function applyPayEventSelection() {
+        var eventSel = document.getElementById('pay-eventSelect');
+        if (!eventSel || !eventSel.value) return;
+        var opt = eventSel.options[eventSel.selectedIndex];
+        var hidEventName  = document.getElementById('pay-eventName');
+        var hidClientName = document.getElementById('pay-clientName');
+        var hidLinkedId   = document.getElementById('pay-linked-eventId');
+        var dateEl        = document.getElementById('pay-eventDate');
+        if (hidEventName)  hidEventName.value  = opt.dataset.ename || '';
+        if (hidClientName) hidClientName.value = opt.dataset.cname || '';
+        if (hidLinkedId)   hidLinkedId.value   = eventSel.value;
+        if (dateEl && opt.dataset.edate) { dateEl.value = opt.dataset.edate; updateDueDateDisplay(); }
+    }
+
+    function updatePayCategoryUI() {
+        var cat = (document.getElementById('pay-category') || {}).value;
+        var eventoEl  = document.getElementById('pay-evento-selector');
+        var generalEl = document.getElementById('pay-general-desc');
+        if (eventoEl)  eventoEl.style.display  = (cat === 'general') ? 'none' : '';
+        if (generalEl) generalEl.style.display = (cat === 'general') ? '' : 'none';
     }
 
     function openEditModal(payable) {
@@ -579,17 +740,60 @@ window.Mazelab.Modules.PayablesModule = (function () {
         var title = document.getElementById('payable-modal-title');
         if (title) title.textContent = payable ? 'Editar Costo' : 'Nuevo Costo';
 
-        document.getElementById('pay-category').value   = payable ? (payable.category   || 'evento') : 'evento';
-        document.getElementById('pay-docType').value    = payable ? (payable.docType     || 'bh')     : 'bh';
-        document.getElementById('pay-eventName').value  = payable ? (payable.eventName   || '')       : '';
-        document.getElementById('pay-clientName').value = payable ? (payable.clientName  || '')       : '';
-        document.getElementById('pay-eventDate').value  = payable ? (payable.eventDate   || '')       : '';
-        document.getElementById('pay-billingDate').value = payable ? (payable.billingDate || '')      : '';
-        document.getElementById('pay-concept').value    = payable ? (payable.concept     || '')       : '';
-        document.getElementById('pay-vendorName').value = payable ? (payable.vendorName  || '')       : '';
-        document.getElementById('pay-docNumber').value  = payable ? (payable.docNumber   || '')       : '';
-        document.getElementById('pay-amount').value     = payable ? (payable.amount      || '')       : '';
-        document.getElementById('pay-comments').value   = payable ? (payable.comments    || '')       : '';
+        var category = payable ? (payable.category || 'evento') : 'evento';
+        document.getElementById('pay-category').value        = category;
+        document.getElementById('pay-docType').value         = payable ? (payable.docType     || 'bh') : 'bh';
+        document.getElementById('pay-eventName').value       = payable ? (payable.eventName   || '')   : '';
+        document.getElementById('pay-clientName').value      = payable ? (payable.clientName  || '')   : '';
+        document.getElementById('pay-linked-eventId').value  = payable ? (payable.eventId     || '')   : '';
+        document.getElementById('pay-eventDate').value       = payable ? (payable.eventDate   || '')   : '';
+        document.getElementById('pay-billingDate').value     = payable ? (payable.billingDate || '')   : '';
+        document.getElementById('pay-concept').value         = payable ? (payable.concept     || '')   : '';
+        document.getElementById('pay-vendorName').value      = payable ? (payable.vendorName  || '')   : '';
+        document.getElementById('pay-docNumber').value       = payable ? (payable.docNumber   || '')   : '';
+        document.getElementById('pay-amount').value          = payable ? (payable.amount || '') : '';
+        document.getElementById('pay-comments').value        = payable ? (payable.comments    || '')   : '';
+
+        // Show/hide cascade vs general text
+        updatePayCategoryUI();
+
+        if (category === 'evento') {
+            populatePayClientDropdown();
+            // Pre-select using clientName (primary key in dropdown since ventas has no clientId column)
+            var linkedSale = payable && payable.eventId
+                ? cachedSales.find(function (s) { return s.id === payable.eventId; })
+                : null;
+            var preClientName = (linkedSale && linkedSale.clientName) || (payable && payable.clientName) || '';
+            if (preClientName) {
+                var clientSel = document.getElementById('pay-clientSelect');
+                if (clientSel) clientSel.value = preClientName;
+                populatePayEventDropdown(preClientName);
+                if (payable && payable.eventId) {
+                    var eventSel = document.getElementById('pay-eventSelect');
+                    if (eventSel) eventSel.value = payable.eventId;
+                }
+            } else {
+                populatePayEventDropdown('');
+            }
+        } else {
+            var textEl = document.getElementById('pay-eventName-text');
+            if (textEl) textEl.value = payable ? (payable.eventName || '') : '';
+        }
+
+        // Populate datalists from existing payables data
+        var vendors = {}, concepts = {};
+        payables.forEach(function (p) {
+            if (p.vendorName) vendors[p.vendorName] = true;
+            if (p.concept)    concepts[p.concept]   = true;
+        });
+        var vendorList = document.getElementById('pay-vendor-list');
+        if (vendorList) vendorList.innerHTML = Object.keys(vendors).sort().map(function (v) { return '<option value="' + escapeHtml(v) + '">'; }).join('');
+        var conceptList = document.getElementById('pay-concept-list');
+        if (conceptList) conceptList.innerHTML = Object.keys(concepts).sort().map(function (c) { return '<option value="' + escapeHtml(c) + '">'; }).join('');
+
+        // Clear ID search
+        var idSearch = document.getElementById('pay-id-search');
+        if (idSearch) idSearch.value = '';
 
         updateDueDateDisplay();
         updateDocPreview();
@@ -633,24 +837,29 @@ window.Mazelab.Modules.PayablesModule = (function () {
     function refreshAbonoContent(p) {
         var pending = getPendiente(p);
         var docStr = docTypeLabel(p.docType) + (p.docNumber ? ' #' + p.docNumber : '');
+        var amount = Number(p.amount) || 0;
 
         // Summary block
         var summaryEl = document.getElementById('abono-summary');
         if (summaryEl) {
-            var bhLine = '';
-            if (isBH(p)) {
+            var extraLine = '';
+            if (isBH(p) && amount > 0) {
                 var rate = getBHRetentionRate(p.billingDate || p.eventDate);
-                var netoProv = Math.round((Number(p.amount) || 0) * (1 - rate));
-                bhLine = '<br><strong>Neto a transferir al proveedor: ' + formatCLP(netoProv) + '</strong>' +
-                         ' (retenci\u00f3n ' + (rate * 100).toFixed(2) + '% queda en tu cuenta para SII)';
+                var ret  = Math.round(amount * rate);
+                var neto = amount - ret;
+                extraLine = '<br><span style="color:var(--text-muted);font-size:12px">Neto proveedor: ' + formatCLP(neto) +
+                            ' &middot; Retenci\u00f3n SII (' + (rate * 100).toFixed(2) + '%): ' + formatCLP(ret) + '</span>';
+            } else if (isFactura(p) && amount > 0) {
+                var iva = Math.round(amount * 0.19);
+                extraLine = '<br><span style="color:var(--text-muted);font-size:12px">IVA cr\u00e9dito fiscal (19%): ' + formatCLP(iva) + '</span>';
             }
             summaryEl.innerHTML =
                 '<strong>' + (p.vendorName || 'Sin proveedor') + '</strong> &middot; ' + (p.eventName || 'Sin evento') +
                 '<br>Documento: ' + docStr +
-                ' &middot; Total: ' + formatCLP(p.amount) +
+                ' &middot; Monto: ' + formatCLP(amount) +
                 ' &middot; Pagado: ' + formatCLP(getTotalPagado(p)) +
                 ' &middot; <strong style="color:var(--danger)">Pendiente: ' + formatCLP(pending) + '</strong>' +
-                bhLine;
+                extraLine;
         }
 
         // Payments list
@@ -727,17 +936,29 @@ window.Mazelab.Modules.PayablesModule = (function () {
 
     async function handleSave(e) {
         e.preventDefault();
+        var catVal = document.getElementById('pay-category').value || 'evento';
+        // For general costs, sync description text to hidden field
+        if (catVal === 'general') {
+            var textEl = document.getElementById('pay-eventName-text');
+            var hidEl  = document.getElementById('pay-eventName');
+            if (textEl && hidEl) hidEl.value = textEl.value.trim();
+        }
+        var docTypeVal   = document.getElementById('pay-docType').value || 'bh';
+        var billingDateV = document.getElementById('pay-billingDate').value
+                        || document.getElementById('pay-eventDate').value || '';
+        var rawAmount    = Number(document.getElementById('pay-amount').value) || 0;
         var record = {
-            category:    document.getElementById('pay-category').value    || 'evento',
-            docType:     document.getElementById('pay-docType').value     || 'bh',
+            category:    catVal,
+            docType:     docTypeVal,
             eventName:   document.getElementById('pay-eventName').value.trim(),
             clientName:  document.getElementById('pay-clientName').value.trim(),
+            eventId:     document.getElementById('pay-linked-eventId').value.trim(),
             eventDate:   document.getElementById('pay-eventDate').value,
-            billingDate: document.getElementById('pay-billingDate').value,
+            billingDate: billingDateV,
             concept:     document.getElementById('pay-concept').value.trim(),
             vendorName:  document.getElementById('pay-vendorName').value.trim(),
             docNumber:   document.getElementById('pay-docNumber').value.trim(),
-            amount:      Number(document.getElementById('pay-amount').value) || 0,
+            amount:      rawAmount,
             comments:    document.getElementById('pay-comments').value.trim(),
             status:      'pendiente'
         };
@@ -836,7 +1057,31 @@ window.Mazelab.Modules.PayablesModule = (function () {
     // ── Init ───────────────────────────────────────────────────────────
 
     async function init() {
+        // Reset filter state on every navigation to this module
+        showOnlyPending = true;
+        currentCategory = 'todos';
+        currentView = 'lista';
+        searchQuery = '';
+        columnFilters = {};
+
         await loadData();
+
+        // ── DB MIGRATION STATUS ───────────────────────────────────────────
+        // Schema: tabla 'costos' en PostgreSQL (Replit) / tabla 'payables' en Supabase
+        // Campos: id, category, docType, eventName, clientName, eventId, eventDate,
+        //         billingDate, concept, vendorName, docNumber, amount, comments, status,
+        //         payments (JSONB array: [{id, amount, date, method, comment}])
+        // CONVENCION DE MONTO (post-fix 2025-03-03):
+        //   - amount se almacena tal como lo ingresa el usuario (raw)
+        //   - BH:      amount = bruto del documento; neto = amount*(1-rate)
+        //   - Factura: amount = neto de la factura (sin IVA); IVA = amount*0.19
+        //   - Otros:   amount = monto directo
+        // NOTA MIGRACIÓN: registros anteriores al 2025-03-03 pueden tener amount como
+        //   neto (BH) o total-con-IVA (Factura) si fueron creados durante el bug temporal.
+        //   Revisar evento 830 (test records): BH ~58.997 y Factura ~42.017 pueden ser incorrectos.
+        // ESTADO: en branch pr-1, aún no mergeado a master. Pendiente sync con Replit PostgreSQL.
+        console.log('[CXP] Loaded', payables.length, 'payables,', cachedSales.length, 'sales. Using Supabase:', window.Mazelab.DataService.isUsingSupabase());
+
         refreshView();
 
         // New record button
@@ -864,6 +1109,92 @@ window.Mazelab.Modules.PayablesModule = (function () {
                     viewToggle.querySelectorAll('.toggle-option').forEach(function (b) { b.classList.toggle('active', b.dataset.view === currentView); });
                     refreshView();
                 });
+            });
+        }
+
+        // Pending filter toggle
+        var pendingToggle = document.getElementById('payables-pending-toggle');
+        if (pendingToggle) {
+            pendingToggle.querySelectorAll('.toggle-option').forEach(function (btn) {
+                btn.addEventListener('click', function () {
+                    showOnlyPending = btn.dataset.pending === 'true';
+                    pendingToggle.querySelectorAll('.toggle-option').forEach(function (b) {
+                        b.classList.toggle('active', b.dataset.pending === String(showOnlyPending));
+                    });
+                    refreshView();
+                });
+            });
+        }
+
+        // Cascade: category change in form
+        var payCatSel = document.getElementById('pay-category');
+        if (payCatSel) {
+            payCatSel.addEventListener('change', function () {
+                updatePayCategoryUI();
+                if (this.value === 'evento') populatePayClientDropdown();
+                // Clear resolved fields on category switch
+                var hidEvent = document.getElementById('pay-eventName');
+                var hidClient = document.getElementById('pay-clientName');
+                var hidLinked = document.getElementById('pay-linked-eventId');
+                if (hidEvent)  hidEvent.value  = '';
+                if (hidClient) hidClient.value = '';
+                if (hidLinked) hidLinked.value = '';
+            });
+        }
+
+        // Cascade: client selection → populate events
+        var payClientSel = document.getElementById('pay-clientSelect');
+        if (payClientSel) {
+            payClientSel.addEventListener('change', function () {
+                var hidEvent = document.getElementById('pay-eventName');
+                var hidClient = document.getElementById('pay-clientName');
+                var hidLinked = document.getElementById('pay-linked-eventId');
+                if (hidEvent)  hidEvent.value  = '';
+                if (hidClient) hidClient.value = '';
+                if (hidLinked) hidLinked.value = '';
+                populatePayEventDropdown(this.value);
+            });
+        }
+
+        // Cascade: event selection → fill hidden fields
+        var payEventSel = document.getElementById('pay-eventSelect');
+        if (payEventSel) {
+            payEventSel.addEventListener('change', function () { applyPayEventSelection(); });
+        }
+
+        // General description text → keep hidden field in sync
+        var payGeneralText = document.getElementById('pay-eventName-text');
+        if (payGeneralText) {
+            payGeneralText.addEventListener('input', function () {
+                var hidEvent = document.getElementById('pay-eventName');
+                if (hidEvent) hidEvent.value = this.value;
+            });
+        }
+
+        // ID search → auto-select client + event
+        var payIdSearch = document.getElementById('pay-id-search');
+        if (payIdSearch) {
+            payIdSearch.addEventListener('input', function () {
+                var q = this.value.trim();
+                if (!q) return;
+                var found = cachedSales.find(function (s) {
+                    return String(s.sourceId || '') === q || String(s.id || '') === q;
+                });
+                if (found) {
+                    populatePayClientDropdown();
+                    var clientSel = document.getElementById('pay-clientSelect');
+                    if (clientSel) clientSel.value = found.clientName || '';
+                    populatePayEventDropdown(found.clientName || '');
+                    var eventSel = document.getElementById('pay-eventSelect');
+                    if (eventSel) {
+                        eventSel.value = found.id;
+                        applyPayEventSelection();
+                    }
+                    // Visual feedback
+                    this.style.borderColor = 'var(--success)';
+                } else {
+                    this.style.borderColor = q.length >= 2 ? 'var(--danger)' : '';
+                }
             });
         }
 

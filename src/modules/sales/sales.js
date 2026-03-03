@@ -3,7 +3,7 @@ window.Mazelab.Modules.SalesModule = (function () {
     let clients = [];
     let services = [];
     let staff = [];
-    let currentFilter = 'todas';
+    let currentFilter = 'pendiente';
     let searchQuery = '';
     let editingId = null;
     let sortCol = null;
@@ -201,11 +201,9 @@ window.Mazelab.Modules.SalesModule = (function () {
                 <div class="search-bar">
                     <input type="text" id="sales-search" class="form-control" placeholder="Buscar por cliente, evento o servicio..." />
                 </div>
-                <div class="filter-buttons">
-                    <button class="btn-sm filter-btn active" data-filter="todas">Todas</button>
-                    <button class="btn-sm filter-btn" data-filter="pendiente">Pendientes</button>
-                    <button class="btn-sm filter-btn" data-filter="realizada">Realizadas</button>
-                    <button class="btn-sm filter-btn" data-filter="cancelada">Canceladas</button>
+                <div class="toggle-group" id="sales-pending-toggle">
+                    <button class="toggle-option" data-filter="todas">Mostrar todos</button>
+                    <button class="toggle-option active" data-filter="pendiente">Mostrar pendientes</button>
                 </div>
             </div>
             <table class="data-table" id="sales-table">
@@ -737,6 +735,10 @@ window.Mazelab.Modules.SalesModule = (function () {
     }
 
     async function init() {
+        // Reset filter state on every navigation to this module
+        currentFilter = 'pendiente';
+        searchQuery = '';
+
         const DS = window.Mazelab.DataService;
 
         try {
@@ -772,16 +774,18 @@ window.Mazelab.Modules.SalesModule = (function () {
             });
         }
 
-        // Status filter buttons
-        const filterBtns = document.querySelectorAll('.filter-btn');
-        filterBtns.forEach(btn => {
-            btn.addEventListener('click', function () {
-                filterBtns.forEach(b => b.classList.remove('active'));
-                this.classList.add('active');
-                currentFilter = this.getAttribute('data-filter');
-                refreshTable();
+        // Status filter toggle
+        const pendingToggle = document.getElementById('sales-pending-toggle');
+        if (pendingToggle) {
+            pendingToggle.querySelectorAll('.toggle-option').forEach(btn => {
+                btn.addEventListener('click', function () {
+                    pendingToggle.querySelectorAll('.toggle-option').forEach(b => b.classList.remove('active'));
+                    this.classList.add('active');
+                    currentFilter = this.getAttribute('data-filter');
+                    refreshTable();
+                });
             });
-        });
+        }
 
         // New sale button
         const newBtn = document.getElementById('btn-new-sale');

@@ -5,6 +5,7 @@ window.Mazelab.Modules.NominasModule = (function () {
 
     // ── State ──────────────────────────────────────────────────────────
     let payables = [];
+    let cachedSales = [];
     let cutoffDate = '';
     let activeTab = 'nomina';
     let historialExpanded = {}; // { monthKey: bool }
@@ -139,19 +140,78 @@ window.Mazelab.Modules.NominasModule = (function () {
     }
 
     // ── Transfer comment ───────────────────────────────────────────────
-    // Usa el ID de evento (eventId) que corresponde al número en el CSV
+
+    // Returns the human-readable ID for a payable: docNumber if set, else sourceId of linked sale
+    function getEventSourceId(p) {
+        if (p.docNumber && String(p.docNumber).trim()) return String(p.docNumber).trim();
+        var sale = cachedSales.find(function (s) { return s.id === p.eventId; });
+        return sale && sale.sourceId ? String(sale.sourceId).trim() : '';
+    }
+
+    // Builds the transfer glosa using doc numbers. Detects full vs partial payments from selectionState.
+    // Format: "BH 1-2-3" (all full), "BH 1-2 parc 3" (mixed), "BH parc 1-2" (all partial)
     function buildTransferComment(items) {
-        var ids = items.map(function (p) { return (p.eventId || p.id || '').toString().trim(); }).filter(Boolean);
-        var comment = 'BH ' + ids.join('-');
-        if (comment.length <= 40) return comment;
-        // Si excede 40 chars, ir recortando
-        var parts = [];
-        for (var i = 0; i < ids.length; i++) {
-            var candidate = 'BH ' + parts.concat([ids[i]]).join('-');
-            if (candidate.length > 40) break;
-            parts.push(ids[i]);
+        var fullNums = [], partialNums = [];
+        items.forEach(function (p) {
+            var num = getEventSourceId(p);
+            var pend = getPendiente(p);
+            var paying = selectionState[p.id] ? (selectionState[p.id].amount || 0) : pend;
+            // Consider "full" if paying within 1 peso of pending
+            if (Math.abs(paying - pend) < 1) {
+                fullNums.push(num);
+            } else {
+                partialNums.push(num);
+            }
+        });
+
+        var comment;
+        if (!partialNums.length) {
+            // All full
+            var nums = fullNums.filter(Boolean);
+            comment = nums.length ? 'BH ' + nums.join('-') : 'BH (' + items.length + ')';
+        } else if (!fullNums.length) {
+            // All partial
+            var nums = partialNums.filter(Boolean);
+            comment = nums.length ? 'BH parc ' + nums.join('-') : 'BH parc (' + items.length + ')';
+        } else {
+            // Mixed: full first, then partial
+            var fStr = fullNums.filter(Boolean).join('-');
+            var pStr = partialNums.filter(Boolean).join('-');
+            comment = 'BH ' + (fStr || '(varios)') + ' parc ' + (pStr || '(parcial)');
         }
-        return 'BH ' + parts.join('-');
+
+        if (comment.length <= 40) return comment;
+        // Trim: try to fit as many full IDs as possible
+        var parts = [];
+        var prefix = partialNums.length ? 'BH ' : 'BH ';
+        for (var i = 0; i < fullNums.length; i++) {
+            var candidate = prefix + parts.concat([fullNums[i]]).join('-');
+            if (candidate.length > 40) break;
+            parts.push(fullNums[i]);
+        }
+        return (prefix + parts.join('-')).substring(0, 40);
+    }
+
+    // FIFO distribution: given a budget, pay items oldest-first until budget is exhausted
+    function applyFIFO(vendor, budget) {
+        var eligible = getEligibleBH();
+        var vendorItems = eligible.filter(function (p) {
+            return (p.vendorName || 'Sin beneficiario').trim() === vendor;
+        });
+        // Already sorted by eventDate ascending (from groupByVendor)
+        var remaining = budget;
+        vendorItems.forEach(function (p) {
+            var pend = getPendiente(p);
+            if (remaining <= 0) {
+                selectionState[p.id] = { selected: false, amount: 0 };
+            } else if (remaining >= pend) {
+                selectionState[p.id] = { selected: true, amount: pend };
+                remaining -= pend;
+            } else {
+                selectionState[p.id] = { selected: true, amount: remaining };
+                remaining = 0;
+            }
+        });
     }
 
     // ── Render: shell ──────────────────────────────────────────────────
@@ -325,6 +385,18 @@ window.Mazelab.Modules.NominasModule = (function () {
             '    </div>',
             '  </div>',
 
+            // FIFO budget section
+            '  <div style="display:flex;align-items:center;gap:8px;margin-bottom:var(--space-md);padding:10px 14px;background:rgba(255,255,255,0.03);border:1px solid rgba(255,255,255,0.08);border-radius:8px">',
+            '    <span style="font-size:12px;color:var(--text-secondary);white-space:nowrap">Presupuesto disponible:</span>',
+            '    <input type="number" class="form-control nomina-budget-input" data-vendor="' + escAttr(vendor) + '"',
+            '           placeholder="Ingresa el total a transferir..." min="0" step="1"',
+            '           style="max-width:220px;font-size:13px">',
+            '    <button class="btn btn-secondary btn-sm nomina-fifo-btn" data-vendor="' + escAttr(vendor) + '" style="white-space:nowrap">',
+            '      Distribuir FIFO \u2193',
+            '    </button>',
+            '    <span style="font-size:11px;color:var(--text-muted)">Paga de m\u00e1s antigua a m\u00e1s reciente</span>',
+            '  </div>',
+
             // Tabla
             '  <div style="overflow-x:auto;margin-bottom:var(--space-md)">',
             '  <table class="data-table" style="margin:0">',
@@ -386,7 +458,7 @@ window.Mazelab.Modules.NominasModule = (function () {
         return [
             '<tr style="' + rowDim + '">',
             '  <td><input type="checkbox" class="nomina-bh-check" data-id="' + escAttr(p.id) + '" ' + (s.selected ? 'checked' : '') + '></td>',
-            '  <td style="font-weight:700;font-size:13px;color:var(--primary)">' + escHtml(p.eventId || '-') + '</td>',
+            '  <td style="font-weight:700;font-size:13px;color:var(--primary)">' + escHtml(getEventSourceId(p) || p.eventId || '-') + '</td>',
             '  <td style="font-size:12px">' + escHtml(p.clientName || '-') + '</td>',
             '  <td>',
             '    <div style="font-size:13px;font-weight:600">' + escHtml(p.eventName || '-') + '</div>',
@@ -492,7 +564,7 @@ window.Mazelab.Modules.NominasModule = (function () {
                         : null;
                     return [
                         '<tr style="background:rgba(255,255,255,0.02)">',
-                        '<td style="font-size:12px;font-weight:700;color:var(--text-primary)">' + escHtml(p.eventId || '-') + '</td>',
+                        '<td style="font-size:12px;font-weight:700;color:var(--text-primary)">' + escHtml(getEventSourceId(p) || p.eventId || '-') + '</td>',
                         '<td style="font-weight:600;font-size:13px;color:var(--text-primary)">' + escHtml(v) + '</td>',
                         '<td style="font-size:12px;color:var(--text-primary)">' + escHtml(p.clientName || '-') + '</td>',
                         '<td style="font-size:13px;color:var(--text-primary)">' + escHtml(p.eventName || '-') + '</td>',
@@ -613,18 +685,36 @@ window.Mazelab.Modules.NominasModule = (function () {
             }
         });
 
-        // Input de monto por BH
+        // Input de monto por BH — restore focus after re-render to avoid losing cursor position
         document.querySelectorAll('.nomina-amount-input').forEach(function (inp) {
             if (!inp._bound) {
                 inp._bound = true;
                 inp.addEventListener('input', function () {
                     var id = this.dataset.id;
+                    var cursor = this.selectionStart;
                     var p = payables.find(function (x) { return x.id === id; });
                     if (!p) return;
                     if (!selectionState[id]) selectionState[id] = { selected: true, amount: getPendiente(p) };
                     selectionState[id].amount = Number(this.value) || 0;
-                    // Re-render solo el header (total) sin re-render completo
-                    // Para simplicidad, re-render completo pero manteniendo focus
+                    renderContent();
+                    setTimeout(function () {
+                        var el = document.querySelector('.nomina-amount-input[data-id="' + id + '"]');
+                        if (el) { el.focus(); try { el.setSelectionRange(cursor, cursor); } catch (e) {} }
+                    }, 0);
+                });
+            }
+        });
+
+        // FIFO budget distribution button
+        document.querySelectorAll('.nomina-fifo-btn').forEach(function (btn) {
+            if (!btn._bound) {
+                btn._bound = true;
+                btn.addEventListener('click', function () {
+                    var vendor = this.dataset.vendor;
+                    var budgetEl = document.querySelector('.nomina-budget-input[data-vendor="' + vendor + '"]');
+                    var budget = budgetEl ? (Number(budgetEl.value) || 0) : 0;
+                    if (budget <= 0) { alert('Ingresa un monto de presupuesto disponible.'); return; }
+                    applyFIFO(vendor, budget);
                     renderContent();
                 });
             }
@@ -735,10 +825,16 @@ window.Mazelab.Modules.NominasModule = (function () {
         selectionState = {};
         historialExpanded = {};
         try {
-            payables = await window.Mazelab.DataService.getAll('payables');
+            var results = await Promise.all([
+                window.Mazelab.DataService.getAll('payables'),
+                window.Mazelab.DataService.getAll('sales')
+            ]);
+            payables     = results[0] || [];
+            cachedSales  = results[1] || [];
         } catch (err) {
             console.error('NominasModule: init error', err);
             payables = [];
+            cachedSales = [];
         }
         renderContent();
     }
