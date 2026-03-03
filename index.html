@@ -8,6 +8,7 @@
     <link rel="stylesheet" href="src/styles/theme.css">
     <link rel="stylesheet" href="src/styles/layout.css">
     <link rel="stylesheet" href="src/styles/components.css">
+    <link rel="stylesheet" href="src/styles/kanban.css">
 </head>
 <body>
     <div class="app-container">
@@ -38,12 +39,20 @@
                         <span class="nav-icon">&#9679;</span>
                         <span>CXP</span>
                     </div>
+                    <div class="nav-item" data-route="nominas">
+                        <span class="nav-icon">&#128179;</span>
+                        <span>N&oacute;minas</span>
+                    </div>
+                    <div class="nav-item" data-route="pagos">
+                        <span class="nav-icon">&#128200;</span>
+                        <span>Pagos</span>
+                    </div>
                 </div>
                 <div class="nav-section">
                     <div class="nav-section-title">An&aacute;lisis</div>
-                    <div class="nav-item" data-route="events">
+                    <div class="nav-item" data-route="kanban">
                         <span class="nav-icon">&#128203;</span>
-                        <span>Ficha Eventos</span>
+                        <span>Board Operativo</span>
                     </div>
                     <div class="nav-item" data-route="cashflow">
                         <span class="nav-icon">&#128200;</span>
@@ -85,8 +94,11 @@
     <script src="src/modules/settings/settings.js"></script>
     <script src="src/modules/import/import.js"></script>
     <script src="src/modules/events/events.js"></script>
+    <script src="src/modules/kanban/kanban.js"></script>
     <script src="src/modules/cashflow/cashflow.js"></script>
     <script src="src/modules/analytics/analytics.js"></script>
+    <script src="src/modules/nominas/nominas.js"></script>
+    <script src="src/modules/pagos/pagos.js"></script>
     <script src="src/app.js"></script>
 </body>
 </html>

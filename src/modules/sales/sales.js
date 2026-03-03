@@ -3,7 +3,7 @@ window.Mazelab.Modules.SalesModule = (function () {
     let clients = [];
     let services = [];
     let staff = [];
-    let currentFilter = 'todas';
+    let currentFilter = 'pendiente';
     let searchQuery = '';
     let editingId = null;
     let sortCol = null;
@@ -15,6 +15,11 @@ window.Mazelab.Modules.SalesModule = (function () {
     function formatCLP(amount) {
         if (amount == null || isNaN(amount)) return '$0';
         return '$' + Number(amount).toFixed(0).replace(/\B(?=(\d{3})+(?!\d))/g, '.');
+    }
+
+    function escapeHtml(str) {
+        if (!str) return '';
+        return String(str).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
     }
 
     function getStatusBadgeClass(status) {
@@ -37,6 +42,8 @@ window.Mazelab.Modules.SalesModule = (function () {
         if (sale.eventDate && new Date(sale.eventDate) < new Date()) {
             return 'realizada';
         }
+        // 'confirmada' tratada como 'pendiente' (estado eliminado)
+        if (sale.status === 'confirmada') return 'pendiente';
         return sale.status || 'pendiente';
     }
 
@@ -69,7 +76,8 @@ window.Mazelab.Modules.SalesModule = (function () {
                 const clientName = (sale.clientName || getClientName(sale.clientId)).toLowerCase();
                 const eventName = (sale.eventName || '').toLowerCase();
                 const serviceNames = getServiceNames(sale.serviceIds).toLowerCase();
-                return clientName.includes(q) || eventName.includes(q) || serviceNames.includes(q);
+                const sourceId = String(sale.sourceId || '').toLowerCase();
+                return clientName.includes(q) || eventName.includes(q) || serviceNames.includes(q) || sourceId.includes(q);
             }
             return true;
         });
@@ -155,16 +163,16 @@ window.Mazelab.Modules.SalesModule = (function () {
             const statusLabel = effectiveStatus ? effectiveStatus.charAt(0).toUpperCase() + effectiveStatus.slice(1) : '';
             const _sn = (sale.eventName || '').trim().toLowerCase();
             const cost = eventCosts[String(sale.id)]
-                      || (sale.sourceId ? eventCosts[String(sale.sourceId)] : 0)
-                      || (_sn ? eventCosts['__n__' + _sn] : 0)
-                      || 0;
+                || (sale.sourceId ? eventCosts[String(sale.sourceId)] : 0)
+                || (_sn ? eventCosts['__n__' + _sn] : 0)
+                || 0;
             const utilidad = (Number(sale.amount) || 0) - cost;
             const margenPct = (Number(sale.amount) || 0) > 0 ? utilidad / Number(sale.amount) : null;
             const marginClass = utilidad >= 0 ? 'text-success' : 'text-danger';
-            const displayId = sale.sourceId || String(sale.id || '').slice(-6);
+            const displayId = sale.sourceId || '';
             return `
                 <tr data-id="${sale.id}">
-                    <td style="font-size:11px;color:var(--text-muted);white-space:nowrap">${displayId}</td>
+                    <td style="font-size:12px;font-weight:600;white-space:nowrap">${displayId}</td>
                     <td>${clientName}</td>
                     <td>${serviceNames}</td>
                     <td>${sale.eventName || ''}</td>
@@ -193,11 +201,9 @@ window.Mazelab.Modules.SalesModule = (function () {
                 <div class="search-bar">
                     <input type="text" id="sales-search" class="form-control" placeholder="Buscar por cliente, evento o servicio..." />
                 </div>
-                <div class="filter-buttons">
-                    <button class="btn-sm filter-btn active" data-filter="todas">Todas</button>
-                    <button class="btn-sm filter-btn" data-filter="pendiente">Pendientes</button>
-                    <button class="btn-sm filter-btn" data-filter="realizada">Realizadas</button>
-                    <button class="btn-sm filter-btn" data-filter="cancelada">Canceladas</button>
+                <div class="toggle-group" id="sales-pending-toggle">
+                    <button class="toggle-option" data-filter="todas">Mostrar todos</button>
+                    <button class="toggle-option active" data-filter="pendiente">Mostrar pendientes</button>
                 </div>
             </div>
             <table class="data-table" id="sales-table">
@@ -246,14 +252,13 @@ window.Mazelab.Modules.SalesModule = (function () {
 
                     <div class="form-row">
                         <div class="form-group">
-                            <label for="sale-closing-month">Fecha de Venta (Mes)</label>
-                            <input type="month" id="sale-closing-month" class="form-control" />
+                            <label for="sale-closing-date">Fecha Cierre de Venta</label>
+                            <input type="date" id="sale-closing-date" class="form-control" />
                         </div>
                         <div class="form-group">
                             <label for="sale-status">Estado</label>
                             <select id="sale-status" class="form-control">
                                 <option value="pendiente">Pendiente</option>
-                                <option value="confirmada">Confirmada</option>
                                 <option value="realizada">Realizada</option>
                                 <option value="cancelada">Cancelada</option>
                             </select>
@@ -262,7 +267,7 @@ window.Mazelab.Modules.SalesModule = (function () {
 
                     <div class="form-group">
                         <label>Servicios</label>
-                        <div id="sale-services-checkboxes" class="checkbox-group">
+                        <div id="sale-services-accordion" class="services-accordion">
                         </div>
                     </div>
 
@@ -325,23 +330,103 @@ window.Mazelab.Modules.SalesModule = (function () {
                 }).join('');
         }
 
-        // Services checkboxes
-        const servicesContainer = document.getElementById('sale-services-checkboxes');
+        // Services accordion
+        const servicesContainer = document.getElementById('sale-services-accordion');
         if (servicesContainer) {
-            servicesContainer.innerHTML = services.map(svc => {
-                const name = svc.name || svc.nombre || '';
-                return `
-                    <label class="checkbox-label">
-                        <input type="checkbox" class="sale-service-cb" value="${svc.id}" />
-                        ${name}
-                    </label>`;
-            }).join('');
+            // Group by category
+            const grouped = {};
+            services.forEach(svc => {
+                let cat = (svc.categoria || svc.category || 'Otros').trim();
+                // Standardize common cases
+                if (cat.toLowerCase() === 'fotográficas' || cat.toLowerCase() === 'fotograficas') cat = 'Fotograficas';
+                if (!grouped[cat]) grouped[cat] = [];
+                grouped[cat].push(svc);
+            });
+
+            // Sort categories alphabetically
+            const categories = Object.keys(grouped).sort();
+
+            let html = '';
+            categories.forEach(cat => {
+                // Sort services alphabetically within category
+                grouped[cat].sort((a, b) => {
+                    const nameA = (a.name || a.nombre || '').toLowerCase();
+                    const nameB = (b.name || b.nombre || '').toLowerCase();
+                    return nameA.localeCompare(nameB);
+                });
+
+                html += `
+                    <div class="accordion-item" style="margin-bottom: 8px; border: 1px solid var(--border); border-radius: 8px; overflow: hidden; background: var(--bg-tertiary);">
+                        <button type="button" class="accordion-header" style="width: 100%; text-align: left; padding: 12px 16px; background: transparent; border: none; color: var(--text-primary); font-weight: 600; display: flex; justify-content: space-between; align-items: center; cursor: pointer;" onclick="
+                            var content = this.nextElementSibling;
+                            var arrow = this.querySelector('.accordion-arrow');
+                            if (content.style.display === 'none' || content.style.display === '') {
+                                content.style.display = 'grid';
+                                arrow.style.transform = 'rotate(180deg)';
+                            } else {
+                                content.style.display = 'none';
+                                arrow.style.transform = 'rotate(0deg)';
+                            }
+                        ">
+                            <span>${cat}</span> 
+                            <span class="accordion-arrow" style="font-size: 12px; opacity: 0.6; transition: transform 0.2s; display: inline-block;">▼</span>
+                        </button>
+                        <div class="accordion-content checkbox-group" style="padding: 16px; background: rgba(255, 255, 255, 0.02); border-top: 1px solid var(--border); display: none; flex-direction: column; gap: 12px;">
+                            ${(function () {
+                        const featured = grouped[cat].filter(s => s.featured);
+                        const regular = grouped[cat].filter(s => !s.featured);
+
+                        const renderSvc = (svc) => {
+                            const name = svc.name || svc.nombre || '';
+                            return `
+                                        <label class="checkbox-label" style="margin: 0; background: var(--bg-card); padding: 8px 12px; border-radius: 6px; border: 1px solid var(--border); width: 100%; box-sizing: border-box; display: flex; align-items: center; gap: 8px; cursor: pointer;">
+                                            <input type="checkbox" class="sale-service-cb" value="${svc.id}" style="margin: 0; cursor: pointer;" />
+                                            <span style="white-space: nowrap; overflow: hidden; text-overflow: ellipsis;" title="${escapeHtml(name)}">${escapeHtml(name)}</span>
+                                            ${svc.featured ? '<span style="font-size:12px;color:var(--warning);margin-left:auto" title="Destacado">★</span>' : ''}
+                                        </label>`;
+                        };
+
+                        let innerHtml = '<div style="display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 12px;">';
+                        if (featured.length > 0) {
+                            innerHtml += featured.map(renderSvc).join('');
+                        } else if (regular.length > 0) {
+                            // Make sure nothing is hidden if no "featured" is available
+                            innerHtml += regular.map(renderSvc).join('');
+                            regular.length = 0;
+                        }
+                        innerHtml += '</div>';
+
+                        if (regular.length > 0) {
+                            const moreId = 'more-btn-' + cat.replace(/[^a-zA-Z0-9]/g, '');
+                            innerHtml += `
+                                    <div style="margin-top: 8px; border-top: 1px dashed rgba(255,255,255,0.1); padding-top: 12px;">
+                                        <button type="button" class="btn-sm btn-secondary" style="width: 100%; margin-bottom: 12px; background: transparent; border: 1px solid rgba(255,255,255,0.1);" onclick="
+                                            var d = document.getElementById('${moreId}');
+                                            if (d.style.display === 'none' || d.style.display === '') {
+                                                d.style.display = 'grid';
+                                                this.innerHTML = 'Mostrar menos ▲';
+                                            } else {
+                                                d.style.display = 'none';
+                                                this.innerHTML = 'Mostrar ${regular.length} más ▼';
+                                            }
+                                        ">Mostrar ${regular.length} más ▼</button>
+                                        <div id="${moreId}" style="display: none; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 12px;">
+                                            ${regular.map(renderSvc).join('')}
+                                        </div>
+                                    </div>`;
+                        }
+                        return innerHtml;
+                    })()}
+                        </div>
+                    </div>`;
+            });
+            servicesContainer.innerHTML = html;
         }
     }
 
     function renderTableHeader() {
         const filterRow = `<tr class="filter-row" style="background:var(--bg-tertiary)">
-            <th style="padding:2px 4px;font-weight:400"><span style="font-size:10px;color:var(--text-muted)">ID</span></th>
+            <th style="padding:2px 4px">${filterInput('sourceId', 'ID...')}</th>
             <th style="padding:2px 4px">${filterInput('clientName', 'Cliente...')}</th>
             <th style="padding:2px 4px"></th>
             <th style="padding:2px 4px">${filterInput('eventName', 'Evento...')}</th>
@@ -354,7 +439,7 @@ window.Mazelab.Modules.SalesModule = (function () {
             <th style="padding:2px 4px"></th>
         </tr>`;
         return `<tr>
-            <th style="font-size:11px;color:var(--text-muted);white-space:nowrap">ID</th>
+            ${sortTh('ID', 'sourceId')}
             ${sortTh('Cliente', 'clientName')}
             <th>Servicios</th>
             ${sortTh('Evento', 'eventName')}
@@ -420,7 +505,12 @@ window.Mazelab.Modules.SalesModule = (function () {
             document.getElementById('sale-client').value = sale.clientId || '';
             document.getElementById('sale-event-name').value = sale.eventName || '';
             document.getElementById('sale-event-date').value = sale.eventDate || '';
-            document.getElementById('sale-closing-month').value = sale.closingMonth || '';
+            // Soporta closingDate (nuevo) y closingMonth (legacy mes)
+            var closingVal = sale.closingDate || '';
+            if (!closingVal && sale.closingMonth) {
+                closingVal = /^\d{4}-\d{2}$/.test(sale.closingMonth) ? sale.closingMonth + '-01' : sale.closingMonth;
+            }
+            document.getElementById('sale-closing-date').value = closingVal;
             document.getElementById('sale-jornadas').value = sale.jornadas != null ? sale.jornadas : '';
             document.getElementById('sale-amount').value = sale.amount != null ? sale.amount : '';
             document.getElementById('sale-staff').value = sale.staffId || '';
@@ -471,7 +561,7 @@ window.Mazelab.Modules.SalesModule = (function () {
             clientName: clientName,
             eventName: document.getElementById('sale-event-name').value,
             eventDate: document.getElementById('sale-event-date').value,
-            closingMonth: document.getElementById('sale-closing-month').value,
+            closingDate: document.getElementById('sale-closing-date').value,
             serviceIds: selectedServices,
             jornadas: document.getElementById('sale-jornadas').value ? Number(document.getElementById('sale-jornadas').value) : null,
             amount: document.getElementById('sale-amount').value ? Number(document.getElementById('sale-amount').value) : 0,
@@ -491,9 +581,55 @@ window.Mazelab.Modules.SalesModule = (function () {
         try {
             if (editingId) {
                 await DS.update('sales', editingId, data);
+                // Sincronizar la CXC auto-generada con los datos actualizados de la venta
+                const allReceivables = await DS.getAll('receivables') || [];
+                const linkedCXC = allReceivables.find(function (r) {
+                    return String(r.saleId) === String(editingId) && r.sourceType === 'auto';
+                });
+                if (linkedCXC) {
+                    await DS.update('receivables', linkedCXC.id, {
+                        eventName: data.eventName || linkedCXC.eventName,
+                        eventDate: data.eventDate || linkedCXC.eventDate,
+                        clientName: data.clientName || linkedCXC.clientName,
+                        monto_venta: data.amount || 0
+                    });
+                }
             } else {
+                // Asignar ID numérico auto-incremental (max existente + 1)
+                var maxId = 0;
+                sales.forEach(function (s) {
+                    var numId = parseInt(s.sourceId || s.id, 10);
+                    if (!isNaN(numId) && numId > maxId) maxId = numId;
+                });
+                var nextId = String(maxId + 1);
+
                 // Capture the created sale so we can link CXC and CXP to it
-                const createdSale = await DS.create('sales', data);
+                // Kanban board fields for new sale
+                var kanbanChecklist = [
+                    { key: 'contacto_inicial', label: 'Contacto inicial con cliente', group: 'Pre-evento', checked: false, checkedAt: null },
+                    { key: 'diseno_solicitado', label: 'Dise\u00f1o solicitado', group: 'Pre-evento', checked: false, checkedAt: null },
+                    { key: 'diseno_enviado', label: 'Dise\u00f1o enviado al cliente', group: 'Pre-evento', checked: false, checkedAt: null },
+                    { key: 'diseno_aprobado', label: 'Dise\u00f1o aprobado por cliente', group: 'Pre-evento', checked: false, checkedAt: null },
+                    { key: 'logistica_confirmada', label: 'Log\u00edstica confirmada', group: 'Pre-evento', checked: false, checkedAt: null },
+                    { key: 'equipo_asignado', label: 'Equipo asignado', group: 'Pre-evento', checked: false, checkedAt: null },
+                    { key: 'freelance_confirmados', label: 'Freelancers confirmados', group: 'Pre-evento', checked: false, checkedAt: null },
+                    { key: 'montaje_realizado', label: 'Montaje realizado', group: 'D\u00eda del evento', checked: false, checkedAt: null },
+                    { key: 'foto_montaje', label: 'Foto montaje enviada', group: 'D\u00eda del evento', checked: false, checkedAt: null },
+                    { key: 'evento_ejecutado', label: 'Evento ejecutado sin incidentes', group: 'D\u00eda del evento', checked: false, checkedAt: null },
+                    { key: 'desmontaje_correcto', label: 'Desmontaje correcto', group: 'Post-evento', checked: false, checkedAt: null },
+                    { key: 'material_respaldado', label: 'Material respaldado', group: 'Post-evento', checked: false, checkedAt: null },
+                    { key: 'informe_interno', label: 'Informe interno completado', group: 'Post-evento', checked: false, checkedAt: null }
+                ];
+
+                const createdSale = await DS.create('sales', Object.assign({}, data, {
+                    id: nextId,
+                    sourceId: nextId,
+                    boardColumn: 1,
+                    boardOrder: Date.now(),
+                    checklist: kanbanChecklist,
+                    encargado: '',
+                    kanbanNotes: ''
+                }));
                 const saleId = createdSale ? createdSale.id : null;
 
                 // Auto-create CXC (receivable) for this sale
@@ -529,7 +665,8 @@ window.Mazelab.Modules.SalesModule = (function () {
                                 status: 'pendiente',
                                 isDraft: true,
                                 sourceType: 'auto',
-                                saleId: saleId
+                                saleId: saleId,
+                                eventId: saleId  // ID numérico del evento para Nóminas y CXP
                             });
                         });
                     }
@@ -598,6 +735,10 @@ window.Mazelab.Modules.SalesModule = (function () {
     }
 
     async function init() {
+        // Reset filter state on every navigation to this module
+        currentFilter = 'pendiente';
+        searchQuery = '';
+
         const DS = window.Mazelab.DataService;
 
         try {
@@ -633,16 +774,18 @@ window.Mazelab.Modules.SalesModule = (function () {
             });
         }
 
-        // Status filter buttons
-        const filterBtns = document.querySelectorAll('.filter-btn');
-        filterBtns.forEach(btn => {
-            btn.addEventListener('click', function () {
-                filterBtns.forEach(b => b.classList.remove('active'));
-                this.classList.add('active');
-                currentFilter = this.getAttribute('data-filter');
-                refreshTable();
+        // Status filter toggle
+        const pendingToggle = document.getElementById('sales-pending-toggle');
+        if (pendingToggle) {
+            pendingToggle.querySelectorAll('.toggle-option').forEach(btn => {
+                btn.addEventListener('click', function () {
+                    pendingToggle.querySelectorAll('.toggle-option').forEach(b => b.classList.remove('active'));
+                    this.classList.add('active');
+                    currentFilter = this.getAttribute('data-filter');
+                    refreshTable();
+                });
             });
-        });
+        }
 
         // New sale button
         const newBtn = document.getElementById('btn-new-sale');
