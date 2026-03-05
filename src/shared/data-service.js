@@ -13,6 +13,20 @@ window.Mazelab = window.Mazelab || {};
         payables: 'costos'
     };
 
+    // ── In-memory cache ──────────────────────────────────────────────────
+    // Avoids re-fetching the DB every vez que el usuario navega entre módulos.
+    // TTL: 45 segundos. Se invalida inmediatamente en cualquier write (create/update/remove/importMany).
+    const _cache = {};
+    const CACHE_TTL = 45000;
+
+    function invalidateCache(entityType) {
+        delete _cache[entityType];
+    }
+
+    function invalidateAll() {
+        Object.keys(_cache).forEach(k => delete _cache[k]);
+    }
+
     async function init() {
         if (initialized) return;
         try {
@@ -56,13 +70,25 @@ window.Mazelab = window.Mazelab || {};
     }
 
     async function getAll(entityType) {
+        // Serve from cache if fresh
+        const cached = _cache[entityType];
+        if (cached && (Date.now() - cached.ts) < CACHE_TTL) {
+            return cached.data;
+        }
+
+        let result;
         if (useSupabase) {
             const table = TABLE_MAP[entityType];
             const data = await window.Mazelab.Supabase.fetchAll(table);
-            if (data && data.length > 0) return data;
+            if (data && data.length > 0) result = data;
         }
-        const svc = getStorageService(entityType);
-        return svc ? svc.getAll() : [];
+        if (!result) {
+            const svc = getStorageService(entityType);
+            result = svc ? svc.getAll() : [];
+        }
+
+        _cache[entityType] = { data: result, ts: Date.now() };
+        return result;
     }
 
     async function getById(entityType, id) {
@@ -75,6 +101,7 @@ window.Mazelab = window.Mazelab || {};
     }
 
     async function create(entityType, record) {
+        invalidateCache(entityType);
         if (useSupabase) {
             const table = TABLE_MAP[entityType];
             return await window.Mazelab.Supabase.insert(table, record);
@@ -84,6 +111,7 @@ window.Mazelab = window.Mazelab || {};
     }
 
     async function update(entityType, id, updates) {
+        invalidateCache(entityType);
         if (useSupabase) {
             const table = TABLE_MAP[entityType];
             return await window.Mazelab.Supabase.update(table, id, updates);
@@ -93,6 +121,7 @@ window.Mazelab = window.Mazelab || {};
     }
 
     async function remove(entityType, id) {
+        invalidateCache(entityType);
         if (useSupabase) {
             const table = TABLE_MAP[entityType];
             return await window.Mazelab.Supabase.remove(table, id);
@@ -102,6 +131,7 @@ window.Mazelab = window.Mazelab || {};
     }
 
     async function importMany(entityType, records) {
+        invalidateCache(entityType);
         if (useSupabase) {
             const table = TABLE_MAP[entityType];
             return await window.Mazelab.Supabase.upsertMany(table, records);
@@ -124,6 +154,8 @@ window.Mazelab = window.Mazelab || {};
         remove,
         importMany,
         hasData,
+        invalidateCache,
+        invalidateAll,
         isUsingSupabase: () => useSupabase
     };
 })();

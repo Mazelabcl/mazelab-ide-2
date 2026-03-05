@@ -649,7 +649,10 @@ window.Mazelab.Modules.ImportModule = (function () {
             }
 
             if (resultsBody) resultsBody.innerHTML = html;
-            if (resultsArea) resultsArea.style.display = '';
+            if (resultsArea) {
+                resultsArea.style.display = '';
+                resultsArea.scrollIntoView({ behavior: 'smooth', block: 'start' });
+            }
 
         } catch (err) {
             console.error('Error en importaci\u00f3n:', err);
@@ -764,23 +767,43 @@ window.Mazelab.Modules.ImportModule = (function () {
                 try {
                     var DS = window.Mazelab.DataService;
                     var tables = ['sales', 'receivables', 'payables', 'clients', 'services', 'staff'];
-                    clearBtn.textContent = 'Eliminando...';
                     clearBtn.disabled = true;
+
+                    // 1. Recopilar todos los registros primero
+                    clearBtn.textContent = 'Contando registros...';
+                    var allItems = {};
+                    var total = 0;
                     for (var i = 0; i < tables.length; i++) {
-                        var items = (await DS.getAll(tables[i])) || [];
-                        for (var j = 0; j < items.length; j++) {
-                            await DS.remove(tables[i], items[j].id);
+                        allItems[tables[i]] = (await DS.getAll(tables[i])) || [];
+                        total += allItems[tables[i]].length;
+                    }
+
+                    // 2. Borrar en lotes paralelos (20 a la vez) con contador de progreso
+                    var deleted = 0;
+                    var BATCH = 20;
+                    clearBtn.textContent = 'Eliminando... (0 / ' + total + ')';
+
+                    for (var i = 0; i < tables.length; i++) {
+                        var tableItems = allItems[tables[i]];
+                        var tableKey = tables[i];
+                        for (var b = 0; b < tableItems.length; b += BATCH) {
+                            var batch = tableItems.slice(b, b + BATCH);
+                            await Promise.all(batch.map(function(item) { return DS.remove(tableKey, item.id); }));
+                            deleted += batch.length;
+                            clearBtn.textContent = 'Eliminando... (' + deleted + ' / ' + total + ')';
                         }
                     }
-                    // Also wipe localStorage — DS.remove only touches the active backend (DB/LS),
-                    // so if both have data, localStorage must be cleared explicitly.
+
+                    // 3. Limpiar localStorage también (DS.remove solo toca el backend activo)
                     var lsKeys = {
                         sales: 'mazelab_sales', receivables: 'mazelab_receivables',
                         payables: 'mazelab_payables', clients: 'mazelab_clients',
                         services: 'mazelab_services', staff: 'mazelab_staff'
                     };
                     tables.forEach(function(t) { if (lsKeys[t]) localStorage.removeItem(lsKeys[t]); });
-                    alert('Todos los datos han sido eliminados.');
+                    if (window.Mazelab.DataService.invalidateAll) window.Mazelab.DataService.invalidateAll();
+
+                    alert('\u2705 ' + deleted + ' registros eliminados correctamente.');
                 } catch (err) {
                     alert('Error al limpiar datos: ' + err.message);
                 } finally {
