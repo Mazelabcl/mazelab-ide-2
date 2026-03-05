@@ -1,29 +1,13 @@
 window.Mazelab = window.Mazelab || {};
 
 (function () {
-    const SUPABASE_URL = 'https://dvrgltvicfkhlukwvdcr.supabase.co';
-    const SUPABASE_ANON_KEY = 'sb_publishable_pbSQgmfgt-DzOmYcjBn3Mw_WmB207Sj';
-
-    let client = null;
+    const BASE = '/api/db';
     let isConnected = false;
 
-    function getClient() {
-        if (!client && window.supabase) {
-            try {
-                client = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
-            } catch (e) {
-                console.warn('Supabase client creation failed:', e);
-            }
-        }
-        return client;
-    }
-
     async function testConnection() {
-        const sb = getClient();
-        if (!sb) return false;
         try {
-            const { error } = await sb.from('ventas').select('id', { count: 'exact', head: true });
-            isConnected = !error;
+            const res = await fetch(BASE + '/ventas?limit=1');
+            isConnected = res.ok;
             return isConnected;
         } catch {
             isConnected = false;
@@ -32,49 +16,82 @@ window.Mazelab = window.Mazelab || {};
     }
 
     async function fetchAll(table) {
-        const sb = getClient();
-        if (!sb) return [];
-        const { data, error } = await sb.from(table).select('*');
-        if (error) { console.error(`Supabase fetch ${table}:`, error); return []; }
-        return data || [];
+        try {
+            const res = await fetch(BASE + '/' + table);
+            if (!res.ok) { console.error('DB fetch ' + table + ':', res.status); return []; }
+            const data = await res.json();
+            return Array.isArray(data) ? data : (data.rows || data.data || []);
+        } catch (e) {
+            console.error('DB fetch ' + table + ':', e);
+            return [];
+        }
     }
 
     async function insert(table, record) {
-        const sb = getClient();
-        if (!sb) return null;
-        const { data, error } = await sb.from(table).insert(record).select().single();
-        if (error) { console.error(`Supabase insert ${table}:`, error); return null; }
-        return data;
+        try {
+            const res = await fetch(BASE + '/' + table, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(record)
+            });
+            if (!res.ok) { console.error('DB insert ' + table + ':', res.status); return null; }
+            return await res.json();
+        } catch (e) {
+            console.error('DB insert ' + table + ':', e);
+            return null;
+        }
     }
 
     async function update(table, id, updates) {
-        const sb = getClient();
-        if (!sb) return null;
-        const { data, error } = await sb.from(table).update(updates).eq('id', id).select().single();
-        if (error) { console.error(`Supabase update ${table}:`, error); return null; }
-        return data;
+        try {
+            const res = await fetch(BASE + '/' + table + '/' + id, {
+                method: 'PUT',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(updates)
+            });
+            if (!res.ok) { console.error('DB update ' + table + ':', res.status); return null; }
+            return await res.json();
+        } catch (e) {
+            console.error('DB update ' + table + ':', e);
+            return null;
+        }
     }
 
     async function remove(table, id) {
-        const sb = getClient();
-        if (!sb) return false;
-        const { error } = await sb.from(table).delete().eq('id', id);
-        if (error) { console.error(`Supabase delete ${table}:`, error); return false; }
-        return true;
+        try {
+            const res = await fetch(BASE + '/' + table + '/' + id, { method: 'DELETE' });
+            if (!res.ok) { console.error('DB delete ' + table + ':', res.status); return false; }
+            return true;
+        } catch (e) {
+            console.error('DB delete ' + table + ':', e);
+            return false;
+        }
     }
 
     async function upsertMany(table, records) {
-        const sb = getClient();
-        if (!sb) return [];
-        const { data, error } = await sb.from(table).upsert(records).select();
-        if (error) { console.error(`Supabase upsert ${table}:`, error); return []; }
-        return data || [];
+        const BATCH_SIZE = 100;
+        const results = [];
+        for (let i = 0; i < records.length; i += BATCH_SIZE) {
+            const batch = records.slice(i, i + BATCH_SIZE);
+            const res = await fetch(BASE + '/' + table + '/upsert', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(batch)
+            });
+            if (!res.ok) {
+                const errText = await res.text().catch(function () { return String(res.status); });
+                console.error('DB upsert ' + table + ':', res.status, errText);
+                throw new Error('Error al importar "' + table + '" (lote ' + Math.floor(i / BATCH_SIZE + 1) + '): HTTP ' + res.status + ' — ' + errText);
+            }
+            const data = await res.json().catch(function () { return []; });
+            if (Array.isArray(data)) results.push(...data);
+        }
+        return results;
     }
 
     window.Mazelab.Supabase = {
-        getClient,
         testConnection,
-        isConnected: () => isConnected,
+        isConnected: function () { return isConnected; },
         fetchAll,
         insert,
         update,

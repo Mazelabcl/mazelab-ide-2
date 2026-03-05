@@ -627,12 +627,13 @@ window.Mazelab.Modules.ImportModule = (function () {
             var records = buildRecords(parsedRows, selectedType);
 
             // Import
-            await DS.importMany(selectedType, records);
+            var saved = await DS.importMany(selectedType, records);
+            var savedCount = Array.isArray(saved) ? saved.length : records.length;
 
             // Show results
             var typeLabel = IMPORT_TYPES.find(function (t) { return t.key === selectedType; });
             var html = '<p><span class="badge-success">Importaci\u00f3n exitosa</span></p>' +
-                '<p><strong>' + records.length + '</strong> registros de <strong>' + (typeLabel ? typeLabel.label : selectedType) + '</strong> importados.</p>';
+                '<p><strong>' + savedCount + '</strong> registros de <strong>' + (typeLabel ? typeLabel.label : selectedType) + '</strong> importados.</p>';
 
             if (entityCounts.clients > 0 || entityCounts.services > 0 || entityCounts.staff > 0) {
                 html += '<p>Entidades creadas autom\u00e1ticamente:</p><ul>';
