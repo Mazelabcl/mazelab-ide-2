@@ -47,7 +47,11 @@ window.Mazelab.Modules.ImportModule = (function () {
         paymentDate: ['fecha_probable_pago','payment_date','fecha_probable_pago_cxp'],
         paymentStatus: ['estado_cxp','payment_status'],
         concept: ['tipo_de_costo','concepto','concept'],
-        categoria: ['categoria','category','tipo','tipo_servicio','categor\u00eda']
+        categoria: ['categoria','category','tipo_servicio','categor\u00eda'],
+        ctConcepto: ['ct_concepto','concepto_costo','costo_concepto','costo_descripcion'],
+        ctTipo: ['ct_tipo','tipo_beneficiario','tipo_costo','tipo_proveedor'],
+        ctCantidad: ['ct_cantidad','cantidad','qty'],
+        ctMonto: ['ct_monto','monto_unitario','costo_unitario','precio_unitario']
     };
 
     // --- Utility functions ---
@@ -383,17 +387,44 @@ window.Mazelab.Modules.ImportModule = (function () {
         };
     }
 
-    function buildServiceRecord(row) {
-        // serviceNames = alias for "nombre"/"name" column; eventName is a fallback via FIELD_ALIASES
+    // buildServiceRecord se usa solo en buildRecords cuando el tipo NO es 'services'.
+    // Para 'services' se usa buildServiceRecords (plural) que agrega multi-fila por nombre.
+    function _buildServiceRow(row) {
         var name = row.serviceNames || row.nombre || row.name || row.eventName || '';
-        return {
-            id: generateId(),
-            name: name,
-            nombre: name,
-            categoria: row.categoria || '',
-            precio_base: row.amount ? parseAmount(row.amount) : null,
-            comments: row.comments || ''
-        };
+        return { name: name, categoria: row.categoria || '', ctRow: row };
+    }
+
+    function buildServiceRecords(mappedRows) {
+        // Agrupa filas por nombre de servicio. Cada fila puede aportar un ítem de cost_template.
+        var order = [];
+        var map = {};
+        mappedRows.forEach(function(row) {
+            var name = (row.serviceNames || row.nombre || row.name || row.eventName || '').trim();
+            if (!name) return;
+            if (!map[name]) {
+                order.push(name);
+                map[name] = {
+                    id: generateId(),
+                    name: name,
+                    nombre: name,
+                    categoria: row.categoria || '',
+                    cost_template: []
+                };
+            }
+            // Actualiza categoría si viene en esta fila (puede estar en la primera fila del grupo)
+            if (row.categoria && !map[name].categoria) map[name].categoria = row.categoria;
+            // Agrega ítem de costo si tiene concepto o monto
+            var monto = parseAmount(row.ctMonto);
+            if (row.ctConcepto || monto > 0) {
+                map[name].cost_template.push({
+                    concepto: row.ctConcepto || '',
+                    tipo_beneficiario: row.ctTipo || 'proveedor',
+                    cantidad: parseInt(row.ctCantidad, 10) || 1,
+                    monto_unitario: monto
+                });
+            }
+        });
+        return order.map(function(name) { return map[name]; });
     }
 
     function buildStaffRecord(row) {
@@ -406,12 +437,14 @@ window.Mazelab.Modules.ImportModule = (function () {
     }
 
     function buildRecords(mappedRows, type) {
+        // Services use multi-row aggregation (varios ítems de costo por servicio)
+        if (type === 'services') return buildServiceRecords(mappedRows);
+
         var builders = {
             sales: buildSaleRecord,
             receivables: buildReceivableRecord,
             payables: buildPayableRecord,
             clients: buildClientRecord,
-            services: buildServiceRecord,
             staff: buildStaffRecord
         };
         var fn = builders[type];
@@ -614,8 +647,10 @@ window.Mazelab.Modules.ImportModule = (function () {
         var runBtn = document.getElementById('import-run-btn');
         if (runBtn) {
             runBtn.disabled = true;
-            runBtn.textContent = 'Importando...';
+            runBtn.textContent = 'Preparando...';
         }
+
+        function setStatus(msg) { if (runBtn) runBtn.textContent = msg; }
 
         var DS = window.Mazelab.DataService;
         var resultsArea = document.getElementById('import-results-area');
@@ -625,15 +660,30 @@ window.Mazelab.Modules.ImportModule = (function () {
             // Auto-create referenced entities for sales, receivables, payables
             var entityCounts = { clients: 0, services: 0, staff: 0 };
             if (selectedType === 'sales' || selectedType === 'receivables' || selectedType === 'payables') {
+                setStatus('Creando entidades...');
                 entityCounts = await autoCreateEntities(parsedRows);
             }
 
             // Build records
+            setStatus('Procesando filas...');
             var records = buildRecords(parsedRows, selectedType);
 
-            // Import
-            var saved = await DS.importMany(selectedType, records);
-            var savedCount = Array.isArray(saved) ? saved.length : records.length;
+            // Import with batch progress
+            var BATCH = 100;
+            var total = records.length;
+            var saved = 0;
+            var allSaved = [];
+            var table = DS.isUsingSupabase
+                ? (DS.isUsingSupabase() ? 'db' : 'local')
+                : 'local';
+            for (var b = 0; b < records.length; b += BATCH) {
+                var batch = records.slice(b, b + BATCH);
+                setStatus('Importando... (' + Math.min(b + BATCH, total) + ' / ' + total + ')');
+                var batchResult = await DS.importMany(selectedType, batch);
+                saved += Array.isArray(batchResult) ? batchResult.length : batch.length;
+                if (Array.isArray(batchResult)) allSaved = allSaved.concat(batchResult);
+            }
+            var savedCount = saved || total;
 
             // Show results
             var typeLabel = IMPORT_TYPES.find(function (t) { return t.key === selectedType; });
