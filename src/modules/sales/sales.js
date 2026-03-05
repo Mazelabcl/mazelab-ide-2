@@ -157,7 +157,7 @@ window.Mazelab.Modules.SalesModule = (function () {
         }
         return filtered.map(sale => {
             const clientName = sale.clientName || getClientName(sale.clientId);
-            const serviceNames = getServiceNames(sale.serviceIds);
+            const serviceNames = getServiceNames(sale.serviceIds) || (sale.serviceNames || '');
             const effectiveStatus = getEffectiveStatus(sale);
             const badgeClass = getStatusBadgeClass(effectiveStatus);
             const statusLabel = effectiveStatus ? effectiveStatus.charAt(0).toUpperCase() + effectiveStatus.slice(1) : '';
@@ -502,7 +502,18 @@ window.Mazelab.Modules.SalesModule = (function () {
             editingId = sale.id;
             title.textContent = 'Editar Venta';
             document.getElementById('sale-id').value = sale.id;
-            document.getElementById('sale-client').value = sale.clientId || '';
+
+            // Client — prefer clientId; fallback to name-match for imported records
+            var clientSelEl = document.getElementById('sale-client');
+            if (sale.clientId) {
+                clientSelEl.value = sale.clientId;
+            } else if (sale.clientName) {
+                var matchedClient = clients.find(function(c) { return (c.name || c.nombre || '') === sale.clientName; });
+                clientSelEl.value = matchedClient ? matchedClient.id : '';
+            } else {
+                clientSelEl.value = '';
+            }
+
             document.getElementById('sale-event-name').value = sale.eventName || '';
             document.getElementById('sale-event-date').value = sale.eventDate || '';
             // Soporta closingDate (nuevo) y closingMonth (legacy mes)
@@ -513,7 +524,18 @@ window.Mazelab.Modules.SalesModule = (function () {
             document.getElementById('sale-closing-date').value = closingVal;
             document.getElementById('sale-jornadas').value = sale.jornadas != null ? sale.jornadas : '';
             document.getElementById('sale-amount').value = sale.amount != null ? sale.amount : '';
-            document.getElementById('sale-staff').value = sale.staffId || '';
+
+            // Staff — prefer staffId; fallback to name-match for imported records
+            var staffSelEl = document.getElementById('sale-staff');
+            if (sale.staffId) {
+                staffSelEl.value = sale.staffId;
+            } else if (sale.staffName) {
+                var matchedStaff = staff.find(function(s) { return (s.name || s.nombre || '') === sale.staffName; });
+                staffSelEl.value = matchedStaff ? matchedStaff.id : '';
+            } else {
+                staffSelEl.value = '';
+            }
+
             document.getElementById('sale-status').value = sale.status || 'pendiente';
             document.getElementById('sale-comments').value = sale.comments || '';
 
@@ -522,12 +544,22 @@ window.Mazelab.Modules.SalesModule = (function () {
             document.getElementById('sale-refund-group').style.display = sale.hasIssue ? '' : 'none';
             document.getElementById('sale-refund-amount').value = sale.refundAmount != null ? sale.refundAmount : '';
 
-            // Check service checkboxes
+            // Check service checkboxes — prefer serviceIds; fallback to name-match for imported records
             const checkboxes = document.querySelectorAll('.sale-service-cb');
-            const sids = sale.serviceIds || [];
-            checkboxes.forEach(cb => {
-                cb.checked = sids.includes(cb.value) || sids.includes(Number(cb.value));
-            });
+            const sids = Array.isArray(sale.serviceIds) ? sale.serviceIds : [];
+            if (sids.length > 0) {
+                checkboxes.forEach(cb => {
+                    cb.checked = sids.includes(cb.value) || sids.includes(Number(cb.value));
+                });
+            } else if (sale.serviceNames) {
+                var svcNameList = sale.serviceNames.split(/[,;\/+]/).map(function(s) { return s.trim().toLowerCase(); }).filter(Boolean);
+                checkboxes.forEach(cb => {
+                    var svc = services.find(s => String(s.id) === String(cb.value));
+                    cb.checked = svc ? svcNameList.includes((svc.name || svc.nombre || '').toLowerCase()) : false;
+                });
+            } else {
+                checkboxes.forEach(cb => { cb.checked = false; });
+            }
         } else {
             editingId = null;
             title.textContent = 'Nueva Venta';

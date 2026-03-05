@@ -46,7 +46,8 @@ window.Mazelab.Modules.ImportModule = (function () {
         pendingAmount: ['monto_pendiente','pending_amount'],
         paymentDate: ['fecha_probable_pago','payment_date','fecha_probable_pago_cxp'],
         paymentStatus: ['estado_cxp','payment_status'],
-        concept: ['tipo_de_costo','concepto','concept']
+        concept: ['tipo_de_costo','concepto','concept'],
+        categoria: ['categoria','category','tipo','tipo_servicio','categor\u00eda']
     };
 
     // --- Utility functions ---
@@ -383,10 +384,14 @@ window.Mazelab.Modules.ImportModule = (function () {
     }
 
     function buildServiceRecord(row) {
+        // serviceNames = alias for "nombre"/"name" column; eventName is a fallback via FIELD_ALIASES
+        var name = row.serviceNames || row.nombre || row.name || row.eventName || '';
         return {
             id: generateId(),
-            name: row.serviceNames || row.eventName || '',
-            nombre: row.serviceNames || row.eventName || '',
+            name: name,
+            nombre: name,
+            categoria: row.categoria || '',
+            precio_base: row.amount ? parseAmount(row.amount) : null,
             comments: row.comments || ''
         };
     }
@@ -767,6 +772,14 @@ window.Mazelab.Modules.ImportModule = (function () {
                             await DS.remove(tables[i], items[j].id);
                         }
                     }
+                    // Also wipe localStorage — DS.remove only touches the active backend (DB/LS),
+                    // so if both have data, localStorage must be cleared explicitly.
+                    var lsKeys = {
+                        sales: 'mazelab_sales', receivables: 'mazelab_receivables',
+                        payables: 'mazelab_payables', clients: 'mazelab_clients',
+                        services: 'mazelab_services', staff: 'mazelab_staff'
+                    };
+                    tables.forEach(function(t) { if (lsKeys[t]) localStorage.removeItem(lsKeys[t]); });
                     alert('Todos los datos han sido eliminados.');
                 } catch (err) {
                     alert('Error al limpiar datos: ' + err.message);

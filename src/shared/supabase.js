@@ -45,7 +45,7 @@ window.Mazelab = window.Mazelab || {};
     async function update(table, id, updates) {
         try {
             const res = await fetch(BASE + '/' + table + '/' + id, {
-                method: 'PUT',
+                method: 'PATCH',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify(updates)
             });
