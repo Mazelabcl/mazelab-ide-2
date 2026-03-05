@@ -416,9 +416,17 @@ window.Mazelab.Modules.ImportModule = (function () {
             // Agrega ítem de costo si tiene concepto o monto
             var monto = parseAmount(row.ctMonto);
             if (row.ctConcepto || monto > 0) {
+                // Normaliza el tipo: acepta BH/T/TC/F + valores internos
+                var rawTipo = (row.ctTipo || '').trim().toLowerCase();
+                var tipo;
+                if (rawTipo === 'bh' || rawTipo === 'freelancer') tipo = 'bh';
+                else if (rawTipo === 'f' || rawTipo === 'factura' || rawTipo === 'proveedor' || rawTipo === 'tc') tipo = 'factura';
+                else if (rawTipo === 'e' || rawTipo === 'exenta') tipo = 'exenta';
+                else if (rawTipo === 'invoice') tipo = 'invoice';
+                else tipo = 'ninguno'; // T, transferencia, sin doc, etc.
                 map[name].cost_template.push({
                     concepto: row.ctConcepto || '',
-                    tipo_beneficiario: row.ctTipo || 'proveedor',
+                    tipo_beneficiario: tipo,
                     cantidad: parseInt(row.ctCantidad, 10) || 1,
                     monto_unitario: monto
                 });

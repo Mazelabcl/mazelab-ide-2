@@ -20,12 +20,32 @@ window.Mazelab.Modules.SettingsModule = (function () {
 
     // --- Cost Template Helpers ---
 
-    const CT_TIPO_OPTIONS = ['freelancer', 'proveedor', 'staff_fijo', 'core'];
+    // Tipos de documento que se usarán al auto-generar CXP desde plantilla de costos.
+    // Coinciden exactamente con los docType de CXP para que sea obvio qué documento se creará.
+    const CT_TIPO_OPTIONS = [
+        { value: 'bh',      label: 'BH (Boleta Honorarios)' },
+        { value: 'factura', label: 'Factura' },
+        { value: 'exenta',  label: 'F. Exenta' },
+        { value: 'invoice', label: 'Invoice' },
+        { value: 'ninguno', label: 'Sin documento (transferencia)' }
+    ];
+
+    // Normaliza valores legacy (freelancer/proveedor) y abreviaturas del CSV (BH/T/TC)
+    function normalizeCTTipo(raw) {
+        var s = (raw || '').trim().toLowerCase();
+        if (s === 'bh' || s === 'freelancer') return 'bh';
+        if (s === 'factura' || s === 'f' || s === 'proveedor' || s === 'tc') return 'factura';
+        if (s === 'exenta' || s === 'e') return 'exenta';
+        if (s === 'invoice') return 'invoice';
+        // T = transferencia directa, staff_fijo, core → sin documento
+        return 'ninguno';
+    }
 
     function makeCTItemHTML(concepto, tipoBeneficiario, cantidad, montoUnitario) {
         const subtotal = (cantidad || 1) * (montoUnitario || 0);
+        const tipoNorm = normalizeCTTipo(tipoBeneficiario);
         const tipoSel = CT_TIPO_OPTIONS.map(function (t) {
-            return '<option value="' + t + '"' + (tipoBeneficiario === t ? ' selected' : '') + '>' + t + '</option>';
+            return '<option value="' + t.value + '"' + (tipoNorm === t.value ? ' selected' : '') + '>' + t.label + '</option>';
         }).join('');
         return '<div class="form-group ct-concepto">' +
                 '<label>Concepto</label>' +

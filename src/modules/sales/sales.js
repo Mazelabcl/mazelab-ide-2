@@ -693,7 +693,16 @@ window.Mazelab.Modules.SalesModule = (function () {
                                 vendorName: '',
                                 amount: (item.cantidad || 1) * (item.monto_unitario || 0),
                                 amountPaid: 0,
-                                docType: item.tipo_beneficiario === 'freelancer' ? 'bh' : 'factura',
+                                docType: (function(t) {
+                                    // Soporta valores nuevos (bh/factura/exenta/invoice/ninguno)
+                                    // y legacy (freelancer/proveedor/staff_fijo/core)
+                                    var s = (t || '').toLowerCase().trim();
+                                    if (s === 'bh' || s === 'freelancer') return 'bh';
+                                    if (s === 'factura' || s === 'proveedor' || s === 'f' || s === 'tc') return 'factura';
+                                    if (s === 'exenta' || s === 'e') return 'exenta';
+                                    if (s === 'invoice') return 'invoice';
+                                    return 'ninguno';
+                                })(item.tipo_beneficiario),
                                 status: 'pendiente',
                                 isDraft: true,
                                 sourceType: 'auto',
