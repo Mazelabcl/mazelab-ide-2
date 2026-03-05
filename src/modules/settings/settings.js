@@ -249,7 +249,12 @@ window.Mazelab.Modules.SettingsModule = (function () {
     function renderServiceForm(service) {
         const s = service || {};
         const name = s.name || s.nombre || '';
-        const categorias = ['Fotograficas', 'Cineticas', 'Digitales', 'Display', 'Otros'];
+        // Categorías dinámicas: las que ya existen en los servicios cargados + mínimo predeterminado
+        const DEFAULT_CATS = ['Fotograficas', 'Cineticas', 'Digitales', 'Display', 'Otros'];
+        const existingCats = servicesData
+            .map(sv => (sv.categoria || '').trim())
+            .filter(Boolean);
+        const allCats = Array.from(new Set([...existingCats, ...DEFAULT_CATS])).sort();
         const duracionTipos = ['horas', 'jornada', 'dias'];
 
         return `
@@ -259,10 +264,12 @@ window.Mazelab.Modules.SettingsModule = (function () {
                     <input type="text" id="svc-nombre" class="form-control" value="${escapeHtml(name)}" required />
                 </div>
                 <div class="form-group">
-                    <label for="svc-categoria">Categoria</label>
-                    <select id="svc-categoria" class="form-control">
-                        ${categorias.map(c => `<option value="${c}" ${(s.categoria === c) ? 'selected' : ''}>${c}</option>`).join('')}
-                    </select>
+                    <label for="svc-categoria">Categoria <span style="font-weight:400;color:var(--text-muted)">(escribe o elige)</span></label>
+                    <input type="text" id="svc-categoria" class="form-control" list="svc-categoria-list"
+                        value="${escapeHtml(s.categoria || '')}" placeholder="Ej: Cineticas" autocomplete="off" />
+                    <datalist id="svc-categoria-list">
+                        ${allCats.map(c => `<option value="${escapeHtml(c)}">`).join('')}
+                    </datalist>
                 </div>
             </div>
             <div class="form-group">
