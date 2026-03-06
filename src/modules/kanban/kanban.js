@@ -66,11 +66,29 @@ window.Mazelab.Modules.KanbanModule = (function () {
 
     function getEventCXC(sale) {
         var sid = String(sale.id || '');
+        var sourceId = String(sale.sourceId || '');
         var name = (sale.eventName || '').trim().toLowerCase();
+        var client = (sale.clientName || '').trim().toLowerCase();
+        // Year extracted from eventDate to narrow fallback matches
+        var saleYear = (sale.eventDate || '').slice(0, 4);
+
         return receivables.filter(function (r) {
-            if (r.saleId && String(r.saleId) === sid) return true;
-            if (name && (r.eventName || '').trim().toLowerCase() === name) return true;
-            return false;
+            // 1. Primary: direct saleId match (most precise, always wins)
+            if (r.saleId) {
+                return String(r.saleId) === sid || (sourceId && String(r.saleId) === sourceId);
+            }
+            // 2. Fallback for records without saleId (imported historical data):
+            //    require eventName + clientName + same year to avoid cross-event pollution
+            if (!name || !client) return false;
+            var rName = (r.eventName || '').trim().toLowerCase();
+            var rClient = (r.clientName || '').trim().toLowerCase();
+            if (rName !== name || rClient !== client) return false;
+            // Require same year when we have it (prevents recurring service name collisions)
+            if (saleYear) {
+                var rYear = (r.eventDate || r.billingMonth || '').slice(0, 4);
+                if (rYear && rYear !== saleYear) return false;
+            }
+            return true;
         });
     }
 
@@ -205,14 +223,19 @@ window.Mazelab.Modules.KanbanModule = (function () {
 
         for (var i = 0; i < needsUpdate.length; i++) {
             var u = needsUpdate[i];
-            await DS.update('sales', u.id, {
-                boardColumn: u.boardColumn,
-                boardOrder: u.boardOrder,
-                checklist: u.checklist,
-                encargado: u.encargado,
-                kanbanNotes: u.kanbanNotes
-            });
-            // also update local
+            try {
+                await DS.update('sales', u.id, {
+                    boardColumn: u.boardColumn,
+                    boardOrder: u.boardOrder,
+                    checklist: u.checklist,
+                    encargado: u.encargado,
+                    kanbanNotes: u.kanbanNotes
+                });
+            } catch (e) {
+                // DB columns may not exist yet — update local state anyway
+                console.warn('KanbanModule: migration failed for sale', u.id, '(columns may need adding to ventas table)');
+            }
+            // Always update in-memory so the board renders correctly this session
             var sale = sales.find(function (s) { return String(s.id) === String(u.id); });
             if (sale) {
                 sale.boardColumn = u.boardColumn;
@@ -878,7 +901,12 @@ window.Mazelab.Modules.KanbanModule = (function () {
             staff = results[5] || [];
 
             // Run migration for sales without boardColumn
-            await runMigration();
+            // Wrapped separately so DB errors don't prevent the board from rendering
+            try {
+                await runMigration();
+            } catch (migErr) {
+                console.warn('KanbanModule: migration step failed (ventas table may need new columns):', migErr);
+            }
 
             refreshContent();
         } catch (err) {

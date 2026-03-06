@@ -196,6 +196,17 @@ window.Mazelab.Modules.FinanceModule = (function () {
         }
     }
 
+    function getCompanyInfo() {
+        try { return JSON.parse(localStorage.getItem('mazelab_company_info') || '{}'); } catch (e) { return {}; }
+    }
+
+    function getOverdueDays(r) {
+        var base = getVencimientoBaseDate(r);
+        if (!base) return 0;
+        var paymentTerms = Number(r.paymentTerms) || 30;
+        return Math.max(0, Math.floor((new Date() - base) / 86400000) - paymentTerms);
+    }
+
     function getCurrentMonthKey() {
         var now = new Date();
         var yyyy = now.getFullYear();
@@ -582,6 +593,9 @@ window.Mazelab.Modules.FinanceModule = (function () {
                 if (realStatus !== 'pagada' && realStatus !== 'anulada' && realStatus !== 'nc' && realStatus !== 'pendiente_factura') {
                     html += '<button class="btn-primary btn-sm btn-icon btn-abono" data-id="' + r.id + '" title="Agregar abono">+Abono</button> ';
                     html += '<button class="btn-secondary btn-sm btn-icon btn-pagado-total" data-id="' + r.id + '" title="Marcar pagado total">Pagado Total</button> ';
+                    var cobrosArr = Array.isArray(r.cobros) ? r.cobros : [];
+                    var cobrarLabel = cobrosArr.length > 0 ? (cobrosArr.length + 1) + '\u00b0 Cobro' : 'Cobrar';
+                    html += '<button class="btn-sm btn-icon btn-cobrar" data-id="' + r.id + '" title="Enviar cobro" style="background:linear-gradient(135deg,#e67e22,#f39c12);color:white;border:none;margin-right:4px">' + cobrarLabel + '</button>';
                 }
                 html += '<button class="btn-sm btn-icon btn-eliminar" data-id="' + r.id + '" title="Eliminar" style="color:var(--danger,#e74c3c);">Eliminar</button>';
                 html += '</td></tr>';
@@ -636,6 +650,9 @@ window.Mazelab.Modules.FinanceModule = (function () {
                 if (realStatus !== 'pagada' && realStatus !== 'anulada' && realStatus !== 'nc' && realStatus !== 'pendiente_factura') {
                     row += '<button class="btn-primary btn-sm btn-icon btn-abono" data-id="' + r.id + '">+Abono</button> ';
                     row += '<button class="btn-secondary btn-sm btn-icon btn-pagado-total" data-id="' + r.id + '">Pagado Total</button> ';
+                    var cobrosArr2 = Array.isArray(r.cobros) ? r.cobros : [];
+                    var cobrarLabel2 = cobrosArr2.length > 0 ? (cobrosArr2.length + 1) + '\u00b0 Cobro' : 'Cobrar';
+                    row += '<button class="btn-sm btn-icon btn-cobrar" data-id="' + r.id + '" style="background:linear-gradient(135deg,#e67e22,#f39c12);color:white;border:none;margin-right:4px">' + cobrarLabel2 + '</button>';
                 }
                 row += '<button class="btn-sm btn-icon btn-eliminar" data-id="' + r.id + '" style="color:var(--danger)">Eliminar</button>';
                 row += '</td></tr>';
@@ -971,12 +988,263 @@ window.Mazelab.Modules.FinanceModule = (function () {
             });
         });
 
+        // Cobrar buttons
+        document.querySelectorAll('.btn-cobrar').forEach(function (btn) {
+            btn.addEventListener('click', function () {
+                openCobrarModal(this.dataset.id);
+            });
+        });
+
         // Eliminar buttons
         document.querySelectorAll('.btn-eliminar').forEach(function (btn) {
             btn.addEventListener('click', function () {
                 var id = this.dataset.id;
                 deleteReceivable(id);
             });
+        });
+    }
+
+    // =========================================================================
+    // COBRAR — email de cobro + tracking
+    // =========================================================================
+
+    function buildCobrarTemplate(rec, cobrosCount, overdueDays, userContext, companyInfo) {
+        var pendiente = formatCLP(Math.round(getPendienteFacturado(rec)));
+        var clientName = rec.clientName || 'Estimado cliente';
+        var eventName = rec.eventName || 'el evento';
+        var invoiceNum = rec.invoiceNumber || 'sin n\u00famero';
+        var eventDateStr = formatDate(getEffectiveEventDate(rec));
+
+        var subject, intro, urgencyNote;
+        if (cobrosCount === 1) {
+            subject = 'Recordatorio de Pago \u2014 Factura ' + invoiceNum;
+            intro = 'Junto con saludar, le hacemos un cordial recordatorio de la siguiente factura pendiente de pago:';
+            urgencyNote = 'Le agradecemos gestionar el pago a la brevedad posible.';
+        } else if (cobrosCount === 2) {
+            subject = 'Segundo Aviso \u2014 Factura ' + invoiceNum + ' (vencida ' + overdueDays + ' d\u00edas)';
+            intro = 'Nos permitimos recordarle por segunda vez la siguiente factura que se encuentra vencida:';
+            urgencyNote = 'De no recibir confirmaci\u00f3n de pago en los pr\u00f3ximos d\u00edas, nos veremos en la obligaci\u00f3n de escalar esta situaci\u00f3n.';
+        } else {
+            subject = 'URGENTE \u2014 Factura ' + invoiceNum + ' con ' + overdueDays + ' d\u00edas de atraso';
+            intro = 'Le informamos que la siguiente factura lleva ' + overdueDays + ' d\u00edas vencida sin pago registrado:';
+            urgencyNote = 'Solicitamos resolver esta situaci\u00f3n de forma inmediata para evitar mayores inconvenientes en nuestra relaci\u00f3n comercial.';
+        }
+
+        var contextNote = userContext ? '\nObservaci\u00f3n: ' + userContext + '\n' : '';
+
+        var bankInfo = '';
+        if (companyInfo && (companyInfo.banco || companyInfo.numeroCuenta)) {
+            bankInfo = '\nDatos bancarios para transferencia:\n' +
+                (companyInfo.nombre       ? '  Titular:        ' + companyInfo.nombre       + '\n' : '') +
+                (companyInfo.rut          ? '  RUT:            ' + companyInfo.rut           + '\n' : '') +
+                (companyInfo.banco        ? '  Banco:          ' + companyInfo.banco         + '\n' : '') +
+                (companyInfo.tipoCuenta   ? '  Tipo de Cuenta: ' + companyInfo.tipoCuenta   + '\n' : '') +
+                (companyInfo.numeroCuenta ? '  N\u00famero Cuenta:  ' + companyInfo.numeroCuenta + '\n' : '') +
+                (companyInfo.email        ? '  Email:          ' + companyInfo.email         + '\n' : '');
+        }
+
+        return 'Asunto: ' + subject + '\n\n' +
+            'Estimado/a ' + clientName + ',\n\n' +
+            intro + '\n\n' +
+            '  Evento:            ' + eventName + '\n' +
+            '  Fecha del evento:  ' + eventDateStr + '\n' +
+            '  N\u00b0 Factura:         ' + invoiceNum + '\n' +
+            '  Monto pendiente:   ' + pendiente + '\n' +
+            (overdueDays > 0 ? '  D\u00edas de atraso:  ' + overdueDays + '\n' : '') +
+            contextNote +
+            '\n' + urgencyNote + '\n' +
+            bankInfo +
+            '\nAgradecemos su pronta respuesta.\n\n' +
+            'Saludos cordiales,\n' +
+            (companyInfo && companyInfo.nombre ? companyInfo.nombre : 'Equipo de Cobranza') +
+            (companyInfo && companyInfo.email ? '\n' + companyInfo.email : '');
+    }
+
+    async function fetchAICobrarEmail(rec, cobrosCount, overdueDays, userContext, companyInfo) {
+        var body = {
+            clientName:    rec.clientName || '',
+            eventName:     rec.eventName  || '',
+            invoiceNumber: rec.invoiceNumber || '',
+            amount:        Math.round(getPendienteFacturado(rec)),
+            eventDate:     getEffectiveEventDate(rec),
+            cobrosCount:   cobrosCount,
+            overdueDays:   overdueDays,
+            userContext:   userContext || '',
+            companyInfo:   companyInfo || {}
+        };
+        var res = await fetch('/api/cobrar/generar', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(body)
+        });
+        if (!res.ok) throw new Error('API error ' + res.status);
+        var data = await res.json();
+        return data.email || '';
+    }
+
+    function renderCobrarHistory(cobros) {
+        if (!cobros || !cobros.length) return '';
+        var rows = cobros.map(function (c) {
+            var label = c.method === 'ai' ? 'IA' : 'Plantilla';
+            return '<tr>' +
+                '<td style="white-space:nowrap">' + (c.date || '-') + '</td>' +
+                '<td>' + (c.num || '-') + '\u00b0 aviso</td>' +
+                '<td><span class="badge badge-info" style="font-size:10px">' + label + '</span></td>' +
+                '<td style="font-size:11px;color:var(--text-secondary);max-width:220px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">' + (c.context || '') + '</td>' +
+                '</tr>';
+        }).join('');
+        return '<div style="margin-bottom:12px">' +
+            '<p style="font-size:11px;font-weight:600;color:var(--text-secondary);margin-bottom:4px;text-transform:uppercase;letter-spacing:.05em">Historial de cobros enviados</p>' +
+            '<table class="data-table" style="font-size:12px"><thead><tr><th>Fecha</th><th>Aviso</th><th>M\u00e9todo</th><th>Contexto</th></tr></thead><tbody>' +
+            rows + '</tbody></table></div>';
+    }
+
+    function openCobrarModal(id) {
+        var rec = allReceivables.find(function (r) { return r.id === id; });
+        if (!rec) return;
+        var modalContainer = document.getElementById('finance-modal-container');
+        if (!modalContainer) return;
+
+        var cobros = Array.isArray(rec.cobros) ? rec.cobros : [];
+        var cobrosCount = cobros.length + 1;
+        var overdueDays = getOverdueDays(rec);
+        var companyInfo = getCompanyInfo();
+
+        var pendiente = formatCLP(Math.round(getPendienteFacturado(rec)));
+
+        var html = '<div class="modal-overlay active" id="cobrar-modal-overlay">';
+        html += '<div class="modal" style="max-width:680px;width:95%">';
+        html += '  <div class="modal-header">';
+        html += '    <h3>' + cobrosCount + '\u00b0 Aviso de Cobro</h3>';
+        html += '    <button class="modal-close" id="cobrar-close-x">&times;</button>';
+        html += '  </div>';
+
+        // Invoice summary
+        html += '  <div style="background:var(--bg-tertiary);border-radius:var(--radius-sm);padding:10px 14px;margin-bottom:12px;font-size:13px">';
+        html += '    <strong>' + (rec.clientName || 'Sin cliente') + '</strong>';
+        html += '    &nbsp;&middot;&nbsp;' + (rec.eventName || 'Sin evento');
+        html += '    &nbsp;&middot;&nbsp;Factura: <strong>' + (rec.invoiceNumber || '-') + '</strong>';
+        html += '    <br><span style="color:var(--danger)">Pendiente: <strong>' + pendiente + '</strong></span>';
+        if (overdueDays > 0) {
+            html += '    &nbsp;&middot;&nbsp;<span style="color:var(--danger)">' + overdueDays + ' d\u00edas de atraso</span>';
+        }
+        html += '  </div>';
+
+        // History
+        html += renderCobrarHistory(cobros);
+
+        // Context
+        html += '  <div class="form-group" style="margin-bottom:12px">';
+        html += '    <label style="font-size:13px">Contexto adicional <span style="font-weight:400;color:var(--text-secondary)">(opcional — se incluye en el mensaje)</span></label>';
+        html += '    <textarea id="cobrar-context" class="form-control" rows="2" placeholder="Ej: La OC fue enviada tarde, acord\u00f3 pagar el viernes pasado..."></textarea>';
+        html += '  </div>';
+
+        // Generate buttons
+        html += '  <div style="display:flex;gap:8px;margin-bottom:12px">';
+        html += '    <button class="btn btn-secondary" id="cobrar-btn-template">Usar plantilla</button>';
+        html += '    <button class="btn btn-primary" id="cobrar-btn-ai">Generar con IA &#10024;</button>';
+        html += '  </div>';
+
+        // AI loading spinner (hidden)
+        html += '  <div id="cobrar-ai-loading" style="display:none;color:var(--text-secondary);font-size:13px;margin-bottom:8px">Generando mensaje...</div>';
+
+        // Email area (hidden until generated)
+        html += '  <div id="cobrar-email-area" style="display:none">';
+        html += '    <label style="font-size:13px;font-weight:600">Mensaje generado <span style="font-weight:400;color:var(--text-secondary)">(editable)</span></label>';
+        html += '    <textarea id="cobrar-email-text" class="form-control" rows="12" style="font-family:monospace;font-size:12px;margin-top:4px"></textarea>';
+        html += '    <div style="display:flex;gap:8px;margin-top:8px">';
+        html += '      <button class="btn btn-secondary" id="cobrar-copy-btn">Copiar al portapapeles</button>';
+        html += '      <button class="btn btn-primary" id="cobrar-save-btn">Marcar como enviado</button>';
+        html += '    </div>';
+        html += '  </div>';
+
+        html += '  <div class="form-actions" style="margin-top:12px">';
+        html += '    <button class="btn btn-secondary" id="cobrar-cancel-btn">Cerrar</button>';
+        html += '  </div>';
+        html += '</div></div>';
+
+        modalContainer.innerHTML = html;
+
+        var currentMethod = 'template';
+
+        function closeModal() { modalContainer.innerHTML = ''; }
+
+        document.getElementById('cobrar-close-x').addEventListener('click', closeModal);
+        document.getElementById('cobrar-cancel-btn').addEventListener('click', closeModal);
+        document.getElementById('cobrar-modal-overlay').addEventListener('click', function (e) {
+            if (e.target === this) closeModal();
+        });
+
+        function showEmailArea(text, method) {
+            currentMethod = method;
+            document.getElementById('cobrar-email-text').value = text;
+            document.getElementById('cobrar-email-area').style.display = 'block';
+        }
+
+        // Template button
+        document.getElementById('cobrar-btn-template').addEventListener('click', function () {
+            var userContext = document.getElementById('cobrar-context').value.trim();
+            var text = buildCobrarTemplate(rec, cobrosCount, overdueDays, userContext, companyInfo);
+            showEmailArea(text, 'template');
+        });
+
+        // AI button
+        document.getElementById('cobrar-btn-ai').addEventListener('click', async function () {
+            var userContext = document.getElementById('cobrar-context').value.trim();
+            var loadingEl = document.getElementById('cobrar-ai-loading');
+            var btn = this;
+            btn.disabled = true;
+            if (loadingEl) loadingEl.style.display = 'block';
+            try {
+                var text = await fetchAICobrarEmail(rec, cobrosCount, overdueDays, userContext, companyInfo);
+                showEmailArea(text, 'ai');
+            } catch (err) {
+                console.warn('AI generation failed, falling back to template:', err);
+                var fallback = buildCobrarTemplate(rec, cobrosCount, overdueDays, userContext, companyInfo);
+                showEmailArea(fallback, 'template');
+                alert('La generaci\u00f3n con IA no est\u00e1 disponible. Se us\u00f3 la plantilla en su lugar.');
+            } finally {
+                btn.disabled = false;
+                if (loadingEl) loadingEl.style.display = 'none';
+            }
+        });
+
+        // Copy button
+        document.getElementById('cobrar-copy-btn').addEventListener('click', function () {
+            var text = document.getElementById('cobrar-email-text').value;
+            if (navigator.clipboard) {
+                navigator.clipboard.writeText(text).then(function () {
+                    var btn = document.getElementById('cobrar-copy-btn');
+                    if (btn) { btn.textContent = '\u2713 Copiado'; setTimeout(function () { btn.textContent = 'Copiar al portapapeles'; }, 2000); }
+                });
+            } else {
+                document.getElementById('cobrar-email-text').select();
+                document.execCommand('copy');
+            }
+        });
+
+        // Mark as sent button
+        document.getElementById('cobrar-save-btn').addEventListener('click', async function () {
+            var userContext = document.getElementById('cobrar-context').value.trim();
+            var today = new Date().toISOString().split('T')[0];
+            var newCobro = {
+                id:      Date.now().toString(),
+                date:    today,
+                num:     cobrosCount,
+                method:  currentMethod,
+                context: userContext
+            };
+            var updatedCobros = cobros.concat([newCobro]);
+            try {
+                await window.Mazelab.DataService.update('receivables', rec.id, { cobros: updatedCobros });
+                // Update local cache
+                var idx = allReceivables.findIndex(function (r) { return r.id === rec.id; });
+                if (idx !== -1) allReceivables[idx].cobros = updatedCobros;
+                closeModal();
+                refreshTable();
+            } catch (err) {
+                alert('Error al guardar: ' + err.message);
+            }
         });
     }
 

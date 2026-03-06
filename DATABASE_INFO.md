@@ -40,7 +40,7 @@ Todas las tablas usan `id TEXT PRIMARY KEY`. Las tablas son:
 | Tabla | Descripción | Campos principales |
 |-------|-------------|-------------------|
 | `ventas` | Ventas/eventos | sourceId, clientName, eventName, serviceNames, eventDate, amount, status, staffName, refundAmount |
-| `facturas` | CXC (cuentas por cobrar) | sourceId, clientName, eventName, tipoDoc, invoiceNumber, billingMonth, montoNeto, invoicedAmount, amountPaid, status, payments (JSONB) |
+| `facturas` | CXC (cuentas por cobrar) | sourceId, clientName, eventName, tipoDoc, invoiceNumber, billingMonth, montoNeto, invoicedAmount, amountPaid, status, payments (JSONB), cobros (JSONB) |
 | `costos` | CXP (cuentas por pagar) | eventId, category, vendorName, docType, amount, status, payments (JSONB) |
 | `servicios` | Catálogo de servicios | name, nombre |
 | `personal` | Staff/vendedores | name, nombre |
@@ -56,6 +56,77 @@ ALTER TABLE ventas ADD COLUMN IF NOT EXISTS "newField" TEXT;
 ```
 
 También necesitas agregar la tabla al array `VALID_TABLES` en `server/routes.ts` si creas una tabla nueva.
+
+## Cambios requeridos en Replit — feature/cxc-cobrar
+
+### 1. Columna `cobros` en tabla `facturas`
+```sql
+ALTER TABLE facturas ADD COLUMN IF NOT EXISTS cobros JSONB DEFAULT '[]';
+```
+Almacena el historial de avisos de cobro enviados para cada factura.
+Estructura: `[{ id, date, num, method: 'template'|'ai', context }]`
+
+### 2. Columnas kanban en tabla `ventas` (requerido para Board Operativo)
+```sql
+ALTER TABLE ventas ADD COLUMN IF NOT EXISTS "boardColumn" INTEGER;
+ALTER TABLE ventas ADD COLUMN IF NOT EXISTS "boardOrder" BIGINT;
+ALTER TABLE ventas ADD COLUMN IF NOT EXISTS checklist JSONB DEFAULT '[]';
+ALTER TABLE ventas ADD COLUMN IF NOT EXISTS encargado TEXT DEFAULT '';
+ALTER TABLE ventas ADD COLUMN IF NOT EXISTS "kanbanNotes" TEXT DEFAULT '';
+```
+Sin estas columnas el Board Operativo lanza 500 en cada PATCH de migración.
+
+### 3. Nuevo endpoint POST `/api/cobrar/generar` (para generación IA de emails de cobro)
+Usa **OpenAI** (no Anthropic). Requiere `OPENAI_API_KEY` en Replit Secrets.
+
+Agrega este endpoint en `server/routes.ts`:
+```typescript
+router.post('/cobrar/generar', async (req, res) => {
+  try {
+    const { clientName, eventName, invoiceNumber, amount, eventDate,
+            cobrosCount, overdueDays, userContext, companyInfo } = req.body;
+
+    const OpenAI = require('openai');
+    const client = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+
+    const tone = cobrosCount === 1 ? 'cordial y profesional'
+               : cobrosCount === 2 ? 'firme pero respetuoso'
+               : 'urgente y directo';
+
+    const bankBlock = companyInfo?.banco
+      ? `Datos bancarios:\n  Titular: ${companyInfo.nombre || ''}\n  RUT: ${companyInfo.rut || ''}\n  Banco: ${companyInfo.banco}\n  Tipo: ${companyInfo.tipoCuenta || ''}\n  N° Cuenta: ${companyInfo.numeroCuenta || ''}`
+      : '';
+
+    const prompt = `Redacta un email profesional de cobro en español chileno.
+Cliente: ${clientName}
+Evento: ${eventName}
+Factura N°: ${invoiceNumber}
+Monto pendiente: $${amount.toLocaleString('es-CL')}
+Fecha del evento: ${eventDate}
+Este es el aviso número ${cobrosCount}. Días de atraso: ${overdueDays}.
+${userContext ? 'Contexto adicional: ' + userContext : ''}
+Empresa que cobra: ${companyInfo?.nombre || ''}
+${bankBlock}
+
+Tono: ${tone}.
+Incluye: línea de Asunto, cuerpo del correo, despedida.
+Si hay datos bancarios, inclúyelos al final del cuerpo.`;
+
+    const completion = await client.chat.completions.create({
+      model: 'gpt-4o-mini',
+      messages: [{ role: 'user', content: prompt }],
+      max_tokens: 1024
+    });
+
+    res.json({ email: completion.choices[0].message.content });
+  } catch (err) {
+    console.error('/api/cobrar/generar error:', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+```
+Instalar dependencia si no está: `npm install openai`
+Si no se configura este endpoint, la app hace fallback automático a la plantilla local.
 
 ## Entorno de ejecución
 
