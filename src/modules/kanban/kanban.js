@@ -190,8 +190,10 @@ window.Mazelab.Modules.KanbanModule = (function () {
     }
 
     // ---- migration logic ----
+    // Synchronous: applies boardColumn/checklist to in-memory sales immediately.
+    // DB persistence runs in background so the board renders without waiting.
 
-    async function runMigration() {
+    function runMigration() {
         var DS = window.Mazelab.DataService;
         var today = todayStr();
         var needsUpdate = [];
@@ -201,15 +203,12 @@ window.Mazelab.Modules.KanbanModule = (function () {
 
             var col = 1;
             var eventDate = s.eventDate || '';
-
             if (eventDate && eventDate < today) {
-                // past event: check financial status
                 var finSt = getFinancialStatus(s);
                 col = (finSt === 'liquidado') ? 0 : 4;
             }
-            // future event → col 1
 
-            needsUpdate.push({
+            var u = {
                 id: s.id,
                 boardColumn: col,
                 boardOrder: new Date(s.eventDate || today).getTime(),
@@ -218,32 +217,34 @@ window.Mazelab.Modules.KanbanModule = (function () {
                 }),
                 encargado: '',
                 kanbanNotes: ''
-            });
+            };
+            needsUpdate.push(u);
+
+            // Apply to in-memory immediately — board renders correctly this session
+            s.boardColumn = u.boardColumn;
+            s.boardOrder  = u.boardOrder;
+            s.checklist   = u.checklist;
+            s.encargado   = u.encargado;
+            s.kanbanNotes = u.kanbanNotes;
         });
 
-        for (var i = 0; i < needsUpdate.length; i++) {
-            var u = needsUpdate[i];
-            try {
-                await DS.update('sales', u.id, {
-                    boardColumn: u.boardColumn,
-                    boardOrder: u.boardOrder,
-                    checklist: u.checklist,
-                    encargado: u.encargado,
-                    kanbanNotes: u.kanbanNotes
-                });
-            } catch (e) {
-                // DB columns may not exist yet — update local state anyway
-                console.warn('KanbanModule: migration failed for sale', u.id, '(columns may need adding to ventas table)');
-            }
-            // Always update in-memory so the board renders correctly this session
-            var sale = sales.find(function (s) { return String(s.id) === String(u.id); });
-            if (sale) {
-                sale.boardColumn = u.boardColumn;
-                sale.boardOrder = u.boardOrder;
-                sale.checklist = u.checklist;
-                sale.encargado = u.encargado;
-                sale.kanbanNotes = u.kanbanNotes;
-            }
+        // Persist to DB in background — do NOT block the board render
+        // Requires ALTER TABLE ventas ADD COLUMN... (see DATABASE_INFO.md)
+        if (needsUpdate.length > 0) {
+            (async function () {
+                for (var i = 0; i < needsUpdate.length; i++) {
+                    var u = needsUpdate[i];
+                    try {
+                        await DS.update('sales', u.id, {
+                            boardColumn: u.boardColumn,
+                            boardOrder:  u.boardOrder,
+                            checklist:   u.checklist,
+                            encargado:   u.encargado,
+                            kanbanNotes: u.kanbanNotes
+                        });
+                    } catch (e) { /* columns not yet in DB — non-fatal */ }
+                }
+            })();
         }
     }
 
@@ -900,14 +901,8 @@ window.Mazelab.Modules.KanbanModule = (function () {
             services = results[4] || [];
             staff = results[5] || [];
 
-            // Run migration for sales without boardColumn
-            // Wrapped separately so DB errors don't prevent the board from rendering
-            try {
-                await runMigration();
-            } catch (migErr) {
-                console.warn('KanbanModule: migration step failed (ventas table may need new columns):', migErr);
-            }
-
+            // Migrate sales without boardColumn: in-memory (sync) + DB background
+            runMigration();
             refreshContent();
         } catch (err) {
             console.error('KanbanModule error:', err);

@@ -59,12 +59,18 @@ También necesitas agregar la tabla al array `VALID_TABLES` en `server/routes.ts
 
 ## Cambios requeridos en Replit — feature/cxc-cobrar
 
-### 1. Columna `cobros` en tabla `facturas`
+### 1. Columnas faltantes en tabla `facturas` (CRÍTICO — el botón "Facturar" da 400)
 ```sql
-ALTER TABLE facturas ADD COLUMN IF NOT EXISTS cobros JSONB DEFAULT '[]';
+ALTER TABLE facturas ADD COLUMN IF NOT EXISTS cobros          JSONB    DEFAULT '[]';
+ALTER TABLE facturas ADD COLUMN IF NOT EXISTS "saleId"        TEXT;
+ALTER TABLE facturas ADD COLUMN IF NOT EXISTS "sourceType"    TEXT;
+ALTER TABLE facturas ADD COLUMN IF NOT EXISTS "paymentTerms"  INTEGER  DEFAULT 30;
+ALTER TABLE facturas ADD COLUMN IF NOT EXISTS "eventDate"     TEXT;
+ALTER TABLE facturas ADD COLUMN IF NOT EXISTS monto_venta     NUMERIC;
+ALTER TABLE facturas ADD COLUMN IF NOT EXISTS "montoNeto"     NUMERIC;
 ```
-Almacena el historial de avisos de cobro enviados para cada factura.
-Estructura: `[{ id, date, num, method: 'template'|'ai', context }]`
+Sin estas columnas el INSERT a facturas da HTTP 400. El flujo "Facturar" no crea la nueva factura.
+`cobros` almacena historial de avisos de cobro: `[{ id, date, num, method, context }]`
 
 ### 2. Columnas kanban en tabla `ventas` (requerido para Board Operativo)
 ```sql
