@@ -669,7 +669,6 @@ window.Mazelab.Modules.SalesModule = (function () {
                     monto_venta: data.amount || 0,
                     invoicedAmount: 0,
                     amountPaid: 0,
-                    pendingAmount: 0,
                     status: 'sin_factura',
                     saleId: saleId,
                     sourceType: 'auto'
@@ -689,7 +688,6 @@ window.Mazelab.Modules.SalesModule = (function () {
                                 concept: item.concepto || '',
                                 vendorName: '',
                                 amount: (item.cantidad || 1) * (item.monto_unitario || 0),
-                                amountPaid: 0,
                                 docType: (function(t) {
                                     // Soporta valores nuevos (bh/factura/exenta/invoice/ninguno)
                                     // y legacy (freelancer/proveedor/staff_fijo/core)
@@ -701,7 +699,6 @@ window.Mazelab.Modules.SalesModule = (function () {
                                     return 'ninguno';
                                 })(item.tipo_beneficiario),
                                 status: 'pendiente',
-                                sourceType: 'auto',
                                 saleId: saleId,
                                 eventId: saleId  // ID numérico del evento para Nóminas y CXP
                             });
