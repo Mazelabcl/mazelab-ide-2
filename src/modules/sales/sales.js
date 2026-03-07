@@ -672,8 +672,7 @@ window.Mazelab.Modules.SalesModule = (function () {
                     pendingAmount: 0,
                     status: 'sin_factura',
                     saleId: saleId,
-                    sourceType: 'auto',
-                    isDraft: true
+                    sourceType: 'auto'
                 });
 
                 // Auto-generate CXP draft entries from service cost templates
@@ -702,7 +701,6 @@ window.Mazelab.Modules.SalesModule = (function () {
                                     return 'ninguno';
                                 })(item.tipo_beneficiario),
                                 status: 'pendiente',
-                                isDraft: true,
                                 sourceType: 'auto',
                                 saleId: saleId,
                                 eventId: saleId  // ID numérico del evento para Nóminas y CXP
