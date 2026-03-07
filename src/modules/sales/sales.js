@@ -699,8 +699,7 @@ window.Mazelab.Modules.SalesModule = (function () {
                                     return 'ninguno';
                                 })(item.tipo_beneficiario),
                                 status: 'pendiente',
-                                saleId: saleId,
-                                eventId: saleId  // ID numérico del evento para Nóminas y CXP
+                                eventId: saleId
                             });
                         });
                     }
