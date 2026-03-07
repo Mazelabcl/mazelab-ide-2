@@ -1492,6 +1492,7 @@ window.Mazelab.Modules.FinanceModule = (function () {
                 // 1. Crear una nueva CXC row para esta factura específica
                 var linkedSaleId = rec.saleId || (/^\d+$/.test(String(rec.id || '')) ? rec.id : null);
                 await window.Mazelab.DataService.create('receivables', {
+                    id:             window.Mazelab.Storage.generateId(),
                     eventName:      rec.eventName  || '',
                     eventDate:      rec.eventDate  || '',
                     clientName:     rec.clientName || '',

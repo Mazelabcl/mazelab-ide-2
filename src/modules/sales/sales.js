@@ -636,21 +636,17 @@ window.Mazelab.Modules.SalesModule = (function () {
                 var nextId = String(maxId + 1);
 
                 // Capture the created sale so we can link CXC and CXP to it
-                // Kanban board fields for new sale
+                // Kanban board fields for new sale (pre-evento checklist)
                 var kanbanChecklist = [
-                    { key: 'contacto_inicial', label: 'Contacto inicial con cliente', group: 'Pre-evento', checked: false, checkedAt: null },
-                    { key: 'diseno_solicitado', label: 'Dise\u00f1o solicitado', group: 'Pre-evento', checked: false, checkedAt: null },
-                    { key: 'diseno_enviado', label: 'Dise\u00f1o enviado al cliente', group: 'Pre-evento', checked: false, checkedAt: null },
-                    { key: 'diseno_aprobado', label: 'Dise\u00f1o aprobado por cliente', group: 'Pre-evento', checked: false, checkedAt: null },
-                    { key: 'logistica_confirmada', label: 'Log\u00edstica confirmada', group: 'Pre-evento', checked: false, checkedAt: null },
-                    { key: 'equipo_asignado', label: 'Equipo asignado', group: 'Pre-evento', checked: false, checkedAt: null },
-                    { key: 'freelance_confirmados', label: 'Freelancers confirmados', group: 'Pre-evento', checked: false, checkedAt: null },
-                    { key: 'montaje_realizado', label: 'Montaje realizado', group: 'D\u00eda del evento', checked: false, checkedAt: null },
-                    { key: 'foto_montaje', label: 'Foto montaje enviada', group: 'D\u00eda del evento', checked: false, checkedAt: null },
-                    { key: 'evento_ejecutado', label: 'Evento ejecutado sin incidentes', group: 'D\u00eda del evento', checked: false, checkedAt: null },
-                    { key: 'desmontaje_correcto', label: 'Desmontaje correcto', group: 'Post-evento', checked: false, checkedAt: null },
-                    { key: 'material_respaldado', label: 'Material respaldado', group: 'Post-evento', checked: false, checkedAt: null },
-                    { key: 'informe_interno', label: 'Informe interno completado', group: 'Post-evento', checked: false, checkedAt: null }
+                    { key: 'pre_coordinacion', label: 'Coordinaci\u00f3n del evento',      group: 'Coordinaci\u00f3n', checked: false, checkedAt: null },
+                    { key: 'pre_visita',       label: 'Visita t\u00e9cnica al venue',       group: 'Coordinaci\u00f3n', checked: false, checkedAt: null },
+                    { key: 'pre_diseno_ok',    label: 'Dise\u00f1o aprobado por cliente',   group: 'Coordinaci\u00f3n', checked: false, checkedAt: null },
+                    { key: 'pre_logistica',    label: 'Log\u00edstica confirmada',          group: 'Coordinaci\u00f3n', checked: false, checkedAt: null },
+                    { key: 'pre_nomina_env',   label: 'N\u00f3mina enviada al personal',    group: 'Personal', checked: false, checkedAt: null },
+                    { key: 'pre_nomina_cap',   label: 'N\u00f3mina capacitada / briefed',   group: 'Personal', checked: false, checkedAt: null },
+                    { key: 'pre_freelances',   label: 'Freelancers confirmados',            group: 'Personal', checked: false, checkedAt: null },
+                    { key: 'pre_equipos',      label: 'Equipos confirmados',                group: 'Producci\u00f3n', checked: false, checkedAt: null },
+                    { key: 'pre_material',     label: 'Material de producci\u00f3n listo',  group: 'Producci\u00f3n', checked: false, checkedAt: null }
                 ];
 
                 const createdSale = await DS.create('sales', Object.assign({}, data, {
@@ -666,6 +662,7 @@ window.Mazelab.Modules.SalesModule = (function () {
 
                 // Auto-create CXC (receivable) for this sale
                 await DS.create('receivables', {
+                    id: window.Mazelab.Storage.generateId(),
                     eventName: data.eventName || '',
                     eventDate: data.eventDate || '',
                     clientName: data.clientName || '',
@@ -686,6 +683,7 @@ window.Mazelab.Modules.SalesModule = (function () {
                     if (svc && Array.isArray(svc.cost_template) && svc.cost_template.length > 0) {
                         svc.cost_template.forEach(function (item) {
                             drafts.push({
+                                id: window.Mazelab.Storage.generateId(),
                                 eventName: data.eventName || '',
                                 eventDate: data.eventDate || '',
                                 clientName: data.clientName || '',

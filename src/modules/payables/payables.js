@@ -987,6 +987,7 @@ window.Mazelab.Modules.PayablesModule = (function () {
                 record.payments = existing ? (existing.payments || []) : [];
                 await window.Mazelab.DataService.update('payables', editingId, record);
             } else {
+                record.id = generateId();
                 record.payments = [];
                 await window.Mazelab.DataService.create('payables', record);
             }
