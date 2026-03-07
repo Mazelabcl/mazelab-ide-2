@@ -67,28 +67,13 @@ window.Mazelab.Modules.KanbanModule = (function () {
     function getEventCXC(sale) {
         var sid = String(sale.id || '');
         var sourceId = String(sale.sourceId || '');
-        var name = (sale.eventName || '').trim().toLowerCase();
-        var client = (sale.clientName || '').trim().toLowerCase();
-        // Year extracted from eventDate to narrow fallback matches
-        var saleYear = (sale.eventDate || '').slice(0, 4);
-
+        // Only match by saleId — no name fallback.
+        // Name-based matching causes cross-event pollution for recurring services
+        // (e.g. all "Glambot" invoices for a client match every Glambot sale).
+        // Records without saleId return empty → pct=null → cxcOk=true (no linked debt).
         return receivables.filter(function (r) {
-            // 1. Primary: direct saleId match (most precise, always wins)
-            if (r.saleId) {
-                return String(r.saleId) === sid || (sourceId && String(r.saleId) === sourceId);
-            }
-            // 2. Fallback for records without saleId (imported historical data):
-            //    require eventName + clientName + same year to avoid cross-event pollution
-            if (!name || !client) return false;
-            var rName = (r.eventName || '').trim().toLowerCase();
-            var rClient = (r.clientName || '').trim().toLowerCase();
-            if (rName !== name || rClient !== client) return false;
-            // Require same year when we have it (prevents recurring service name collisions)
-            if (saleYear) {
-                var rYear = (r.eventDate || r.billingMonth || '').slice(0, 4);
-                if (rYear && rYear !== saleYear) return false;
-            }
-            return true;
+            if (!r.saleId) return false;
+            return String(r.saleId) === sid || (sourceId && String(r.saleId) === sourceId);
         });
     }
 
