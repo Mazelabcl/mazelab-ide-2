@@ -788,6 +788,7 @@ window.Mazelab.Modules.SettingsModule = (function () {
             if (editingId) {
                 await DS.update(dsKey, editingId, data);
             } else {
+                data.id = window.Mazelab.Storage.generateId();
                 await DS.create(dsKey, data);
             }
             const freshData = await DS.getAll(dsKey) || [];
