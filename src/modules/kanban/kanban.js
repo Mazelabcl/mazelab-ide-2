@@ -687,6 +687,18 @@ window.Mazelab.Modules.KanbanModule = (function () {
             '<input type="text" class="form-control" id="kb-encargado" value="' + (sale.encargado || '') + '" placeholder="Nombre del encargado...">' +
             '</div>';
 
+        // Also include custom items (key starts with 'custom_') grouped by their group field
+        var customItems = cl.filter(function (c) {
+            return c.key && c.key.indexOf('custom_') === 0;
+        });
+        customItems.forEach(function (item) {
+            var g = item.group || 'Otros';
+            if (!groupMap[g]) { groupMap[g] = []; groupOrder.push(g); }
+            // Only add if not already present (avoid duplicates from defs loop)
+            var already = groupMap[g].find(function (e) { return e.item.key === item.key; });
+            if (!already) groupMap[g].push({ item: item, def: null });
+        });
+
         var groupsHTML = '';
         groupOrder.forEach(function (gName) {
             var entries = groupMap[gName];
@@ -702,19 +714,29 @@ window.Mazelab.Modules.KanbanModule = (function () {
             var itemsHTML = entries.map(function (e) {
                 var item = e.item;
                 var def = e.def;
+                var isCustom = item.key && item.key.indexOf('custom_') === 0;
                 var checkedClass = item.checked ? ' checked' : '';
                 var dateStr = item.checkedAt ? formatShortDate(item.checkedAt) : '';
-                return '<div class="checklist-item' + checkedClass + '" style="padding:10px 0;display:flex;align-items:flex-start;justify-content:space-between;gap:8px">' +
+                return '<div class="checklist-item' + checkedClass + '" style="padding:10px 0;display:flex;align-items:flex-start;justify-content:space-between;gap:8px" data-key="' + item.key + '">' +
                     '<div style="display:flex;align-items:flex-start;gap:10px;flex:1">' +
                         '<input type="checkbox" id="cl-' + item.key + '"' + (item.checked ? ' checked' : '') + ' data-key="' + item.key + '" style="margin-top:3px;flex-shrink:0">' +
                         '<div>' +
-                            '<label for="cl-' + item.key + '" style="font-weight:500;cursor:pointer;display:block">' + (def.label || item.label) + '</label>' +
-                            (def.desc ? '<div style="font-size:11px;color:var(--text-muted);margin-top:3px;line-height:1.4">' + def.desc + '</div>' : '') +
+                            '<label for="cl-' + item.key + '" style="font-weight:500;cursor:pointer;display:block">' + (def ? (def.label || item.label) : item.label) + '</label>' +
+                            (def && def.desc ? '<div style="font-size:11px;color:var(--text-muted);margin-top:3px;line-height:1.4">' + def.desc + '</div>' : '') +
                         '</div>' +
                     '</div>' +
-                    (dateStr ? '<span class="checklist-date" style="flex-shrink:0">' + dateStr + '</span>' : '') +
+                    '<div style="display:flex;align-items:center;gap:6px;flex-shrink:0">' +
+                        (dateStr ? '<span class="checklist-date">' + dateStr + '</span>' : '') +
+                        (isCustom ? '<button class="kb-cl-delete" data-key="' + item.key + '" title="Eliminar \u00edtem" style="background:none;border:none;color:var(--text-muted);cursor:pointer;font-size:14px;padding:0 2px;line-height:1">&times;</button>' : '') +
+                    '</div>' +
                     '</div>';
             }).join('');
+
+            // "Add item" row at bottom of each group
+            var addRow = '<div style="margin-top:8px;display:flex;gap:6px;align-items:center">' +
+                '<input type="text" class="form-control kb-cl-new-input" data-group="' + gName + '" placeholder="Agregar \u00edtem..." style="flex:1;height:30px;font-size:12px;padding:4px 8px">' +
+                '<button class="kb-cl-add" data-group="' + gName + '" style="height:30px;padding:0 10px;font-size:12px;background:rgba(255,255,255,0.08);border:1px solid rgba(255,255,255,0.15);border-radius:6px;color:var(--text-secondary);cursor:pointer;white-space:nowrap">+ A\u00f1adir</button>' +
+                '</div>';
 
             groupsHTML += '<div class="checklist-group" style="margin-bottom:var(--space-lg)">' +
                 '<div class="checklist-group-title" style="display:flex;justify-content:space-between;align-items:center">' +
@@ -723,6 +745,7 @@ window.Mazelab.Modules.KanbanModule = (function () {
                 '</div>' +
                 progressBar +
                 '<div style="margin-top:var(--space-sm)">' + itemsHTML + '</div>' +
+                addRow +
                 '</div>';
         });
 
@@ -949,6 +972,33 @@ window.Mazelab.Modules.KanbanModule = (function () {
             });
         });
 
+        // Add custom checklist item
+        document.querySelectorAll('.kb-cl-add').forEach(function (btn) {
+            btn.addEventListener('click', function () {
+                var group = this.dataset.group;
+                var input = document.querySelector('.kb-cl-new-input[data-group="' + group + '"]');
+                var label = input ? input.value.trim() : '';
+                if (!label) return;
+                addCustomChecklistItem(sale, group, label);
+            });
+        });
+        document.querySelectorAll('.kb-cl-new-input').forEach(function (inp) {
+            inp.addEventListener('keydown', function (e) {
+                if (e.key !== 'Enter') return;
+                var group = this.dataset.group;
+                var label = this.value.trim();
+                if (!label) return;
+                addCustomChecklistItem(sale, group, label);
+            });
+        });
+
+        // Delete custom checklist item
+        document.querySelectorAll('.kb-cl-delete').forEach(function (btn) {
+            btn.addEventListener('click', function () {
+                deleteCustomChecklistItem(sale, this.dataset.key);
+            });
+        });
+
         var encInput = document.getElementById('kb-encargado');
         if (encInput) encInput.addEventListener('blur', function () {
             saveEncargado(sale, this.value);
@@ -987,6 +1037,22 @@ window.Mazelab.Modules.KanbanModule = (function () {
     async function saveNotes(sale, value) {
         sale.kanbanNotes = value;
         await window.Mazelab.DataService.update('sales', sale.id, { kanbanNotes: value });
+    }
+
+    async function addCustomChecklistItem(sale, group, label) {
+        var key = 'custom_' + Date.now();
+        var cl = Array.isArray(sale.checklist) ? sale.checklist.slice() : [];
+        cl.push({ key: key, label: label, group: group, checked: false, checkedAt: null });
+        sale.checklist = cl;
+        await window.Mazelab.DataService.update('sales', sale.id, { checklist: cl });
+        refreshContent();
+    }
+
+    async function deleteCustomChecklistItem(sale, key) {
+        var cl = Array.isArray(sale.checklist) ? sale.checklist.slice() : [];
+        sale.checklist = cl.filter(function (c) { return c.key !== key; });
+        await window.Mazelab.DataService.update('sales', sale.id, { checklist: sale.checklist });
+        refreshContent();
     }
 
     // ---- init ----
