@@ -90,7 +90,8 @@ window.Mazelab.Modules.FinanceModule = (function () {
         var facturado = getMontoFacturado(r);
         if (!r.invoiceNumber && facturado <= 0) return Math.max(0, neto - pagado);
         if (isIvaPaid(r.billingMonth)) return Math.max(0, (facturado * 1.19) - pagado);
-        return Math.max(0, neto - pagado);
+        // IVA aún no declarado: el pago recibido incluye IVA, extraer solo la parte neta
+        return Math.max(0, neto - Math.round(pagado / 1.19));
     }
 
     // Returns the current eventDate from the linked sale (if loaded), falling back to stored copy.
@@ -1416,7 +1417,10 @@ window.Mazelab.Modules.FinanceModule = (function () {
         html += '  </div>';
         html += '  <div class="form-row">';
         html += '    <div class="form-group">';
-        html += '      <label>Monto Neto Facturado (sin IVA)</label>';
+        html += '      <label>Monto Neto Facturado (sin IVA)';
+        html += '        <button type="button" id="fac-btn-50" style="margin-left:10px;font-size:11px;padding:2px 8px;background:var(--bg-tertiary);border:1px solid var(--border-color);border-radius:4px;cursor:pointer;color:var(--text-secondary)">50%</button>';
+        html += '        <button type="button" id="fac-btn-100" style="margin-left:4px;font-size:11px;padding:2px 8px;background:var(--bg-tertiary);border:1px solid var(--border-color);border-radius:4px;cursor:pointer;color:var(--text-secondary)">100%</button>';
+        html += '      </label>';
         html += '      <input type="number" class="form-control" id="fac-amount" value="' + refAmount + '" placeholder="Ej: 4500000">';
         html += '    </div>';
         html += '    <div class="form-group">';
@@ -1464,6 +1468,14 @@ window.Mazelab.Modules.FinanceModule = (function () {
         }
         document.getElementById('fac-amount').addEventListener('input', updateIvaPreview);
         document.getElementById('fac-tipo').addEventListener('change', updateIvaPreview);
+        document.getElementById('fac-btn-50').addEventListener('click', function () {
+            document.getElementById('fac-amount').value = Math.round(refAmount / 2);
+            updateIvaPreview();
+        });
+        document.getElementById('fac-btn-100').addEventListener('click', function () {
+            document.getElementById('fac-amount').value = refAmount;
+            updateIvaPreview();
+        });
 
         document.getElementById('fac-save-btn').addEventListener('click', async function () {
             var invoiceNumber = document.getElementById('fac-number').value.trim();
