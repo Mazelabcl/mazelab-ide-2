@@ -29,15 +29,15 @@ window.Mazelab.Modules.KanbanModule = (function () {
     // ---- checklist definitions ----
 
     var PRE_CHECKLIST = [
-        { key: 'pre_coordinacion', label: 'Coordinaci\u00f3n del evento',      group: 'Coordinaci\u00f3n' },
-        { key: 'pre_visita',       label: 'Visita t\u00e9cnica al venue',       group: 'Coordinaci\u00f3n' },
-        { key: 'pre_diseno_ok',    label: 'Dise\u00f1o aprobado por cliente',   group: 'Coordinaci\u00f3n' },
-        { key: 'pre_logistica',    label: 'Log\u00edstica confirmada',          group: 'Coordinaci\u00f3n' },
-        { key: 'pre_nomina_env',   label: 'N\u00f3mina enviada al personal',    group: 'Personal' },
-        { key: 'pre_nomina_cap',   label: 'N\u00f3mina capacitada / briefed',   group: 'Personal' },
-        { key: 'pre_freelances',   label: 'Freelancers confirmados',            group: 'Personal' },
-        { key: 'pre_equipos',      label: 'Equipos confirmados',                group: 'Producci\u00f3n' },
-        { key: 'pre_material',     label: 'Material de producci\u00f3n listo',  group: 'Producci\u00f3n' }
+        { key: 'pre_coordinacion', label: 'Coordinaci\u00f3n del evento',       group: 'Coordinaci\u00f3n', desc: 'El coordinador est\u00e1 al tanto de los horarios y tom\u00f3 contacto con el cliente.' },
+        { key: 'pre_visita',       label: 'Visita t\u00e9cnica al venue',        group: 'Coordinaci\u00f3n', desc: 'Se verific\u00f3 el espacio f\u00edsico. No siempre aplica seg\u00fan el tipo de evento.' },
+        { key: 'pre_diseno_ok',    label: 'Dise\u00f1o aprobado por cliente',    group: 'Coordinaci\u00f3n', desc: 'El cliente aprob\u00f3 el dise\u00f1o o propuesta visual del evento.' },
+        { key: 'pre_logistica',    label: 'Log\u00edstica confirmada',           group: 'Coordinaci\u00f3n', desc: 'Se tiene noci\u00f3n completa de equipos t\u00e9cnicos, software y c\u00f3mo funcionar\u00e1 la soluci\u00f3n.' },
+        { key: 'pre_nomina_env',   label: 'N\u00f3mina lista',                  group: 'Personal',        desc: 'Se consigui\u00f3 al personal freelance y ya se sabe qui\u00e9nes trabajar\u00e1n en el evento.' },
+        { key: 'pre_nomina_cap',   label: 'N\u00f3mina capacitada',             group: 'Personal',        desc: 'Se hizo reuni\u00f3n con cada freelance: operaci\u00f3n, contingencias y soluci\u00f3n explicadas.' },
+        { key: 'pre_freelances',   label: 'N\u00f3mina enviada al cliente',     group: 'Personal',        desc: 'El cliente tiene la lista del personal que participar\u00e1 en el evento.' },
+        { key: 'pre_equipos',      label: 'Equipos configurados y probados',    group: 'Producci\u00f3n',   desc: 'Se realiz\u00f3 prueba t\u00e9cnica aprobada por el encargado comercial y el cliente.' },
+        { key: 'pre_material',     label: 'Material de producci\u00f3n listo',   group: 'Producci\u00f3n',   desc: 'Todos los materiales f\u00edsicos y digitales est\u00e1n preparados para el evento.' }
     ];
 
     // skipForActivacion: excluded when service is "activaciones interactivas" or "activaciones cin\u00e9ticas"
@@ -210,6 +210,9 @@ window.Mazelab.Modules.KanbanModule = (function () {
             var col = (s.boardColumn !== undefined && s.boardColumn !== null) ? Number(s.boardColumn) : NaN;
             var changed = false;
 
+            // Skip events manually removed from board
+            if (col === 99) return;
+
             // Assign to correct column range for each board
             if (board === 'pre') {
                 if (isNaN(col) || col < 1 || col > 3) {
@@ -293,6 +296,7 @@ window.Mazelab.Modules.KanbanModule = (function () {
             var minDate = postYearMin ? (postYearMin + '-01-01') : '';
             return sales.filter(function (s) {
                 var col = Number(s.boardColumn);
+                if (col === 99) return false;
                 var ed = s.eventDate || '';
                 if (col < 4 || col > 6) return false;
                 if (ed > today) return false;
@@ -319,7 +323,10 @@ window.Mazelab.Modules.KanbanModule = (function () {
         return getFilteredSales().filter(function (s) {
             return Number(s.boardColumn) === colId;
         }).sort(function (a, b) {
-            return (a.boardOrder || 0) - (b.boardOrder || 0);
+            // Nearest event date first; no date goes to bottom
+            var da = a.eventDate || '9999-12-31';
+            var db = b.eventDate || '9999-12-31';
+            return da < db ? -1 : da > db ? 1 : 0;
         });
     }
 
@@ -411,6 +418,34 @@ window.Mazelab.Modules.KanbanModule = (function () {
 
     // ---- render: card ----
 
+    function getDaysInfo(sale) {
+        if (!sale.eventDate) return { days: null, label: '', color: 'var(--text-muted)' };
+        var today = new Date(todayStr());
+        var evDate = new Date(sale.eventDate);
+        var diff = Math.ceil((evDate - today) / (1000 * 60 * 60 * 24));
+        var label, color;
+        if (diff < 0)       { label = Math.abs(diff) + 'd pasado'; color = 'var(--danger)'; }
+        else if (diff === 0){ label = 'Hoy';                        color = 'var(--danger)'; }
+        else if (diff <= 3) { label = diff + 'd';                   color = 'var(--danger)'; }
+        else if (diff <= 7) { label = diff + 'd';                   color = '#f97316'; }
+        else if (diff <= 14){ label = diff + 'd';                   color = 'var(--warning)'; }
+        else                { label = diff + 'd';                   color = 'var(--success)'; }
+        return { days: diff, label: label, color: color };
+    }
+
+    // Column-specific urgency: alert if event is still in an early column with few days left
+    function getCardUrgencyBorder(sale) {
+        var di = getDaysInfo(sale);
+        if (di.days === null) return '';
+        var col = Number(sale.boardColumn);
+        if ((col === 1 && di.days <= 14) ||
+            (col === 2 && di.days <= 7)  ||
+            (col <= 2  && di.days <= 3)) {
+            return 'box-shadow:0 0 0 2px ' + di.color + ';';
+        }
+        return '';
+    }
+
     function renderCard(sale) {
         var displayId = sale.sourceId || String(sale.id || '').slice(-6);
         var indicator = getCardIndicator(sale);
@@ -422,19 +457,34 @@ window.Mazelab.Modules.KanbanModule = (function () {
         var board = getBoardForSale(sale);
         var minCol = board === 'pre' ? 1 : 4;
         var maxCol = board === 'pre' ? 3 : 6;
+        var di = getDaysInfo(sale);
+        var urgencyBorder = activeBoard === 'pre' ? getCardUrgencyBorder(sale) : '';
 
         var facPct = cxcS.pct !== null ? Math.round(cxcS.pct * 100) + '%' : '-';
         var pagPct = cxpS.pct !== null ? Math.round(cxpS.pct * 100) + '%' : '-';
         var progColor = prog.pct >= 0.7 ? 'var(--success)' : (prog.pct > 0.3 ? 'var(--warning)' : 'var(--danger)');
 
-        return '<div class="kanban-card" draggable="true" data-sale-id="' + sale.id + '">' +
+        // Services as small tags
+        var svcTags = '';
+        if (sale.serviceNames) {
+            svcTags = '<div class="kanban-card-svc-tags">' +
+                sale.serviceNames.split(',').map(function (s) {
+                    return '<span class="kanban-svc-tag">' + s.trim() + '</span>';
+                }).join('') +
+                '</div>';
+        }
+
+        return '<div class="kanban-card" draggable="true" data-sale-id="' + sale.id + '" style="' + urgencyBorder + '">' +
             '<div class="kanban-card-top">' +
                 '<span class="kanban-card-id">#' + displayId + '</span>' +
-                '<span class="kanban-card-indicator">' + indicator.icon + '</span>' +
+                '<span style="display:flex;align-items:center;gap:4px">' +
+                    (di.label ? '<span style="font-size:11px;font-weight:600;color:' + di.color + '">' + di.label + '</span>' : '') +
+                    '<span class="kanban-card-indicator">' + indicator.icon + '</span>' +
+                '</span>' +
             '</div>' +
             '<div class="kanban-card-title">' + (sale.eventName || '-') + '</div>' +
             '<div class="kanban-card-client">' + (sale.clientName || '-') + '</div>' +
-            (sale.serviceNames ? '<div class="kanban-card-services">' + sale.serviceNames + '</div>' : '') +
+            svcTags +
             '<div class="kanban-card-meta">' +
                 '<span class="kanban-card-date">' + formatDate(sale.eventDate) + '</span>' +
                 '<span class="kanban-card-amount">' + formatCLP(amount) + '</span>' +
@@ -621,14 +671,15 @@ window.Mazelab.Modules.KanbanModule = (function () {
         var cl = sale.checklist || [];
         var defs = board === 'pre' ? PRE_CHECKLIST : getPostChecklist(sale);
 
-        // Build group map from definitions (only show relevant items)
+        // Build group map preserving definition order
         var groupMap = {};
+        var groupOrder = [];
         defs.forEach(function (def) {
             var item = cl.find(function (c) { return c.key === def.key; }) ||
                 { key: def.key, label: def.label, group: def.group, checked: false, checkedAt: null };
             var g = def.group || 'Otros';
-            if (!groupMap[g]) groupMap[g] = [];
-            groupMap[g].push(item);
+            if (!groupMap[g]) { groupMap[g] = []; groupOrder.push(g); }
+            groupMap[g].push({ item: item, def: def });
         });
 
         var encargadoHTML = '<div class="checklist-encargado">' +
@@ -637,29 +688,48 @@ window.Mazelab.Modules.KanbanModule = (function () {
             '</div>';
 
         var groupsHTML = '';
-        Object.keys(groupMap).forEach(function (gName) {
-            var items = groupMap[gName];
-            var itemsHTML = items.map(function (item) {
+        groupOrder.forEach(function (gName) {
+            var entries = groupMap[gName];
+            var done = entries.filter(function (e) { return e.item.checked; }).length;
+            var total = entries.length;
+            var pct = total > 0 ? done / total : 0;
+            var barColor = pct >= 0.9999 ? 'var(--success)' : (pct > 0 ? 'var(--warning)' : 'rgba(255,255,255,0.2)');
+
+            var progressBar = '<div style="height:4px;border-radius:2px;background:rgba(255,255,255,0.08);margin-top:6px;overflow:hidden">' +
+                '<div style="height:100%;width:' + Math.round(pct * 100) + '%;background:' + barColor + ';transition:width 0.3s"></div>' +
+                '</div>';
+
+            var itemsHTML = entries.map(function (e) {
+                var item = e.item;
+                var def = e.def;
                 var checkedClass = item.checked ? ' checked' : '';
                 var dateStr = item.checkedAt ? formatShortDate(item.checkedAt) : '';
-                return '<div class="checklist-item' + checkedClass + '">' +
-                    '<div>' +
-                    '<input type="checkbox" id="cl-' + item.key + '"' + (item.checked ? ' checked' : '') + ' data-key="' + item.key + '">' +
-                    '<label for="cl-' + item.key + '">' + item.label + '</label>' +
+                return '<div class="checklist-item' + checkedClass + '" style="padding:10px 0;display:flex;align-items:flex-start;justify-content:space-between;gap:8px">' +
+                    '<div style="display:flex;align-items:flex-start;gap:10px;flex:1">' +
+                        '<input type="checkbox" id="cl-' + item.key + '"' + (item.checked ? ' checked' : '') + ' data-key="' + item.key + '" style="margin-top:3px;flex-shrink:0">' +
+                        '<div>' +
+                            '<label for="cl-' + item.key + '" style="font-weight:500;cursor:pointer;display:block">' + (def.label || item.label) + '</label>' +
+                            (def.desc ? '<div style="font-size:11px;color:var(--text-muted);margin-top:3px;line-height:1.4">' + def.desc + '</div>' : '') +
+                        '</div>' +
                     '</div>' +
-                    (dateStr ? '<span class="checklist-date">' + dateStr + '</span>' : '') +
+                    (dateStr ? '<span class="checklist-date" style="flex-shrink:0">' + dateStr + '</span>' : '') +
                     '</div>';
             }).join('');
-            groupsHTML += '<div class="checklist-group">' +
-                '<div class="checklist-group-title">' + gName + '</div>' +
-                itemsHTML +
+
+            groupsHTML += '<div class="checklist-group" style="margin-bottom:var(--space-lg)">' +
+                '<div class="checklist-group-title" style="display:flex;justify-content:space-between;align-items:center">' +
+                    '<span>' + gName + '</span>' +
+                    '<span style="font-size:11px;color:' + barColor + ';font-weight:700;letter-spacing:0.5px">' + done + '/' + total + '</span>' +
+                '</div>' +
+                progressBar +
+                '<div style="margin-top:var(--space-sm)">' + itemsHTML + '</div>' +
                 '</div>';
         });
 
         var prog = getChecklistProgress(sale);
         return encargadoHTML +
-            '<div style="margin-bottom:var(--space-sm);font-size:12px;color:var(--text-secondary)">' +
-                'Progreso: ' + prog.done + '/' + prog.total +
+            '<div style="margin-bottom:var(--space-md);font-size:12px;color:var(--text-secondary)">' +
+                'Progreso total: ' + prog.done + '/' + prog.total +
                 ' (' + Math.round(prog.pct * 100) + '%)' +
             '</div>' +
             groupsHTML;
@@ -682,7 +752,10 @@ window.Mazelab.Modules.KanbanModule = (function () {
         var meta = STATUS_META[finSt];
 
         var header = '<div class="kanban-detail-header">' +
-            '<button class="btn-secondary" id="kb-back-btn">\u2190 Volver al Board</button>' +
+            '<div style="display:flex;gap:var(--space-sm)">' +
+                '<button class="btn-secondary" id="kb-back-btn">\u2190 Volver al Board</button>' +
+                '<button class="btn-secondary" id="kb-remove-board-btn" style="font-size:12px;color:var(--text-muted);border-color:rgba(255,255,255,0.1)" title="Ocultar este evento del board">Quitar del board</button>' +
+            '</div>' +
             '<div class="kanban-detail-info">' +
                 '<h2 class="kanban-detail-title">#' + displayId + ' \u2014 ' + (sale.eventName || '-') + '</h2>' +
                 '<div class="kanban-detail-subtitle">' +
@@ -850,6 +923,15 @@ window.Mazelab.Modules.KanbanModule = (function () {
     function attachDetailListeners(sale) {
         var backBtn = document.getElementById('kb-back-btn');
         if (backBtn) backBtn.addEventListener('click', function () {
+            currentSaleId = null;
+            refreshContent();
+        });
+
+        var removeBtn = document.getElementById('kb-remove-board-btn');
+        if (removeBtn) removeBtn.addEventListener('click', function () {
+            if (!confirm('¿Quitar "' + (sale.eventName || 'este evento') + '" del board operativo?\n\nEl evento seguirá en Ventas y no se perderá ningún dato.')) return;
+            sale.boardColumn = 99;
+            window.Mazelab.DataService.update('sales', sale.id, { boardColumn: 99 });
             currentSaleId = null;
             refreshContent();
         });
