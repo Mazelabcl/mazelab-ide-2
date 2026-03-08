@@ -97,11 +97,19 @@ window.Mazelab.Modules.KanbanModule = (function () {
     // ---- financial linking ----
 
     function getEventCXC(sale) {
-        var sid = String(sale.id || '');
+        var sid      = String(sale.id       || '');
         var sourceId = String(sale.sourceId || '');
         return receivables.filter(function (r) {
-            if (!r.saleId) return false;
-            return String(r.saleId) === sid || (sourceId && String(r.saleId) === sourceId);
+            // New records: linked via saleId (set when user clicks "Facturar")
+            if (r.saleId) {
+                return String(r.saleId) === sid ||
+                       (sourceId && String(r.saleId) === sourceId);
+            }
+            // Historical imports: linked via sourceId (numeric CSV id, safe — no name fallback)
+            if (r.sourceId && sourceId) {
+                return String(r.sourceId) === sourceId;
+            }
+            return false;
         });
     }
 
