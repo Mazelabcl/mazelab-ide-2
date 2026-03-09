@@ -796,6 +796,19 @@ window.Mazelab.Modules.PayablesModule = (function () {
         var conceptList = document.getElementById('pay-concept-list');
         if (conceptList) conceptList.innerHTML = Object.keys(concepts).sort().map(function (c) { return '<option value="' + escapeHtml(c) + '">'; }).join('');
 
+        // Fix: browsers filter datalist to match current input value, so pre-filled inputs
+        // only show their own value as a suggestion. Clear on focus → show all options.
+        var vendorInput = document.getElementById('pay-vendorName');
+        if (vendorInput) {
+            vendorInput.onfocus = function () { this._savedVal = this.value; this.value = ''; };
+            vendorInput.onblur  = function () { if (!this.value) this.value = this._savedVal || ''; };
+        }
+        var conceptInput = document.getElementById('pay-concept');
+        if (conceptInput) {
+            conceptInput.onfocus = function () { this._savedVal = this.value; this.value = ''; };
+            conceptInput.onblur  = function () { if (!this.value) this.value = this._savedVal || ''; };
+        }
+
         // Clear ID search
         var idSearch = document.getElementById('pay-id-search');
         if (idSearch) idSearch.value = '';
@@ -974,6 +987,7 @@ window.Mazelab.Modules.PayablesModule = (function () {
                 record.payments = existing ? (existing.payments || []) : [];
                 await window.Mazelab.DataService.update('payables', editingId, record);
             } else {
+                record.id = generateId();
                 record.payments = [];
                 await window.Mazelab.DataService.create('payables', record);
             }

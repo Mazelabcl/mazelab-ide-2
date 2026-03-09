@@ -161,6 +161,7 @@ window.Mazelab.Modules.SettingsModule = (function () {
                 <button class="tab ${activeTab === 'servicios' ? 'active' : ''}" data-tab="servicios">Servicios</button>
                 <button class="tab ${activeTab === 'staff' ? 'active' : ''}" data-tab="staff">Staff</button>
                 <button class="tab ${activeTab === 'clientes' ? 'active' : ''}" data-tab="clientes">Clientes</button>
+                <button class="tab ${activeTab === 'empresa' ? 'active' : ''}" data-tab="empresa">Empresa</button>
             </div>
             <div id="settings-tab-content">
                 ${renderTabContent()}
@@ -190,8 +191,57 @@ window.Mazelab.Modules.SettingsModule = (function () {
             case 'servicios': return renderServiciosTab();
             case 'staff': return renderStaffTab();
             case 'clientes': return renderClientesTab();
+            case 'empresa': return renderEmpresaTab();
             default: return '';
         }
+    }
+
+    function renderEmpresaTab() {
+        var info = {};
+        try { info = JSON.parse(localStorage.getItem('mazelab_company_info') || '{}'); } catch (e) {}
+        return `
+        <div class="card" style="max-width:640px">
+            <div class="card-header"><h3 class="card-title">Datos de la Empresa</h3></div>
+            <div style="padding:var(--space-md)">
+                <p style="color:var(--text-secondary);font-size:13px;margin-bottom:16px">
+                    Esta información se incluye automáticamente en los mensajes de cobro.
+                </p>
+                <div class="form-row">
+                    <div class="form-group">
+                        <label>Nombre de la Empresa</label>
+                        <input type="text" id="emp-nombre" class="form-control" value="${escapeHtml(info.nombre || '')}" placeholder="Ej: Mazelab Productions">
+                    </div>
+                    <div class="form-group">
+                        <label>RUT Empresa</label>
+                        <input type="text" id="emp-rut" class="form-control" value="${escapeHtml(info.rut || '')}" placeholder="Ej: 12.345.678-9">
+                    </div>
+                </div>
+                <div class="form-row">
+                    <div class="form-group">
+                        <label>Banco</label>
+                        <input type="text" id="emp-banco" class="form-control" value="${escapeHtml(info.banco || '')}" placeholder="Ej: Banco Estado">
+                    </div>
+                    <div class="form-group">
+                        <label>Tipo de Cuenta</label>
+                        <input type="text" id="emp-tipocuenta" class="form-control" value="${escapeHtml(info.tipoCuenta || '')}" placeholder="Ej: Cuenta Corriente">
+                    </div>
+                </div>
+                <div class="form-row">
+                    <div class="form-group">
+                        <label>Número de Cuenta</label>
+                        <input type="text" id="emp-cuenta" class="form-control" value="${escapeHtml(info.numeroCuenta || '')}" placeholder="Ej: 123456789">
+                    </div>
+                    <div class="form-group">
+                        <label>Email de Contacto</label>
+                        <input type="text" id="emp-email" class="form-control" value="${escapeHtml(info.email || '')}" placeholder="Ej: admin@empresa.cl">
+                    </div>
+                </div>
+                <div class="form-actions">
+                    <button type="button" class="btn btn-primary" id="emp-save-btn">Guardar Datos</button>
+                    <span id="emp-save-msg" style="display:none;color:var(--success);font-size:13px;margin-left:12px">&#10003; Guardado</span>
+                </div>
+            </div>
+        </div>`;
     }
 
     // --- Servicios Tab ---
@@ -738,6 +788,7 @@ window.Mazelab.Modules.SettingsModule = (function () {
             if (editingId) {
                 await DS.update(dsKey, editingId, data);
             } else {
+                data.id = window.Mazelab.Storage.generateId();
                 await DS.create(dsKey, data);
             }
             const freshData = await DS.getAll(dsKey) || [];
@@ -801,6 +852,24 @@ window.Mazelab.Modules.SettingsModule = (function () {
             newBtn.addEventListener('click', function () {
                 const type = this.getAttribute('data-type');
                 openModal(type, null);
+            });
+        }
+
+        // Empresa tab save
+        var empSaveBtn = document.getElementById('emp-save-btn');
+        if (empSaveBtn) {
+            empSaveBtn.addEventListener('click', function () {
+                var info = {
+                    nombre:       (document.getElementById('emp-nombre').value || '').trim(),
+                    rut:          (document.getElementById('emp-rut').value || '').trim(),
+                    banco:        (document.getElementById('emp-banco').value || '').trim(),
+                    tipoCuenta:   (document.getElementById('emp-tipocuenta').value || '').trim(),
+                    numeroCuenta: (document.getElementById('emp-cuenta').value || '').trim(),
+                    email:        (document.getElementById('emp-email').value || '').trim()
+                };
+                localStorage.setItem('mazelab_company_info', JSON.stringify(info));
+                var msg = document.getElementById('emp-save-msg');
+                if (msg) { msg.style.display = 'inline'; setTimeout(function () { msg.style.display = 'none'; }, 2000); }
             });
         }
 

@@ -28,18 +28,16 @@ window.Mazelab = window.Mazelab || {};
     }
 
     async function insert(table, record) {
-        try {
-            const res = await fetch(BASE + '/' + table, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify(record)
-            });
-            if (!res.ok) { console.error('DB insert ' + table + ':', res.status); return null; }
-            return await res.json();
-        } catch (e) {
-            console.error('DB insert ' + table + ':', e);
-            return null;
+        const res = await fetch(BASE + '/' + table, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(record)
+        });
+        if (!res.ok) {
+            const errText = await res.text().catch(function () { return String(res.status); });
+            throw new Error('Error al guardar en ' + table + ' (HTTP ' + res.status + '): ' + errText);
         }
+        return await res.json();
     }
 
     async function update(table, id, updates) {
