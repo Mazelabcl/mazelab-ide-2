@@ -463,6 +463,7 @@ window.Mazelab.Modules.KanbanModule = (function () {
         var facPct = cxcS.pct !== null ? Math.round(cxcS.pct * 100) + '%' : '-';
         var pagPct = cxpS.pct !== null ? Math.round(cxpS.pct * 100) + '%' : '-';
         var progColor = prog.pct >= 0.7 ? 'var(--success)' : (prog.pct > 0.3 ? 'var(--warning)' : 'var(--danger)');
+        var traspasoOk = isTraspasoComplete(sale);
 
         // Services as small tags
         var svcTags = '';
@@ -491,6 +492,7 @@ window.Mazelab.Modules.KanbanModule = (function () {
             '</div>' +
             '<div class="kanban-card-footer">' +
                 '<div class="kanban-card-badges">' +
+                    (board === 'pre' && !traspasoOk ? '<span class="badge badge-danger" title="Traspaso incompleto">Sin traspaso</span>' : '') +
                     '<span class="badge badge-info" title="Facturado">' + facPct + ' fac</span>' +
                     '<span class="badge badge-neutral" title="Pagado CXP">' + pagPct + ' pag</span>' +
                 '</div>' +
@@ -758,6 +760,115 @@ window.Mazelab.Modules.KanbanModule = (function () {
             groupsHTML;
     }
 
+    // ---- render: detail - traspaso ----
+
+    function isTraspasoComplete(sale) {
+        var t = sale.traspaso || {};
+        return !!(t.contactoNombre && t.lugar && t.horarioServicio);
+    }
+
+    function renderDetailTraspaso(sale) {
+        var t = sale.traspaso || {};
+        var complete = isTraspasoComplete(sale);
+
+        // Status banner
+        var banner = complete
+            ? '<div style="background:rgba(34,197,94,0.12);border:1px solid rgba(34,197,94,0.3);border-radius:8px;padding:10px 14px;margin-bottom:var(--space-lg);font-size:13px;color:var(--success)">Traspaso completo \u2014 David tiene todo lo necesario para coordinar.</div>'
+            : '<div style="background:rgba(251,191,36,0.10);border:1px solid rgba(251,191,36,0.3);border-radius:8px;padding:10px 14px;margin-bottom:var(--space-lg);font-size:13px;color:var(--warning)">Traspaso incompleto. Completa al menos: contacto del cliente, lugar y horario del servicio.</div>';
+
+        var vest = t.vestimenta || 'Negra sin logos (est\u00e1ndar MazeLab)';
+
+        var html = banner +
+            '<div class="form-row">' +
+                '<div class="form-group">' +
+                    '<label>Contacto en terreno — Nombre</label>' +
+                    '<input type="text" class="form-control" id="tr-contactoNombre" value="' + (t.contactoNombre || '') + '" placeholder="Ej: Paola Riquelme">' +
+                '</div>' +
+                '<div class="form-group">' +
+                    '<label>Tel\u00e9fono</label>' +
+                    '<input type="text" class="form-control" id="tr-contactoTel" value="' + (t.contactoTel || '') + '" placeholder="+56 9 ...">' +
+                '</div>' +
+            '</div>' +
+            '<div class="form-group">' +
+                '<label>Email de contacto</label>' +
+                '<input type="text" class="form-control" id="tr-contactoEmail" value="' + (t.contactoEmail || '') + '" placeholder="correo@cliente.cl">' +
+            '</div>' +
+            '<div class="form-row">' +
+                '<div class="form-group">' +
+                    '<label>Lugar del evento (direcci\u00f3n completa)</label>' +
+                    '<input type="text" class="form-control" id="tr-lugar" value="' + (t.lugar || '') + '" placeholder="Av. Siempreviva 742, Santiago">' +
+                '</div>' +
+                '<div class="form-group">' +
+                    '<label>PAX estimado</label>' +
+                    '<input type="number" class="form-control" id="tr-pax" value="' + (t.pax || '') + '" placeholder="Nro. de asistentes" min="0">' +
+                '</div>' +
+            '</div>' +
+            '<div class="form-row">' +
+                '<div class="form-group">' +
+                    '<label>Horario servicio (inicio \u2013 t\u00e9rmino)</label>' +
+                    '<input type="text" class="form-control" id="tr-horarioServicio" value="' + (t.horarioServicio || '') + '" placeholder="20:30 \u2013 22:30">' +
+                '</div>' +
+                '<div class="form-group">' +
+                    '<label>Montaje</label>' +
+                    '<input type="text" class="form-control" id="tr-horarioMontaje" value="' + (t.horarioMontaje || '') + '" placeholder="09:00 \u2013 12:00">' +
+                '</div>' +
+                '<div class="form-group">' +
+                    '<label>Desmontaje</label>' +
+                    '<input type="text" class="form-control" id="tr-horarioDesmontaje" value="' + (t.horarioDesmontaje || '') + '" placeholder="22:30 \u2013 23:30">' +
+                '</div>' +
+            '</div>' +
+            '<div class="form-group">' +
+                '<label>Vestimenta</label>' +
+                '<input type="text" class="form-control" id="tr-vestimenta" value="' + vest + '" placeholder="Negra sin logos (est\u00e1ndar MazeLab)">' +
+            '</div>' +
+            '<div class="form-group">' +
+                '<label>Requerimientos especiales del cliente</label>' +
+                '<textarea class="form-control" id="tr-requerimientos" rows="3" placeholder="Ej: nos entregan una figurita de mimbre para el interior de la caja, el holobox debe estar impecable...">' + (t.requerimientos || '') + '</textarea>' +
+            '</div>' +
+            '<div class="form-group">' +
+                '<label>Nota de traspaso del vendedor</label>' +
+                '<textarea class="form-control" id="tr-notaVendedor" rows="4" placeholder="Explica aqu\u00ed qu\u00e9 cerraste con el cliente, promesas, detalles que no est\u00e1n en el contrato...">' + (t.notaVendedor || '') + '</textarea>' +
+            '</div>' +
+            '<div style="display:flex;gap:var(--space-sm);margin-top:var(--space-md)">' +
+                '<button class="btn-primary" id="tr-save-btn">Guardar traspaso</button>' +
+                (complete ? '<button class="btn-secondary" id="tr-brief-btn">Ver brief de operaciones</button>' : '') +
+            '</div>';
+
+        return html;
+    }
+
+    function renderBrief(sale) {
+        var t = sale.traspaso || {};
+        return '<div style="background:rgba(255,255,255,0.04);border-radius:10px;padding:var(--space-lg);font-size:13px;line-height:1.8">' +
+            '<div style="font-size:16px;font-weight:700;margin-bottom:var(--space-md);color:var(--text-primary)">Brief de Operaciones</div>' +
+            '<table style="width:100%;border-collapse:collapse">' +
+                briefRow('Cliente',        sale.clientName) +
+                briefRow('Evento',         sale.eventName) +
+                briefRow('Fecha',          formatDate(sale.eventDate)) +
+                briefRow('Servicios',      sale.serviceNames) +
+                briefRow('Contacto',       [t.contactoNombre, t.contactoTel, t.contactoEmail].filter(Boolean).join(' \u00b7 ')) +
+                briefRow('Lugar',          t.lugar) +
+                briefRow('PAX',            t.pax) +
+                briefRow('Servicio',       t.horarioServicio) +
+                briefRow('Montaje',        t.horarioMontaje) +
+                briefRow('Desmontaje',     t.horarioDesmontaje) +
+                briefRow('Vestimenta',     t.vestimenta) +
+                briefRow('Encargado ops',  sale.encargado) +
+                (t.requerimientos ? briefRow('Requerimientos', t.requerimientos) : '') +
+                (t.notaVendedor   ? briefRow('Nota vendedor',  t.notaVendedor)   : '') +
+            '</table>' +
+            '<button class="btn-secondary" id="tr-back-form-btn" style="margin-top:var(--space-md)">Editar traspaso</button>' +
+            '</div>';
+    }
+
+    function briefRow(label, value) {
+        if (!value) return '';
+        return '<tr style="border-bottom:1px solid rgba(255,255,255,0.06)">' +
+            '<td style="padding:7px 0;color:var(--text-muted);width:160px;vertical-align:top">' + label + '</td>' +
+            '<td style="padding:7px 0;color:var(--text-primary);white-space:pre-wrap">' + value + '</td>' +
+            '</tr>';
+    }
+
     // ---- render: detail - notas ----
 
     function renderDetailNotas(sale) {
@@ -791,15 +902,24 @@ window.Mazelab.Modules.KanbanModule = (function () {
             '<span class="badge ' + meta.cls + '" style="font-size:13px;padding:6px 14px;align-self:flex-start">' + meta.label + '</span>' +
             '</div>';
 
+        var traspasoComplete = isTraspasoComplete(sale);
+        var traspasoLabel = 'Traspaso' + (!traspasoComplete ? ' \u26a0\ufe0f' : ' \u2713');
+
         var tabs = '<div class="tabs">' +
-            ['info', 'finanzas', 'checklist', 'notas'].map(function (t) {
-                var labels = { info: 'Info General', finanzas: 'Finanzas', checklist: 'Checklist', notas: 'Notas' };
-                return '<button class="tab' + (activeTab === t ? ' active' : '') + '" data-tab="' + t + '">' + labels[t] + '</button>';
+            [
+                { id: 'traspaso', label: traspasoLabel },
+                { id: 'info',     label: 'Info General' },
+                { id: 'finanzas', label: 'Finanzas'     },
+                { id: 'checklist',label: 'Checklist'    },
+                { id: 'notas',    label: 'Notas'        }
+            ].map(function (t) {
+                return '<button class="tab' + (activeTab === t.id ? ' active' : '') + '" data-tab="' + t.id + '">' + t.label + '</button>';
             }).join('') +
             '</div>';
 
         var tabContent = '';
-        if (activeTab === 'info')       tabContent = renderDetailInfo(sale);
+        if (activeTab === 'traspaso')   tabContent = renderDetailTraspaso(sale);
+        else if (activeTab === 'info')       tabContent = renderDetailInfo(sale);
         else if (activeTab === 'finanzas') tabContent = renderDetailFinanzas(sale);
         else if (activeTab === 'checklist') tabContent = renderDetailChecklist(sale);
         else if (activeTab === 'notas')    tabContent = renderDetailNotas(sale);
@@ -875,7 +995,9 @@ window.Mazelab.Modules.KanbanModule = (function () {
             card.addEventListener('click', function (e) {
                 if (e.target.closest('.kanban-card-arrows')) return;
                 currentSaleId = this.dataset.saleId;
-                activeTab = 'info';
+                // Open traspaso tab if traspaso is not complete, else info
+                var s = sales.find(function (x) { return String(x.id) === String(currentSaleId); });
+                activeTab = (s && !isTraspasoComplete(s)) ? 'traspaso' : 'info';
                 refreshContent();
             });
         });
@@ -999,6 +1121,29 @@ window.Mazelab.Modules.KanbanModule = (function () {
             });
         });
 
+        // Traspaso save
+        var trSaveBtn = document.getElementById('tr-save-btn');
+        if (trSaveBtn) trSaveBtn.addEventListener('click', function () {
+            var fields = ['contactoNombre','contactoTel','contactoEmail','lugar','pax',
+                          'horarioServicio','horarioMontaje','horarioDesmontaje','vestimenta',
+                          'requerimientos','notaVendedor'];
+            var data = {};
+            fields.forEach(function (f) {
+                var el = document.getElementById('tr-' + f);
+                if (el) data[f] = el.value.trim();
+            });
+            saveTraspaso(sale, data);
+        });
+
+        // Traspaso → brief view
+        var trBriefBtn = document.getElementById('tr-brief-btn');
+        if (trBriefBtn) trBriefBtn.addEventListener('click', function () {
+            var content = document.querySelector('.kanban-tab-content');
+            if (content) content.innerHTML = renderBrief(sale);
+            var backForm = document.getElementById('tr-back-form-btn');
+            if (backForm) backForm.addEventListener('click', function () { refreshContent(); });
+        });
+
         var encInput = document.getElementById('kb-encargado');
         if (encInput) encInput.addEventListener('blur', function () {
             saveEncargado(sale, this.value);
@@ -1037,6 +1182,16 @@ window.Mazelab.Modules.KanbanModule = (function () {
     async function saveNotes(sale, value) {
         sale.kanbanNotes = value;
         await window.Mazelab.DataService.update('sales', sale.id, { kanbanNotes: value });
+    }
+
+    async function saveTraspaso(sale, data) {
+        sale.traspaso = data;
+        try {
+            await window.Mazelab.DataService.update('sales', sale.id, { traspaso: data });
+            refreshContent();
+        } catch (e) {
+            alert('Error al guardar traspaso: ' + e.message);
+        }
     }
 
     async function addCustomChecklistItem(sale, group, label) {
