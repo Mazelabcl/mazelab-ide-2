@@ -1474,6 +1474,11 @@ window.Mazelab.Modules.KanbanModule = (function () {
                 var maxCol = board === 'pre' ? 3 : 6;
                 var newCol = this.dataset.dir === 'left' ? col - 1 : col + 1;
                 if (newCol < minCol || newCol > maxCol) return;
+                // Block move to "En Coordinación" (col 2) without at least traspaso mínimo
+                if (board === 'pre' && newCol === 2 && !isTraspasoMinimo(sale)) {
+                    alert('Para mover a "En Coordinaci\u00f3n" debes completar al menos el contacto del cliente (nombre + tel o email) en el traspaso.');
+                    return;
+                }
                 moveSaleToColumn(saleId, newCol);
             });
         });
@@ -1517,6 +1522,11 @@ window.Mazelab.Modules.KanbanModule = (function () {
                 var minCol = board === 'pre' ? 1 : 4;
                 var maxCol = board === 'pre' ? 3 : 6;
                 if (newCol < minCol || newCol > maxCol) return;
+                // Block drag to "En Coordinación" (col 2) without traspaso mínimo
+                if (board === 'pre' && newCol === 2 && !isTraspasoMinimo(sale)) {
+                    alert('Para mover a "En Coordinaci\u00f3n" debes completar al menos el contacto del cliente (nombre + tel o email) en el traspaso.');
+                    return;
+                }
                 moveSaleToColumn(saleId, newCol);
             });
         });
@@ -1647,6 +1657,24 @@ window.Mazelab.Modules.KanbanModule = (function () {
                 deleteCustomChecklistItem(sale, this.dataset.key);
             });
         });
+
+        // Traspaso: autofill tel/email when selecting a known contact
+        var contactoInput = document.getElementById('tr-contactoNombre');
+        if (contactoInput) {
+            var contactMap = {};
+            sales.forEach(function (s) {
+                var t = s.traspaso || {};
+                if (t.contactoNombre) contactMap[t.contactoNombre] = { tel: t.contactoTel || '', email: t.contactoEmail || '' };
+            });
+            contactoInput.addEventListener('change', function () {
+                var info = contactMap[this.value];
+                if (!info) return;
+                var telEl   = document.getElementById('tr-contactoTel');
+                var emailEl = document.getElementById('tr-contactoEmail');
+                if (telEl   && !telEl.value   && info.tel)   telEl.value   = info.tel;
+                if (emailEl && !emailEl.value && info.email) emailEl.value = info.email;
+            });
+        }
 
         // Traspaso save
         var trSaveBtn = document.getElementById('tr-save-btn');
