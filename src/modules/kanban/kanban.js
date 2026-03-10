@@ -340,6 +340,119 @@ window.Mazelab.Modules.KanbanModule = (function () {
         return Object.keys(vals).sort();
     }
 
+    // ---- alerts ----
+
+    function computeAlerts() {
+        var today = new Date(todayStr());
+        var alerts = [];
+        var preSales = sales.filter(function (s) {
+            var col = Number(s.boardColumn);
+            return col >= 1 && col <= 3 && (s.eventDate || '') >= todayStr();
+        });
+
+        preSales.forEach(function (s) {
+            if (!s.eventDate) return;
+            var days = Math.ceil((new Date(s.eventDate) - today) / (1000 * 60 * 60 * 24));
+            var cl = s.checklist || [];
+            var done = function (key) {
+                var item = cl.find(function (i) { return i.key === key; });
+                return !!(item && item.done);
+            };
+            var sev = function (d) { return d <= 3 ? 'critico' : d <= 7 ? 'urgente' : 'aviso'; };
+
+            if (!isTraspasoComplete(s)) {
+                alerts.push({ sale: s, type: 'traspaso', label: 'Sin traspaso completo', sev: sev(days), days: days });
+            }
+            if (days <= 7 && !done('pre_diseno_ok')) {
+                alerts.push({ sale: s, type: 'diseno', label: 'Diseño sin aprobar', sev: sev(days), days: days });
+            }
+            if (days <= 5 && !done('pre_nomina_env')) {
+                alerts.push({ sale: s, type: 'nomina', label: 'Nómina no lista', sev: days <= 3 ? 'critico' : 'urgente', days: days });
+            }
+            if (days <= 5 && !done('pre_nomina_cap')) {
+                alerts.push({ sale: s, type: 'nomina_cap', label: 'Personal no capacitado', sev: days <= 3 ? 'critico' : 'urgente', days: days });
+            }
+            if (days <= 3 && !done('pre_equipos')) {
+                alerts.push({ sale: s, type: 'equipos', label: 'Equipos no configurados', sev: 'critico', days: days });
+            }
+        });
+
+        // Sort: more critical first, then closest event
+        var order = { critico: 0, urgente: 1, aviso: 2 };
+        alerts.sort(function (a, b) {
+            if (order[a.sev] !== order[b.sev]) return order[a.sev] - order[b.sev];
+            return a.days - b.days;
+        });
+        return alerts;
+    }
+
+    function updateSidebarBadge() {
+        var alerts = computeAlerts();
+        var navItem = document.querySelector('.nav-item[data-route="kanban"]');
+        if (!navItem) return;
+        var existing = navItem.querySelector('.nav-alert-badge');
+        if (existing) existing.remove();
+        if (alerts.length > 0) {
+            var badge = document.createElement('span');
+            badge.className = 'nav-alert-badge';
+            badge.textContent = alerts.length;
+            badge.style.cssText = 'background:#f87171;color:#fff;border-radius:10px;padding:1px 6px;font-size:11px;font-weight:700;margin-left:auto;min-width:18px;text-align:center';
+            navItem.style.position = 'relative';
+            navItem.appendChild(badge);
+        }
+    }
+
+    function openAlertsPanel() {
+        var alerts = computeAlerts();
+        var sevMeta = {
+            critico: { label: 'Crítico', color: '#f87171', bg: 'rgba(248,113,113,0.12)' },
+            urgente: { label: 'Urgente', color: '#fb923c', bg: 'rgba(251,146,60,0.12)' },
+            aviso:   { label: 'Aviso',   color: '#facc15', bg: 'rgba(250,204,21,0.12)' }
+        };
+
+        var rows = alerts.length === 0
+            ? '<div style="text-align:center;padding:32px;color:var(--text-secondary)">No hay alertas activas.</div>'
+            : alerts.map(function (a) {
+                var m = sevMeta[a.sev];
+                var daysLabel = a.days === 0 ? 'Hoy' : a.days === 1 ? 'Mañana' : 'En ' + a.days + ' días';
+                return '<div style="display:flex;align-items:center;gap:12px;padding:10px 14px;border-radius:8px;background:' + m.bg + ';margin-bottom:8px;cursor:pointer" class="kb-alert-row" data-sale-id="' + a.sale.id + '">' +
+                    '<span style="width:72px;text-align:center;font-size:11px;font-weight:700;color:' + m.color + ';background:' + m.bg + ';border:1px solid ' + m.color + '44;border-radius:12px;padding:2px 6px;white-space:nowrap">' + m.label + '</span>' +
+                    '<div style="flex:1;min-width:0">' +
+                        '<div style="font-weight:600;font-size:0.9rem">' + a.label + '</div>' +
+                        '<div style="font-size:0.8rem;color:var(--text-secondary)">' + (a.sale.eventName || '-') + ' · ' + (a.sale.clientName || '') + '</div>' +
+                    '</div>' +
+                    '<span style="font-size:0.8rem;color:' + m.color + ';font-weight:600;white-space:nowrap">' + daysLabel + '</span>' +
+                '</div>';
+            }).join('');
+
+        var html = '<div id="kb-alerts-wrapper" style="position:fixed;inset:0;background:rgba(0,0,0,0.88);z-index:1000;display:flex;align-items:center;justify-content:center">' +
+            '<div style="background:#1e1b2e;border:1px solid rgba(255,255,255,0.12);border-radius:14px;padding:28px;width:min(560px,96vw);max-height:90vh;overflow-y:auto">' +
+                '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:20px">' +
+                    '<h3 style="margin:0">Alertas operativas</h3>' +
+                    '<button id="kb-alerts-close" style="background:none;border:none;color:var(--text-secondary);font-size:1.4rem;cursor:pointer;line-height:1">&times;</button>' +
+                '</div>' +
+                '<div id="kb-alerts-list">' + rows + '</div>' +
+            '</div>' +
+        '</div>';
+
+        var mc = document.getElementById('modal-container');
+        mc.innerHTML = html;
+
+        document.getElementById('kb-alerts-close').addEventListener('click', function () { mc.innerHTML = ''; });
+        document.getElementById('kb-alerts-wrapper').addEventListener('click', function (e) {
+            if (e.target.id === 'kb-alerts-wrapper') mc.innerHTML = '';
+        });
+        mc.querySelectorAll('.kb-alert-row').forEach(function (row) {
+            row.addEventListener('click', function () {
+                mc.innerHTML = '';
+                currentSaleId = this.dataset.saleId;
+                var s = sales.find(function (x) { return String(x.id) === String(currentSaleId); });
+                activeTab = (s && !isTraspasoComplete(s)) ? 'traspaso' : 'checklist';
+                refreshContent();
+            });
+        });
+    }
+
     // ---- card indicator ----
 
     function getCardIndicator(sale) {
@@ -378,12 +491,24 @@ window.Mazelab.Modules.KanbanModule = (function () {
                 '<select class="form-control" id="kb-year-filter" style="display:inline-block;width:auto;height:28px;padding:2px 8px;font-size:13px">' + yearOpts + '</select>';
         }
 
+        var alertCount = computeAlerts().length;
+        var alertBtn = '<button id="kb-alerts-btn" style="margin-left:auto;display:flex;align-items:center;gap:6px;background:' +
+            (alertCount > 0 ? 'rgba(248,113,113,0.15)' : 'var(--bg-secondary)') +
+            ';border:1px solid ' + (alertCount > 0 ? 'rgba(248,113,113,0.5)' : 'rgba(255,255,255,0.1)') +
+            ';color:' + (alertCount > 0 ? '#f87171' : 'var(--text-secondary)') +
+            ';border-radius:8px;padding:5px 12px;font-size:13px;font-weight:600;cursor:pointer">' +
+            (alertCount > 0
+                ? '<span style="background:#f87171;color:#fff;border-radius:10px;padding:0 6px;font-size:11px">' + alertCount + '</span> Alertas'
+                : 'Alertas') +
+            '</button>';
+
         return '<div style="display:flex;align-items:center;gap:var(--space-sm);margin-bottom:var(--space-md);flex-wrap:wrap">' +
             '<div class="toggle-group">' +
                 '<button class="toggle-option' + preActive + '" id="kb-board-pre">Pre-evento</button>' +
                 '<button class="toggle-option' + postActive + '" id="kb-board-post">Post-evento</button>' +
             '</div>' +
             yearToggle +
+            alertBtn +
             '</div>';
     }
 
@@ -973,6 +1098,7 @@ window.Mazelab.Modules.KanbanModule = (function () {
     function refreshContent() {
         var container = document.getElementById('kanban-content');
         if (!container) return;
+        updateSidebarBadge();
         if (currentSaleId) {
             var sale = sales.find(function (s) { return String(s.id) === String(currentSaleId); });
             if (!sale) { currentSaleId = null; refreshContent(); return; }
@@ -1000,6 +1126,10 @@ window.Mazelab.Modules.KanbanModule = (function () {
             filters = { client: '', service: '', seller: '', financial: '' };
             refreshContent();
         });
+
+        // Alerts panel
+        var alertsBtn = document.getElementById('kb-alerts-btn');
+        if (alertsBtn) alertsBtn.addEventListener('click', openAlertsPanel);
 
         // Year filter (post board only)
         var yearSel = document.getElementById('kb-year-filter');
