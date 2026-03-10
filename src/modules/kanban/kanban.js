@@ -7,6 +7,7 @@ window.Mazelab.Modules.KanbanModule = (function () {
     var sales = [], receivables = [], payables = [], clients = [], services = [], staff = [];
     var currentSaleId = null;
     var activeTab = 'info';
+    var traspasoEditMode = false; // false = show brief when complete, true = show form
     var activeBoard = 'pre';   // 'pre' | 'post'
     var postYearMin = '2026';  // default year filter for post board
     var dragSaleId = null;
@@ -768,20 +769,22 @@ window.Mazelab.Modules.KanbanModule = (function () {
     }
 
     function renderDetailTraspaso(sale) {
-        var t = sale.traspaso || {};
         var complete = isTraspasoComplete(sale);
-
-        // Status banner
-        var banner = complete
-            ? '<div style="background:rgba(34,197,94,0.12);border:1px solid rgba(34,197,94,0.3);border-radius:8px;padding:10px 14px;margin-bottom:var(--space-lg);font-size:13px;color:var(--success)">Traspaso completo \u2014 David tiene todo lo necesario para coordinar.</div>'
-            : '<div style="background:rgba(251,191,36,0.10);border:1px solid rgba(251,191,36,0.3);border-radius:8px;padding:10px 14px;margin-bottom:var(--space-lg);font-size:13px;color:var(--warning)">Traspaso incompleto. Completa al menos: contacto del cliente, lugar y horario del servicio.</div>';
-
+        // Show brief when complete and not in edit mode
+        if (complete && !traspasoEditMode) {
+            return renderBrief(sale);
+        }
+        traspasoEditMode = false; // reset after use
+        var t = sale.traspaso || {};
         var vest = t.vestimenta || 'Negra sin logos (est\u00e1ndar MazeLab)';
+        var banner = complete
+            ? ''
+            : '<div style="background:rgba(251,191,36,0.10);border:1px solid rgba(251,191,36,0.3);border-radius:8px;padding:10px 14px;margin-bottom:var(--space-lg);font-size:13px;color:var(--warning)">Completa al menos: contacto del cliente, lugar y horario del servicio.</div>';
 
-        var html = banner +
+        return banner +
             '<div class="form-row">' +
                 '<div class="form-group">' +
-                    '<label>Contacto en terreno — Nombre</label>' +
+                    '<label>Contacto en terreno \u2014 Nombre</label>' +
                     '<input type="text" class="form-control" id="tr-contactoNombre" value="' + (t.contactoNombre || '') + '" placeholder="Ej: Paola Riquelme">' +
                 '</div>' +
                 '<div class="form-group">' +
@@ -823,24 +826,44 @@ window.Mazelab.Modules.KanbanModule = (function () {
             '</div>' +
             '<div class="form-group">' +
                 '<label>Requerimientos especiales del cliente</label>' +
-                '<textarea class="form-control" id="tr-requerimientos" rows="3" placeholder="Ej: nos entregan una figurita de mimbre para el interior de la caja, el holobox debe estar impecable...">' + (t.requerimientos || '') + '</textarea>' +
+                '<textarea class="form-control" id="tr-requerimientos" rows="3" placeholder="Ej: nos entregan una figurita de mimbre, el holobox debe estar impecable...">' + (t.requerimientos || '') + '</textarea>' +
             '</div>' +
             '<div class="form-group">' +
                 '<label>Nota de traspaso del vendedor</label>' +
-                '<textarea class="form-control" id="tr-notaVendedor" rows="4" placeholder="Explica aqu\u00ed qu\u00e9 cerraste con el cliente, promesas, detalles que no est\u00e1n en el contrato...">' + (t.notaVendedor || '') + '</textarea>' +
+                '<textarea class="form-control" id="tr-notaVendedor" rows="4" placeholder="Qu\u00e9 cerraste con el cliente, promesas, detalles que no est\u00e1n en el contrato...">' + (t.notaVendedor || '') + '</textarea>' +
             '</div>' +
             '<div style="display:flex;gap:var(--space-sm);margin-top:var(--space-md)">' +
                 '<button class="btn-primary" id="tr-save-btn">Guardar traspaso</button>' +
-                (complete ? '<button class="btn-secondary" id="tr-brief-btn">Ver brief de operaciones</button>' : '') +
+                (complete ? '<button class="btn-secondary" id="tr-cancel-edit-btn">Cancelar</button>' : '') +
             '</div>';
+    }
 
-        return html;
+    function briefTextForClipboard(sale) {
+        var t = sale.traspaso || {};
+        var lines = [
+            'BRIEF DE OPERACIONES — ' + (sale.eventName || '').toUpperCase(),
+            '─'.repeat(40),
+            'Cliente:      ' + (sale.clientName || '-'),
+            'Fecha:        ' + formatDate(sale.eventDate),
+            'Servicios:    ' + (sale.serviceNames || '-'),
+            'Contacto:     ' + [t.contactoNombre, t.contactoTel, t.contactoEmail].filter(Boolean).join(' · '),
+            'Lugar:        ' + (t.lugar || '-'),
+            t.pax         ? 'PAX:          ' + t.pax : '',
+            'Servicio:     ' + (t.horarioServicio || '-'),
+            t.horarioMontaje    ? 'Montaje:      ' + t.horarioMontaje    : '',
+            t.horarioDesmontaje ? 'Desmontaje:   ' + t.horarioDesmontaje : '',
+            'Vestimenta:   ' + (t.vestimenta || 'Negra sin logos'),
+            'Encargado:    ' + (sale.encargado || '-'),
+            t.requerimientos ? '\nRequerimientos:\n' + t.requerimientos : '',
+            t.notaVendedor   ? '\nNota vendedor:\n' + t.notaVendedor   : ''
+        ].filter(Boolean).join('\n');
+        return lines;
     }
 
     function renderBrief(sale) {
         var t = sale.traspaso || {};
-        return '<div style="background:rgba(255,255,255,0.04);border-radius:10px;padding:var(--space-lg);font-size:13px;line-height:1.8">' +
-            '<div style="font-size:16px;font-weight:700;margin-bottom:var(--space-md);color:var(--text-primary)">Brief de Operaciones</div>' +
+        return '<div style="background:rgba(34,197,94,0.06);border:1px solid rgba(34,197,94,0.2);border-radius:8px;padding:10px 14px;margin-bottom:var(--space-md);font-size:13px;color:var(--success)">Traspaso completo \u2014 brief listo para compartir.</div>' +
+            '<div style="background:rgba(255,255,255,0.04);border-radius:10px;padding:var(--space-lg);font-size:13px;line-height:1.8">' +
             '<table style="width:100%;border-collapse:collapse">' +
                 briefRow('Cliente',        sale.clientName) +
                 briefRow('Evento',         sale.eventName) +
@@ -848,16 +871,19 @@ window.Mazelab.Modules.KanbanModule = (function () {
                 briefRow('Servicios',      sale.serviceNames) +
                 briefRow('Contacto',       [t.contactoNombre, t.contactoTel, t.contactoEmail].filter(Boolean).join(' \u00b7 ')) +
                 briefRow('Lugar',          t.lugar) +
-                briefRow('PAX',            t.pax) +
+                (t.pax ? briefRow('PAX', t.pax) : '') +
                 briefRow('Servicio',       t.horarioServicio) +
-                briefRow('Montaje',        t.horarioMontaje) +
-                briefRow('Desmontaje',     t.horarioDesmontaje) +
-                briefRow('Vestimenta',     t.vestimenta) +
-                briefRow('Encargado ops',  sale.encargado) +
+                (t.horarioMontaje    ? briefRow('Montaje',    t.horarioMontaje)    : '') +
+                (t.horarioDesmontaje ? briefRow('Desmontaje', t.horarioDesmontaje) : '') +
+                briefRow('Vestimenta',     t.vestimenta || 'Negra sin logos') +
+                (sale.encargado ? briefRow('Encargado',  sale.encargado) : '') +
                 (t.requerimientos ? briefRow('Requerimientos', t.requerimientos) : '') +
                 (t.notaVendedor   ? briefRow('Nota vendedor',  t.notaVendedor)   : '') +
             '</table>' +
-            '<button class="btn-secondary" id="tr-back-form-btn" style="margin-top:var(--space-md)">Editar traspaso</button>' +
+            '</div>' +
+            '<div style="display:flex;gap:var(--space-sm);margin-top:var(--space-md)">' +
+                '<button class="btn-primary" id="tr-copy-brief-btn">Copiar brief</button>' +
+                '<button class="btn-secondary" id="tr-edit-traspaso-btn">Editar</button>' +
             '</div>';
     }
 
@@ -1143,16 +1169,40 @@ window.Mazelab.Modules.KanbanModule = (function () {
                 var el = document.getElementById('tr-' + f);
                 if (el) data[f] = el.value.trim();
             });
+            traspasoEditMode = false;
             saveTraspaso(sale, data);
         });
 
-        // Traspaso → brief view
-        var trBriefBtn = document.getElementById('tr-brief-btn');
-        if (trBriefBtn) trBriefBtn.addEventListener('click', function () {
-            var content = document.querySelector('.kanban-tab-content');
-            if (content) content.innerHTML = renderBrief(sale);
-            var backForm = document.getElementById('tr-back-form-btn');
-            if (backForm) backForm.addEventListener('click', function () { refreshContent(); });
+        // Traspaso: cancel edit → back to brief
+        var trCancelEdit = document.getElementById('tr-cancel-edit-btn');
+        if (trCancelEdit) trCancelEdit.addEventListener('click', function () {
+            traspasoEditMode = false;
+            refreshContent();
+        });
+
+        // Traspaso: copy brief to clipboard
+        var trCopyBtn = document.getElementById('tr-copy-brief-btn');
+        if (trCopyBtn) trCopyBtn.addEventListener('click', function () {
+            var text = briefTextForClipboard(sale);
+            navigator.clipboard.writeText(text).then(function () {
+                trCopyBtn.textContent = 'Copiado!';
+                setTimeout(function () { if (trCopyBtn) trCopyBtn.textContent = 'Copiar brief'; }, 2000);
+            }).catch(function () {
+                // Fallback for older browsers
+                var ta = document.createElement('textarea');
+                ta.value = text; ta.style.position = 'fixed'; ta.style.opacity = '0';
+                document.body.appendChild(ta); ta.select(); document.execCommand('copy');
+                document.body.removeChild(ta);
+                trCopyBtn.textContent = 'Copiado!';
+                setTimeout(function () { if (trCopyBtn) trCopyBtn.textContent = 'Copiar brief'; }, 2000);
+            });
+        });
+
+        // Traspaso: edit button (from brief view)
+        var trEditBtn = document.getElementById('tr-edit-traspaso-btn');
+        if (trEditBtn) trEditBtn.addEventListener('click', function () {
+            traspasoEditMode = true;
+            refreshContent();
         });
 
         var encInput = document.getElementById('kb-encargado');
@@ -1223,6 +1273,21 @@ window.Mazelab.Modules.KanbanModule = (function () {
 
     // ---- saludo modal ----
 
+    var DEFAULT_SALUDO_TEMPLATES = [
+        {
+            label: 'Saludo inicial',
+            text: 'Hola {contacto}, te escribo de parte de MazeLab. Quedé a cargo de la coordinación de {servicio} para el evento de {cliente} el {fecha} en {lugar}.\n\nMe pongo en contacto para coordinar los detalles y asegurarme de que todo esté perfecto para el día del evento.\n\n¿Cuándo tienes disponibilidad para conversar?\n\nSaludos,\n{encargado}\nMazeLab'
+        },
+        {
+            label: 'Con solicitud de diseño',
+            text: 'Hola {contacto}, te escribo de parte de MazeLab por el evento de {cliente} el {fecha}.\n\nPara preparar {servicio} necesitamos que nos envíes los archivos de diseño/branding con al menos 5 días de anticipación al evento.\n\n¿Puedes confirmarme el formato y si ya lo tienes en proceso?\n\nSaludos,\n{encargado}\nMazeLab'
+        },
+        {
+            label: 'Confirmación de llegada',
+            text: 'Hola {contacto}, te confirmamos que el equipo de MazeLab llegará al evento de {cliente} el {fecha} en {lugar} a la hora de montaje acordada.\n\nTe pedimos que nos tengan un punto de corriente asignado cerca del área de instalación.\n\nCualquier consulta estamos disponibles.\n\nSaludos,\n{encargado}\nMazeLab'
+        }
+    ];
+
     function fillTemplate(tpl, sale) {
         var t = sale.traspaso || {};
         return (tpl || '')
@@ -1236,58 +1301,69 @@ window.Mazelab.Modules.KanbanModule = (function () {
     }
 
     function openSaludoModal(sale) {
-        var container = document.getElementById('kanban-content');
-        if (!container) return;
-
         var svcForSale = (sale.serviceIds || []).map(function (sid) {
             return services.find(function (sv) { return String(sv.id) === String(sid); });
         }).filter(Boolean);
 
-        // Build tabs per service that has a template
-        var withTemplate = svcForSale.filter(function (sv) { return sv.template_saludo; });
-        if (!withTemplate.length) { alert('Ninguno de los servicios del evento tiene template de saludo configurado.\nAgrégalo en Configuración → Servicios.'); return; }
+        var customTemplates = svcForSale.filter(function (sv) { return sv.template_saludo; }).map(function (sv) {
+            return { label: sv.name, text: sv.template_saludo };
+        });
 
-        var selectedIdx = 0;
-        function buildModal(idx) {
-            var sv = withTemplate[idx];
-            var msg = fillTemplate(sv.template_saludo, sale);
-            var tabs = withTemplate.map(function (s, i) {
-                return '<button class="toggle-option' + (i === idx ? ' active' : '') + '" data-svc-idx="' + i + '">' + s.name + '</button>';
+        // Merge: custom service templates first, then defaults
+        var allTemplates = customTemplates.concat(DEFAULT_SALUDO_TEMPLATES);
+
+        function buildContent(idx) {
+            var msg = fillTemplate(allTemplates[idx].text, sale);
+            var presetBtns = allTemplates.map(function (tpl, i) {
+                return '<button class="kb-saludo-preset' + (i === idx ? ' active' : '') + '" data-tpl-idx="' + i + '" style="font-size:11px;padding:4px 10px;border-radius:20px;border:1px solid rgba(255,255,255,' + (i === idx ? '0.4' : '0.15') + ');background:' + (i === idx ? 'rgba(255,255,255,0.12)' : 'transparent') + ';color:var(--text-secondary);cursor:pointer;white-space:nowrap">' + tpl.label + '</button>';
             }).join('');
-            return '<div style="position:fixed;inset:0;background:rgba(0,0,0,0.7);z-index:1000;display:flex;align-items:center;justify-content:center" id="kb-saludo-overlay">' +
-                '<div style="background:var(--bg-secondary);border-radius:12px;padding:var(--space-xl);width:min(600px,95vw);max-height:85vh;overflow-y:auto;display:flex;flex-direction:column;gap:var(--space-md)">' +
-                    '<div style="display:flex;justify-content:space-between;align-items:center">' +
-                        '<strong style="font-size:15px">Saludo para ' + (sale.clientName || 'el cliente') + '</strong>' +
-                        '<button id="kb-saludo-close" style="background:none;border:none;font-size:20px;color:var(--text-muted);cursor:pointer">&times;</button>' +
-                    '</div>' +
-                    (withTemplate.length > 1 ? '<div class="toggle-group">' + tabs + '</div>' : '') +
-                    '<div style="font-size:11px;color:var(--text-muted)">Variables usadas del traspaso: contacto, cliente, evento, fecha, lugar, encargado</div>' +
-                    '<textarea id="kb-saludo-text" class="form-control" rows="12" style="font-size:13px;line-height:1.6;resize:vertical">' + msg + '</textarea>' +
-                    '<div style="display:flex;gap:var(--space-sm)">' +
-                        '<button class="btn-primary" id="kb-saludo-copy">Copiar mensaje</button>' +
-                        '<button class="btn-secondary" id="kb-saludo-close2">Cerrar</button>' +
-                    '</div>' +
-                '</div>' +
+            return '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:var(--space-md)">' +
+                '<strong style="font-size:15px">Saludo \u2014 ' + (sale.clientName || 'cliente') + '</strong>' +
+                '<button id="kb-saludo-close" style="background:none;border:none;font-size:22px;color:var(--text-muted);cursor:pointer;line-height:1">&times;</button>' +
+            '</div>' +
+            '<div style="font-size:11px;color:var(--text-muted);margin-bottom:8px">Elige una base y edita libremente antes de copiar:</div>' +
+            '<div style="display:flex;flex-wrap:wrap;gap:6px;margin-bottom:var(--space-md)" id="kb-saludo-presets">' + presetBtns + '</div>' +
+            '<textarea id="kb-saludo-text" class="form-control" rows="13" style="font-size:13px;line-height:1.7;resize:vertical">' + msg + '</textarea>' +
+            '<div style="display:flex;gap:var(--space-sm);margin-top:var(--space-md)">' +
+                '<button class="btn-primary" id="kb-saludo-copy">Copiar mensaje</button>' +
+                '<button class="btn-secondary" id="kb-saludo-close2">Cerrar</button>' +
             '</div>';
         }
 
-        var overlay = document.createElement('div');
-        overlay.id = 'kb-saludo-wrapper';
-        overlay.innerHTML = buildModal(0);
-        document.body.appendChild(overlay);
+        // Build overlay
+        var wrapper = document.createElement('div');
+        wrapper.id = 'kb-saludo-wrapper';
+        wrapper.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.88);z-index:1000;display:flex;align-items:center;justify-content:center';
+        var panel = document.createElement('div');
+        panel.style.cssText = 'background:#1e1b2e;border:1px solid rgba(255,255,255,0.12);border-radius:14px;padding:28px;width:min(620px,96vw);max-height:90vh;overflow-y:auto;display:flex;flex-direction:column';
+        panel.innerHTML = buildContent(0);
+        wrapper.appendChild(panel);
+        document.body.appendChild(wrapper);
 
         function close() { var el = document.getElementById('kb-saludo-wrapper'); if (el) el.remove(); }
+        function getCurrentMsg() { var ta = document.getElementById('kb-saludo-text'); return ta ? ta.value : ''; }
 
-        overlay.addEventListener('click', function (e) {
-            if (e.target.id === 'kb-saludo-overlay') close();
-            if (e.target.id === 'kb-saludo-close' || e.target.id === 'kb-saludo-close2') close();
-            if (e.target.id === 'kb-saludo-copy') {
-                var ta = document.getElementById('kb-saludo-text');
-                if (ta) { ta.select(); document.execCommand('copy'); e.target.textContent = 'Copiado!'; setTimeout(function () { if (e.target) e.target.textContent = 'Copiar mensaje'; }, 2000); }
+        // Close on backdrop click
+        wrapper.addEventListener('click', function (e) { if (e.target === wrapper) close(); });
+
+        // Use event delegation on panel only — no propagation surprises
+        panel.addEventListener('click', function (e) {
+            var t = e.target;
+            if (t.id === 'kb-saludo-close' || t.id === 'kb-saludo-close2') { close(); return; }
+            if (t.id === 'kb-saludo-copy') {
+                var text = getCurrentMsg();
+                navigator.clipboard.writeText(text).catch(function () {
+                    var ta2 = document.createElement('textarea');
+                    ta2.value = text; ta2.style.cssText = 'position:fixed;opacity:0';
+                    document.body.appendChild(ta2); ta2.select(); document.execCommand('copy'); document.body.removeChild(ta2);
+                });
+                t.textContent = '\u2713 Copiado!';
+                setTimeout(function () { if (t) t.textContent = 'Copiar mensaje'; }, 2000);
+                return;
             }
-            var idx = e.target.dataset.svcIdx;
-            if (idx !== undefined) {
-                overlay.innerHTML = buildModal(Number(idx));
+            var tplIdx = t.dataset.tplIdx;
+            if (tplIdx !== undefined) {
+                panel.innerHTML = buildContent(Number(tplIdx));
             }
         });
     }
