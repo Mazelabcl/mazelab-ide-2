@@ -50,6 +50,11 @@ window.Mazelab.Modules.KanbanModule = (function () {
 
     // ---- helpers ----
 
+    function escapeHtml(s) {
+        if (!s) return '';
+        return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+    }
+
     function formatCLP(n) {
         if (n == null || isNaN(n)) return '$0';
         var abs = Math.abs(Math.round(n));
@@ -1020,6 +1025,55 @@ window.Mazelab.Modules.KanbanModule = (function () {
             '</tr>';
     }
 
+    // ---- render: detail - comunicacion ----
+
+    function renderDetailComunicacion(sale) {
+        var svcWithTemplates = (sale.serviceIds || []).map(function (sid) {
+            return services.find(function (sv) { return String(sv.id) === String(sid); });
+        }).filter(function (sv) { return sv; });
+
+        // Build initial text: first service with custom template, or first default preset
+        var customSvcs = svcWithTemplates.filter(function (sv) { return sv.template_saludo; });
+        var initialText = '';
+        if (customSvcs.length > 0) {
+            initialText = fillTemplate(customSvcs[0].template_saludo, sale);
+        } else {
+            initialText = fillTemplate(DEFAULT_SALUDO_TEMPLATES[0].text, sale);
+        }
+
+        var svcBtns = '';
+        if (customSvcs.length > 1) {
+            svcBtns = '<div style="margin-bottom:12px;display:flex;gap:8px;flex-wrap:wrap;align-items:center">' +
+                '<span style="color:var(--text-secondary);font-size:13px">Plantilla de:</span>' +
+                customSvcs.map(function (sv, i) {
+                    return '<button class="toggle-option kb-com-svc-btn' + (i === 0 ? ' active' : '') + '" data-svc-template="' + escapeHtml(sv.template_saludo || '') + '" style="font-size:12px">' + escapeHtml(sv.name) + '</button>';
+                }).join('') +
+                '</div>';
+        }
+
+        var presetBtns = '<div style="margin-bottom:10px;display:flex;gap:8px;flex-wrap:wrap;align-items:center">' +
+            '<span style="color:var(--text-secondary);font-size:13px">Predefinidos:</span>' +
+            DEFAULT_SALUDO_TEMPLATES.map(function (t, i) {
+                return '<button class="kb-com-preset-btn" data-preset-idx="' + i + '" style="background:rgba(255,255,255,0.07);border:1px solid rgba(255,255,255,0.15);color:var(--text-primary);border-radius:6px;padding:4px 12px;font-size:12px;cursor:pointer">' + t.label + '</button>';
+            }).join('') +
+            '</div>';
+
+        var noTemplateHint = customSvcs.length === 0
+            ? '<div style="font-size:12px;color:var(--text-muted);margin-bottom:8px">Tip: configura plantillas personalizadas por servicio en <strong>Configurar → Servicios</strong>.</div>'
+            : '';
+
+        return '<div>' +
+            svcBtns +
+            presetBtns +
+            noTemplateHint +
+            '<textarea id="kb-com-textarea" class="form-control" rows="9" style="width:100%;resize:vertical;font-size:14px;line-height:1.6">' + escapeHtml(initialText) + '</textarea>' +
+            '<div style="margin-top:10px;display:flex;gap:8px">' +
+                '<button id="kb-com-copy-btn" class="btn btn-primary">Copiar mensaje</button>' +
+                '<span id="kb-com-copy-ok" style="color:#4ade80;font-size:13px;display:none;align-self:center">Copiado!</span>' +
+            '</div>' +
+        '</div>';
+    }
+
     // ---- render: detail - notas ----
 
     function renderDetailNotas(sale) {
@@ -1036,15 +1090,9 @@ window.Mazelab.Modules.KanbanModule = (function () {
         var finSt = getFinancialStatus(sale);
         var meta = STATUS_META[finSt];
 
-        var svcForSale = (sale.serviceIds || []).map(function (sid) {
-            return services.find(function (sv) { return String(sv.id) === String(sid); });
-        }).filter(Boolean);
-        var hasSaludo = svcForSale.some(function (sv) { return sv.template_saludo; });
-
         var header = '<div class="kanban-detail-header">' +
             '<div style="display:flex;gap:var(--space-sm);flex-wrap:wrap">' +
                 '<button class="btn-secondary" id="kb-back-btn">\u2190 Volver al Board</button>' +
-                (hasSaludo ? '<button class="btn-primary" id="kb-generar-saludo-btn" style="font-size:12px">Generar saludo</button>' : '') +
                 '<button class="btn-secondary" id="kb-remove-board-btn" style="font-size:12px;color:var(--text-muted);border-color:rgba(255,255,255,0.1)">Quitar del board</button>' +
             '</div>' +
             '<div class="kanban-detail-info">' +
@@ -1064,22 +1112,24 @@ window.Mazelab.Modules.KanbanModule = (function () {
 
         var tabs = '<div class="tabs">' +
             [
-                { id: 'traspaso', label: traspasoLabel },
-                { id: 'info',     label: 'Info General' },
-                { id: 'finanzas', label: 'Finanzas'     },
-                { id: 'checklist',label: 'Checklist'    },
-                { id: 'notas',    label: 'Notas'        }
+                { id: 'traspaso',      label: traspasoLabel     },
+                { id: 'info',          label: 'Info General'    },
+                { id: 'finanzas',      label: 'Finanzas'        },
+                { id: 'checklist',     label: 'Checklist'       },
+                { id: 'comunicacion',  label: 'Comunicación'    },
+                { id: 'notas',         label: 'Notas'           }
             ].map(function (t) {
                 return '<button class="tab' + (activeTab === t.id ? ' active' : '') + '" data-tab="' + t.id + '">' + t.label + '</button>';
             }).join('') +
             '</div>';
 
         var tabContent = '';
-        if (activeTab === 'traspaso')   tabContent = renderDetailTraspaso(sale);
-        else if (activeTab === 'info')       tabContent = renderDetailInfo(sale);
-        else if (activeTab === 'finanzas') tabContent = renderDetailFinanzas(sale);
-        else if (activeTab === 'checklist') tabContent = renderDetailChecklist(sale);
-        else if (activeTab === 'notas')    tabContent = renderDetailNotas(sale);
+        if (activeTab === 'traspaso')         tabContent = renderDetailTraspaso(sale);
+        else if (activeTab === 'info')        tabContent = renderDetailInfo(sale);
+        else if (activeTab === 'finanzas')    tabContent = renderDetailFinanzas(sale);
+        else if (activeTab === 'checklist')   tabContent = renderDetailChecklist(sale);
+        else if (activeTab === 'comunicacion') tabContent = renderDetailComunicacion(sale);
+        else if (activeTab === 'notas')       tabContent = renderDetailNotas(sale);
 
         return '<div class="kanban-detail">' + header + tabs +
             '<div class="kanban-tab-content">' + tabContent + '</div>' +
@@ -1234,9 +1284,37 @@ window.Mazelab.Modules.KanbanModule = (function () {
             refreshContent();
         });
 
-        var saludoBtn = document.getElementById('kb-generar-saludo-btn');
-        if (saludoBtn) saludoBtn.addEventListener('click', function () {
-            openSaludoModal(sale);
+        // Comunicación tab listeners (inline saludo generator)
+        document.querySelectorAll('.kb-com-svc-btn').forEach(function (btn) {
+            btn.addEventListener('click', function () {
+                document.querySelectorAll('.kb-com-svc-btn').forEach(function (b) { b.classList.remove('active'); });
+                this.classList.add('active');
+                var ta = document.getElementById('kb-com-textarea');
+                if (ta) ta.value = fillTemplate(this.dataset.svcTemplate || '', sale);
+            });
+        });
+
+        document.querySelectorAll('.kb-com-preset-btn').forEach(function (btn) {
+            btn.addEventListener('click', function () {
+                var idx = Number(this.dataset.presetIdx);
+                var ta = document.getElementById('kb-com-textarea');
+                if (ta) ta.value = fillTemplate(DEFAULT_SALUDO_TEMPLATES[idx].text, sale);
+            });
+        });
+
+        var comCopyBtn = document.getElementById('kb-com-copy-btn');
+        if (comCopyBtn) comCopyBtn.addEventListener('click', function () {
+            var ta = document.getElementById('kb-com-textarea');
+            if (!ta) return;
+            var text = ta.value;
+            var ok = document.getElementById('kb-com-copy-ok');
+            navigator.clipboard.writeText(text).catch(function () {
+                ta.select();
+                document.execCommand('copy');
+            }).finally(function () {
+                if (ok) { ok.style.display = 'inline'; setTimeout(function () { ok.style.display = 'none'; }, 2000); }
+            });
+            if (ok) { ok.style.display = 'inline'; setTimeout(function () { ok.style.display = 'none'; }, 2000); }
         });
 
         var removeBtn = document.getElementById('kb-remove-board-btn');
