@@ -6,7 +6,7 @@ window.Mazelab.Modules.KanbanModule = (function () {
     // ---- state ----
     var sales = [], receivables = [], payables = [], clients = [], services = [], staff = [];
     var currentSaleId = null;
-    var activeTab = 'info';
+    var activeTab = 'resumen';
     var traspasoEditMode = false; // false = show brief when complete, true = show form
     var activeBoard = 'pre';   // 'pre' | 'post'
     var postYearMin = '2026';  // default year filter for post board
@@ -46,6 +46,32 @@ window.Mazelab.Modules.KanbanModule = (function () {
         { key: 'post_contenido', label: 'Env\u00edo contenido al cliente',      group: 'Cierre', skipForActivacion: true  },
         { key: 'post_feedback',  label: 'Contacto cliente para feedback',       group: 'Cierre', skipForActivacion: false },
         { key: 'post_repo',      label: 'Material guardado en repositorio',     group: 'Cierre', skipForActivacion: false }
+    ];
+
+    // ---- hitos definitions ----
+
+    var PRE_HITOS = [
+        { key: 'traspaso',         label: 'Traspaso de venta' },
+        { key: 'pre_coordinacion', label: 'Contacto con cliente' },
+        { key: 'pre_diseno_ok',    label: 'Dise\u00f1o aprobado' },
+        { key: 'pre_logistica',    label: 'Log\u00edstica confirmada' },
+        { key: 'pre_nomina_env',   label: 'N\u00f3mina lista' },
+        { key: 'pre_nomina_cap',   label: 'Personal capacitado' },
+        { key: 'pre_freelances',   label: 'N\u00f3mina enviada al cliente' },
+        { key: 'pre_equipos',      label: 'Equipos configurados' },
+        { key: 'pre_material',     label: 'Materiales/insumos', optional: true },
+        { key: 'pre_desarrollo',   label: 'Desarrollo/software', optional: true },
+        { key: 'pre_visita',       label: 'Visita t\u00e9cnica al venue', optional: true }
+    ];
+
+    var POST_HITOS = [
+        { key: 'hito_ejecutado', label: 'Evento ejecutado' },
+        { key: 'post_contenido', label: 'Contenido enviado al cliente', skipForActivacion: true },
+        { key: 'post_feedback',  label: 'Feedback recibido del cliente' },
+        { key: 'post_repo',      label: 'Material en repositorio' },
+        { key: 'hito_factura',   label: 'Factura emitida' },
+        { key: 'hito_cobro',     label: 'Cobro completo' },
+        { key: 'hito_cxp',       label: 'CXP pagados' }
     ];
 
     // ---- helpers ----
@@ -194,6 +220,81 @@ window.Mazelab.Modules.KanbanModule = (function () {
         var total = defs.length;
         var done = relevant.filter(function (c) { return c.checked; }).length;
         return { done: done, total: total, pct: total > 0 ? done / total : 0 };
+    }
+
+    // ---- hitos progress ----
+
+    function getHitoStatus(sale) {
+        var board = getBoardForSale(sale);
+        var cl = sale.checklist || [];
+        var defs = board === 'pre' ? PRE_HITOS : POST_HITOS;
+
+        var hitos = defs.map(function (h) {
+            var clItem = cl.find(function (i) { return i.key === h.key; });
+            var done = false;
+            var na = clItem ? !!clItem.na : false;
+
+            if (h.key === 'traspaso') {
+                done = isTraspasoComplete(sale);
+            } else if (h.key === 'hito_ejecutado') {
+                done = Number(sale.boardColumn) >= 4;
+            } else if (h.key === 'hito_factura') {
+                done = getCXCSummary(getEventCXC(sale)).invoiced > 0;
+            } else if (h.key === 'hito_cobro') {
+                var cs = getCXCSummary(getEventCXC(sale));
+                done = cs.pct !== null && cs.pct >= 0.99;
+            } else if (h.key === 'hito_cxp') {
+                var ps = getCXPSummary(getEventCXP(sale));
+                done = ps.pct !== null && ps.pct >= 0.99;
+            } else if (h.skipForActivacion && isActivacion(sale)) {
+                na = true;
+            } else {
+                done = clItem ? !!(clItem.done || clItem.checked) : false;
+            }
+            return { key: h.key, label: h.label, done: done, na: na, optional: !!h.optional };
+        });
+
+        var applicable = hitos.filter(function (h) { return !h.na; });
+        var doneCount = applicable.filter(function (h) { return h.done; }).length;
+        return { hitos: hitos, done: doneCount, total: applicable.length, pct: applicable.length ? doneCount / applicable.length : 0 };
+    }
+
+    function renderHitosBar(sale) {
+        var hs = getHitoStatus(sale);
+        var board = getBoardForSale(sale);
+        var pct = hs.pct;
+        var allDone = hs.done === hs.total && hs.total > 0;
+        var barColor = allDone ? '#4ade80' : pct >= 0.6 ? '#a78bfa' : pct >= 0.3 ? '#fb923c' : '#f87171';
+        var label = board === 'pre' ? 'pre-evento' : 'post-evento';
+        return '<div style="margin:10px 0 0 0;display:flex;align-items:center;gap:10px">' +
+            '<div style="flex:1;height:6px;background:rgba(255,255,255,0.08);border-radius:3px;overflow:hidden">' +
+                '<div style="height:100%;width:' + Math.round(pct * 100) + '%;background:' + barColor + ';border-radius:3px;transition:width 0.4s"></div>' +
+            '</div>' +
+            '<span style="font-size:12px;color:' + barColor + ';font-weight:700;white-space:nowrap">' +
+                hs.done + '/' + hs.total + ' hitos ' + label +
+                (allDone ? ' \uD83C\uDF89' : '') +
+            '</span>' +
+        '</div>';
+    }
+
+    function fireConfetti() {
+        var colors = ['#a78bfa','#4ade80','#fb923c','#f87171','#facc15','#38bdf8'];
+        for (var i = 0; i < 60; i++) {
+            (function(i) {
+                setTimeout(function() {
+                    var el = document.createElement('div');
+                    el.style.cssText = 'position:fixed;top:-10px;left:' + Math.random() * 100 + 'vw;width:8px;height:8px;border-radius:2px;background:' + colors[Math.floor(Math.random() * colors.length)] + ';z-index:9999;pointer-events:none;animation:confettiFall ' + (1.2 + Math.random() * 0.8) + 's linear forwards';
+                    document.body.appendChild(el);
+                    setTimeout(function() { el.remove(); }, 2200);
+                }, i * 30);
+            })(i);
+        }
+        if (!document.getElementById('confetti-style')) {
+            var s = document.createElement('style');
+            s.id = 'confetti-style';
+            s.textContent = '@keyframes confettiFall{0%{transform:translateY(0) rotate(0deg);opacity:1}100%{transform:translateY(110vh) rotate(720deg);opacity:0}}';
+            document.head.appendChild(s);
+        }
     }
 
     function hasPendingItems(sale) {
@@ -365,7 +466,7 @@ window.Mazelab.Modules.KanbanModule = (function () {
             };
             var sev = function (d) { return d <= 3 ? 'critico' : d <= 7 ? 'urgente' : 'aviso'; };
 
-            if (!isTraspasoComplete(s)) {
+            if (days <= 14 && !isTraspasoComplete(s)) {
                 alerts.push({ sale: s, type: 'traspaso', label: 'Sin traspaso completo', sev: sev(days), days: days });
             }
             if (days <= 7 && !done('pre_diseno_ok')) {
@@ -451,8 +552,7 @@ window.Mazelab.Modules.KanbanModule = (function () {
             row.addEventListener('click', function () {
                 mc.innerHTML = '';
                 currentSaleId = this.dataset.saleId;
-                var s = sales.find(function (x) { return String(x.id) === String(currentSaleId); });
-                activeTab = (s && !isTraspasoComplete(s)) ? 'traspaso' : 'checklist';
+                activeTab = 'resumen';
                 refreshContent();
             });
         });
@@ -976,6 +1076,7 @@ window.Mazelab.Modules.KanbanModule = (function () {
             'Cliente:      ' + (sale.clientName || '-'),
             'Fecha:        ' + formatDate(sale.eventDate),
             'Servicios:    ' + (sale.serviceNames || '-'),
+            sale.jornadas ? 'Jornadas:     ' + sale.jornadas : '',
             'Contacto:     ' + [t.contactoNombre, t.contactoTel, t.contactoEmail].filter(Boolean).join(' · '),
             'Lugar:        ' + (t.lugar || '-'),
             t.pax         ? 'PAX:          ' + t.pax : '',
@@ -999,6 +1100,7 @@ window.Mazelab.Modules.KanbanModule = (function () {
                 briefRow('Evento',         sale.eventName) +
                 briefRow('Fecha',          formatDate(sale.eventDate)) +
                 briefRow('Servicios',      sale.serviceNames) +
+                (sale.jornadas ? briefRow('Jornadas', sale.jornadas) : '') +
                 briefRow('Contacto',       [t.contactoNombre, t.contactoTel, t.contactoEmail].filter(Boolean).join(' \u00b7 ')) +
                 briefRow('Lugar',          t.lugar) +
                 (t.pax ? briefRow('PAX', t.pax) : '') +
@@ -1023,6 +1125,54 @@ window.Mazelab.Modules.KanbanModule = (function () {
             '<td style="padding:7px 0;color:var(--text-muted);width:160px;vertical-align:top">' + label + '</td>' +
             '<td style="padding:7px 0;color:var(--text-primary);white-space:pre-wrap">' + value + '</td>' +
             '</tr>';
+    }
+
+    // ---- render: detail - resumen (hitos + info + traspaso) ----
+
+    function renderHitosList(sale) {
+        var hs = getHitoStatus(sale);
+        var items = hs.hitos.map(function (h) {
+            if (h.na) {
+                return '<div style="display:flex;align-items:center;gap:8px;padding:5px 0;opacity:0.35">' +
+                    '<span style="width:18px;height:18px;border-radius:50%;background:rgba(255,255,255,0.1);display:flex;align-items:center;justify-content:center;font-size:11px;flex-shrink:0">—</span>' +
+                    '<span style="font-size:13px;text-decoration:line-through">' + h.label + '</span>' +
+                    (h.optional ? '<button class="kb-hito-na-toggle" data-key="' + h.key + '" data-na="0" style="margin-left:auto;font-size:10px;background:rgba(255,255,255,0.08);border:1px solid rgba(255,255,255,0.15);border-radius:4px;color:var(--text-muted);cursor:pointer;padding:1px 6px">Activar</button>' : '') +
+                '</div>';
+            }
+            var icon = h.done
+                ? '<span style="width:18px;height:18px;border-radius:50%;background:#4ade8033;border:2px solid #4ade80;display:flex;align-items:center;justify-content:center;font-size:10px;flex-shrink:0;color:#4ade80">✓</span>'
+                : '<span style="width:18px;height:18px;border-radius:50%;background:rgba(255,255,255,0.06);border:2px solid rgba(255,255,255,0.15);display:flex;align-items:center;justify-content:center;flex-shrink:0"></span>';
+            return '<div style="display:flex;align-items:center;gap:8px;padding:5px 0">' +
+                icon +
+                '<span style="font-size:13px;color:' + (h.done ? 'var(--text-primary)' : 'var(--text-secondary)') + '">' + h.label + '</span>' +
+                (h.optional && !h.done ? '<button class="kb-hito-na-toggle" data-key="' + h.key + '" data-na="1" style="margin-left:auto;font-size:10px;background:rgba(255,255,255,0.06);border:1px solid rgba(255,255,255,0.1);border-radius:4px;color:var(--text-muted);cursor:pointer;padding:1px 6px">N/A</button>' : '') +
+            '</div>';
+        }).join('');
+
+        var allDone = hs.done === hs.total && hs.total > 0;
+        return '<div style="background:rgba(255,255,255,0.03);border-radius:10px;padding:14px 18px;margin-bottom:var(--space-lg)">' +
+            '<div style="font-size:12px;font-weight:600;color:var(--text-muted);margin-bottom:8px;letter-spacing:0.5px">HITOS DEL EVENTO</div>' +
+            items +
+            (allDone ? '<div style="margin-top:10px;text-align:center;font-size:13px;color:#4ade80;font-weight:600">\uD83C\uDF89 ¡Todos los hitos completados!</div>' : '') +
+        '</div>';
+    }
+
+    function renderDetailResumen(sale) {
+        // Editing traspaso: show form
+        if (traspasoEditMode) {
+            return renderDetailTraspaso(sale);
+        }
+        // Traspaso complete: show full brief
+        if (isTraspasoComplete(sale)) {
+            return renderHitosList(sale) + renderBrief(sale);
+        }
+        // Incomplete: show info + CTA
+        return renderHitosList(sale) + renderDetailInfo(sale) +
+            '<div style="margin-top:var(--space-xl);background:rgba(251,191,36,0.07);border:1px solid rgba(251,191,36,0.25);border-radius:10px;padding:24px;text-align:center">' +
+                '<div style="font-size:1rem;font-weight:600;margin-bottom:8px">Traspaso de venta pendiente</div>' +
+                '<div style="color:var(--text-secondary);font-size:13px;margin-bottom:16px">Completa los datos operacionales para activar la coordinación del evento.</div>' +
+                '<button class="btn btn-primary" id="kb-completar-traspaso-btn" style="padding:10px 28px;font-size:15px">Completar traspaso →</button>' +
+            '</div>';
     }
 
     // ---- render: detail - comunicacion ----
@@ -1051,7 +1201,12 @@ window.Mazelab.Modules.KanbanModule = (function () {
                 '</div>';
         }
 
+        var svcResetBtn = customSvcs.length > 0
+            ? '<button id="kb-com-svc-reset" data-svc-template="' + escapeHtml(customSvcs[0].template_saludo || '') + '" style="background:rgba(139,92,246,0.15);border:1px solid rgba(139,92,246,0.4);color:#a78bfa;border-radius:6px;padding:4px 12px;font-size:12px;cursor:pointer;font-weight:600">↩ Template del servicio</button>'
+            : '';
+
         var presetBtns = '<div style="margin-bottom:10px;display:flex;gap:8px;flex-wrap:wrap;align-items:center">' +
+            (svcResetBtn ? svcResetBtn + '<span style="color:rgba(255,255,255,0.15)">|</span>' : '') +
             '<span style="color:var(--text-secondary);font-size:13px">Predefinidos:</span>' +
             DEFAULT_SALUDO_TEMPLATES.map(function (t, i) {
                 return '<button class="kb-com-preset-btn" data-preset-idx="' + i + '" style="background:rgba(255,255,255,0.07);border:1px solid rgba(255,255,255,0.15);color:var(--text-primary);border-radius:6px;padding:4px 12px;font-size:12px;cursor:pointer">' + t.label + '</button>';
@@ -1103,33 +1258,30 @@ window.Mazelab.Modules.KanbanModule = (function () {
                     (sale.eventDate ? ' &middot; ' + formatDate(sale.eventDate) : '') +
                     ' &middot; <strong>' + (getColumnInfo(sale.boardColumn).title || '') + '</strong>' +
                 '</div>' +
+                renderHitosBar(sale) +
             '</div>' +
             '<span class="badge ' + meta.cls + '" style="font-size:13px;padding:6px 14px;align-self:flex-start">' + meta.label + '</span>' +
             '</div>';
 
-        var traspasoComplete = isTraspasoComplete(sale);
-        var traspasoLabel = 'Traspaso' + (!traspasoComplete ? ' \u26a0\ufe0f' : ' \u2713');
-
         var tabs = '<div class="tabs">' +
             [
-                { id: 'traspaso',      label: traspasoLabel     },
-                { id: 'info',          label: 'Info General'    },
-                { id: 'finanzas',      label: 'Finanzas'        },
-                { id: 'checklist',     label: 'Checklist'       },
-                { id: 'comunicacion',  label: 'Comunicación'    },
-                { id: 'notas',         label: 'Notas'           }
+                { id: 'resumen',      label: 'Resumen'      },
+                { id: 'checklist',    label: 'Checklist'    },
+                { id: 'finanzas',     label: 'Finanzas'     },
+                { id: 'comunicacion', label: 'Comunicación' },
+                { id: 'notas',        label: 'Notas'        }
             ].map(function (t) {
                 return '<button class="tab' + (activeTab === t.id ? ' active' : '') + '" data-tab="' + t.id + '">' + t.label + '</button>';
             }).join('') +
             '</div>';
 
         var tabContent = '';
-        if (activeTab === 'traspaso')         tabContent = renderDetailTraspaso(sale);
-        else if (activeTab === 'info')        tabContent = renderDetailInfo(sale);
-        else if (activeTab === 'finanzas')    tabContent = renderDetailFinanzas(sale);
+        if (activeTab === 'resumen')          tabContent = renderDetailResumen(sale);
         else if (activeTab === 'checklist')   tabContent = renderDetailChecklist(sale);
+        else if (activeTab === 'finanzas')    tabContent = renderDetailFinanzas(sale);
         else if (activeTab === 'comunicacion') tabContent = renderDetailComunicacion(sale);
         else if (activeTab === 'notas')       tabContent = renderDetailNotas(sale);
+        else                                  tabContent = renderDetailResumen(sale);
 
         return '<div class="kanban-detail">' + header + tabs +
             '<div class="kanban-tab-content">' + tabContent + '</div>' +
@@ -1207,9 +1359,7 @@ window.Mazelab.Modules.KanbanModule = (function () {
             card.addEventListener('click', function (e) {
                 if (e.target.closest('.kanban-card-arrows')) return;
                 currentSaleId = this.dataset.saleId;
-                // Open traspaso tab if traspaso is not complete, else info
-                var s = sales.find(function (x) { return String(x.id) === String(currentSaleId); });
-                activeTab = (s && !isTraspasoComplete(s)) ? 'traspaso' : 'info';
+                activeTab = 'resumen';
                 refreshContent();
             });
         });
@@ -1300,6 +1450,41 @@ window.Mazelab.Modules.KanbanModule = (function () {
                 var ta = document.getElementById('kb-com-textarea');
                 if (ta) ta.value = fillTemplate(DEFAULT_SALUDO_TEMPLATES[idx].text, sale);
             });
+        });
+
+        // Resumen tab: completar traspaso CTA
+        var ctaBtn = document.getElementById('kb-completar-traspaso-btn');
+        if (ctaBtn) ctaBtn.addEventListener('click', function () {
+            traspasoEditMode = true;
+            refreshContent();
+        });
+
+        // Resumen tab: hito N/A toggle
+        document.querySelectorAll('.kb-hito-na-toggle').forEach(function (btn) {
+            btn.addEventListener('click', function () {
+                var key = this.dataset.key;
+                var setNa = this.dataset.na === '1';
+                var cl = sale.checklist || [];
+                var item = cl.find(function (i) { return i.key === key; });
+                if (item) {
+                    item.na = setNa;
+                } else {
+                    cl.push({ key: key, done: false, na: setNa });
+                }
+                sale.checklist = cl;
+                var prevDone = getHitoStatus(sale).pct;
+                window.Mazelab.DataService.update('sales', sale.id, { checklist: cl });
+                var newStatus = getHitoStatus(sale);
+                if (newStatus.pct === 1 && newStatus.total > 0 && prevDone < 1) fireConfetti();
+                refreshContent();
+            });
+        });
+
+        // Comunicación: reset to service template
+        var svcResetBtn = document.getElementById('kb-com-svc-reset');
+        if (svcResetBtn) svcResetBtn.addEventListener('click', function () {
+            var ta = document.getElementById('kb-com-textarea');
+            if (ta) ta.value = fillTemplate(this.dataset.svcTemplate || '', sale);
         });
 
         var comCopyBtn = document.getElementById('kb-com-copy-btn');
@@ -1436,10 +1621,14 @@ window.Mazelab.Modules.KanbanModule = (function () {
             item = { key: key, label: def.label, group: def.group, checked: false, checkedAt: null };
             cl.push(item);
         }
+        var prevStatus = getHitoStatus(sale);
         item.checked = checked;
+        item.done = checked;
         item.checkedAt = checked ? new Date().toISOString() : null;
         sale.checklist = cl;
         await DS.update('sales', sale.id, { checklist: cl });
+        var newStatus = getHitoStatus(sale);
+        if (newStatus.pct === 1 && newStatus.total > 0 && prevStatus.pct < 1) fireConfetti();
         refreshContent();
     }
 

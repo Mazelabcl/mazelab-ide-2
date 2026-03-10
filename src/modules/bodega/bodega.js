@@ -5,9 +5,11 @@ window.Mazelab.Modules.BodegaModule = (function () {
     var searchQuery = '';
     var editingId = null;
 
-    var CATEGORIAS = [
-        'Cómputo', 'Captura', 'Impresión', 'Pantallas',
-        'Sensores', 'Iluminación', 'Soportes', 'Mobiliario', 'Cables', 'Otro'
+    var CATEGORIAS_SUGERIDAS = [
+        'Notebooks', 'PCs', 'Tablets', 'Teléfonos',
+        'Cámaras', 'Impresoras', 'Pantallas', 'Totems',
+        'Sensores', 'Iluminación', 'Trípodes', 'Mobiliario',
+        'Cables', 'Accesorios', 'Otro'
     ];
 
     var ESTADOS = [
@@ -26,13 +28,8 @@ window.Mazelab.Modules.BodegaModule = (function () {
         return ESTADOS.find(function (e) { return e.value === val; }) || { label: val || '—', color: '#6b7280' };
     }
 
-    function generateEquipoId(categoria, nombre) {
-        var prefixes = {
-            'Cómputo': 'COMP', 'Captura': 'CAM', 'Impresión': 'IMP', 'Pantallas': 'PAN',
-            'Sensores': 'SEN', 'Iluminación': 'LUZ', 'Soportes': 'SOP', 'Mobiliario': 'MOB',
-            'Cables': 'CAB', 'Otro': 'EQ'
-        };
-        var prefix = prefixes[categoria] || 'EQ';
+    function generateEquipoId(categoria) {
+        var prefix = (categoria || 'EQ').replace(/[^a-zA-ZáéíóúÁÉÍÓÚñÑ]/g, '').substring(0, 3).toUpperCase() || 'EQ';
         var same = equipos.filter(function (e) { return (e.categoria || '') === categoria; });
         var num = String(same.length + 1).padStart(3, '0');
         return prefix + '-' + num;
@@ -54,8 +51,11 @@ window.Mazelab.Modules.BodegaModule = (function () {
     }
 
     function renderToolbar() {
+        var usedCats = {};
+        equipos.forEach(function (e) { if (e.categoria) usedCats[e.categoria] = true; });
+        var allCats = Object.keys(usedCats).sort();
         var catOptions = '<option value="all">Todas las categorías</option>' +
-            CATEGORIAS.map(function (c) {
+            allCats.map(function (c) {
                 return '<option value="' + escapeHtml(c) + '"' + (filterCategoria === c ? ' selected' : '') + '>' + escapeHtml(c) + '</option>';
             }).join('');
 
@@ -125,9 +125,10 @@ window.Mazelab.Modules.BodegaModule = (function () {
         editingId = equipo ? equipo.id : null;
         var t = equipo || {};
 
-        var catOptions = CATEGORIAS.map(function (c) {
-            return '<option value="' + escapeHtml(c) + '"' + ((t.categoria || '') === c ? ' selected' : '') + '>' + escapeHtml(c) + '</option>';
-        }).join('');
+        var catSuggestions = CATEGORIAS_SUGERIDAS.concat(
+            equipos.map(function(e) { return e.categoria || ''; }).filter(Boolean)
+        ).filter(function(v, i, a) { return a.indexOf(v) === i; }).sort()
+        .map(function(c) { return '<option value="' + escapeHtml(c) + '">'; }).join('');
 
         var estadoOptions = ESTADOS.map(function (s) {
             return '<option value="' + s.value + '"' + ((t.estado || 'bueno') === s.value ? ' selected' : '') + '>' + s.label + '</option>';
@@ -142,7 +143,8 @@ window.Mazelab.Modules.BodegaModule = (function () {
                 '<div class="modal-body">' +
                     '<div class="form-group">' +
                         '<label>Categoría</label>' +
-                        '<select class="form-control" id="bq-categoria">' + catOptions + '</select>' +
+                        '<datalist id="bq-cat-list">' + catSuggestions + '</datalist>' +
+                        '<input type="text" class="form-control" id="bq-categoria" list="bq-cat-list" value="' + escapeHtml(t.categoria || '') + '" placeholder="Ej: Notebooks, Cámaras, Trípodes..." />' +
                     '</div>' +
                     '<div class="form-group">' +
                         '<label>Nombre</label>' +
@@ -202,7 +204,7 @@ window.Mazelab.Modules.BodegaModule = (function () {
             if (equipoIdInput) record.equipo_id = equipoIdInput;
             await window.Mazelab.DataService.update('bodega', editingId, record);
         } else {
-            record.equipo_id = equipoIdInput || generateEquipoId(categoria, nombre);
+            record.equipo_id = equipoIdInput || generateEquipoId(categoria);
             record.id = 'eq-' + Date.now();
             await window.Mazelab.DataService.create('bodega', record);
         }
