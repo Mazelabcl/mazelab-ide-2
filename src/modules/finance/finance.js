@@ -1398,16 +1398,6 @@ window.Mazelab.Modules.FinanceModule = (function () {
         var yyyy = today.getFullYear();
         var todayDMY = dd + '/' + mm + '/' + yyyy;
 
-        // Build sale options sorted by eventDate desc
-        var sortedSales = (cachedSales || []).slice().sort(function (a, b) {
-            return (b.eventDate || '') < (a.eventDate || '') ? -1 : 1;
-        });
-        var saleOpts = '<option value="">— Seleccionar evento —</option>' +
-            sortedSales.map(function (s) {
-                var label = '#' + (s.sourceId || s.id) + ' · ' + (s.clientName || '') + ' · ' + (s.eventName || '') + (s.eventDate ? ' (' + s.eventDate + ')' : '');
-                return '<option value="' + s.id + '">' + label + '</option>';
-            }).join('');
-
         var html = '<div class="modal-overlay active" id="nueva-fac-overlay">' +
             '<div class="modal">' +
             '  <div class="modal-header">' +
@@ -1416,10 +1406,11 @@ window.Mazelab.Modules.FinanceModule = (function () {
             '  </div>' +
             '  <p style="color:var(--text-secondary);font-size:13px;margin-bottom:12px">Asocia esta factura a un evento existente.</p>' +
             '  <div class="form-group">' +
-            '    <label>Evento asociado</label>' +
-            '    <select class="form-control" id="nf-sale-id">' + saleOpts + '</select>' +
+            '    <label>ID del evento <span style="color:var(--text-muted);font-weight:400">(escribe el n\u00famero, ej: 850)</span></label>' +
+            '    <input type="text" class="form-control" id="nf-id-search" placeholder="Ej: 850" autocomplete="off">' +
             '  </div>' +
-            '  <div id="nf-sale-info" style="font-size:12px;color:var(--text-muted);margin:-8px 0 12px 0;min-height:16px"></div>' +
+            '  <input type="hidden" id="nf-sale-id">' +
+            '  <div id="nf-sale-info" style="background:var(--bg-tertiary);border-radius:6px;padding:8px 12px;margin:-4px 0 12px 0;font-size:12px;color:var(--text-secondary);min-height:32px">Escribe el ID para buscar el evento.</div>' +
             '  <div class="form-row">' +
             '    <div class="form-group">' +
             '      <label>N\u00b0 Factura</label>' +
@@ -1476,14 +1467,33 @@ window.Mazelab.Modules.FinanceModule = (function () {
         document.getElementById('nf-amount').addEventListener('input', updatePreview);
         document.getElementById('nf-tipo').addEventListener('change', updatePreview);
 
-        // Show selected sale info
-        document.getElementById('nf-sale-id').addEventListener('change', function () {
-            var sale = (cachedSales || []).find(function (s) { return String(s.id) === this.value; }, this);
+        // ID search → auto-fill sale info
+        document.getElementById('nf-id-search').addEventListener('input', function () {
+            var q = this.value.trim();
             var info = document.getElementById('nf-sale-info');
-            if (sale) {
-                info.textContent = sale.clientName + ' · ' + sale.eventName + (sale.eventDate ? ' · ' + sale.eventDate : '') + (sale.amount ? ' · Venta: ' + formatCLP(Number(sale.amount)) : '');
+            var hidSaleId = document.getElementById('nf-sale-id');
+            if (!q) {
+                info.textContent = 'Escribe el ID para buscar el evento.';
+                info.style.color = 'var(--text-muted)';
+                hidSaleId.value = '';
+                this.style.borderColor = '';
+                return;
+            }
+            var found = (cachedSales || []).find(function (s) {
+                return String(s.sourceId || '') === q || String(s.id || '') === q;
+            });
+            if (found) {
+                hidSaleId.value = found.id;
+                info.innerHTML = '<strong style="color:var(--text-primary)">#' + (found.sourceId || found.id) + ' — ' + (found.eventName || '-') + '</strong>' +
+                    '<span style="margin-left:8px">' + (found.clientName || '') + '</span>' +
+                    (found.eventDate ? '<span style="margin-left:8px;color:var(--text-muted)">' + found.eventDate + '</span>' : '') +
+                    (found.amount ? '<span style="margin-left:8px;color:var(--success)">' + formatCLP(Number(found.amount)) + '</span>' : '');
+                this.style.borderColor = 'var(--success)';
             } else {
-                info.textContent = '';
+                hidSaleId.value = '';
+                info.textContent = q.length >= 2 ? 'Evento no encontrado — verifica el ID.' : 'Escribe el ID para buscar el evento.';
+                info.style.color = q.length >= 2 ? 'var(--danger)' : 'var(--text-muted)';
+                this.style.borderColor = q.length >= 2 ? 'var(--danger)' : '';
             }
         });
 
