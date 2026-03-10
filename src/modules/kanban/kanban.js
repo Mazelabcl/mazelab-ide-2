@@ -885,10 +885,16 @@ window.Mazelab.Modules.KanbanModule = (function () {
         var finSt = getFinancialStatus(sale);
         var meta = STATUS_META[finSt];
 
+        var svcForSale = (sale.serviceIds || []).map(function (sid) {
+            return services.find(function (sv) { return String(sv.id) === String(sid); });
+        }).filter(Boolean);
+        var hasSaludo = svcForSale.some(function (sv) { return sv.template_saludo; });
+
         var header = '<div class="kanban-detail-header">' +
-            '<div style="display:flex;gap:var(--space-sm)">' +
+            '<div style="display:flex;gap:var(--space-sm);flex-wrap:wrap">' +
                 '<button class="btn-secondary" id="kb-back-btn">\u2190 Volver al Board</button>' +
-                '<button class="btn-secondary" id="kb-remove-board-btn" style="font-size:12px;color:var(--text-muted);border-color:rgba(255,255,255,0.1)" title="Ocultar este evento del board">Quitar del board</button>' +
+                (hasSaludo ? '<button class="btn-primary" id="kb-generar-saludo-btn" style="font-size:12px">Generar saludo</button>' : '') +
+                '<button class="btn-secondary" id="kb-remove-board-btn" style="font-size:12px;color:var(--text-muted);border-color:rgba(255,255,255,0.1)">Quitar del board</button>' +
             '</div>' +
             '<div class="kanban-detail-info">' +
                 '<h2 class="kanban-detail-title">#' + displayId + ' \u2014 ' + (sale.eventName || '-') + '</h2>' +
@@ -1072,6 +1078,11 @@ window.Mazelab.Modules.KanbanModule = (function () {
             refreshContent();
         });
 
+        var saludoBtn = document.getElementById('kb-generar-saludo-btn');
+        if (saludoBtn) saludoBtn.addEventListener('click', function () {
+            openSaludoModal(sale);
+        });
+
         var removeBtn = document.getElementById('kb-remove-board-btn');
         if (removeBtn) removeBtn.addEventListener('click', function () {
             if (!confirm('¿Quitar "' + (sale.eventName || 'este evento') + '" del board operativo?\n\nEl evento seguirá en Ventas y no se perderá ningún dato.')) return;
@@ -1208,6 +1219,77 @@ window.Mazelab.Modules.KanbanModule = (function () {
         sale.checklist = cl.filter(function (c) { return c.key !== key; });
         await window.Mazelab.DataService.update('sales', sale.id, { checklist: sale.checklist });
         refreshContent();
+    }
+
+    // ---- saludo modal ----
+
+    function fillTemplate(tpl, sale) {
+        var t = sale.traspaso || {};
+        return (tpl || '')
+            .replace(/\{contacto\}/g,   t.contactoNombre || '[nombre contacto]')
+            .replace(/\{cliente\}/g,    sale.clientName  || '[cliente]')
+            .replace(/\{evento\}/g,     sale.eventName   || '[evento]')
+            .replace(/\{fecha\}/g,      formatDate(sale.eventDate))
+            .replace(/\{lugar\}/g,      t.lugar          || '[lugar]')
+            .replace(/\{encargado\}/g,  sale.encargado   || 'el equipo de MazeLab')
+            .replace(/\{servicio\}/g,   sale.serviceNames || '[servicio]');
+    }
+
+    function openSaludoModal(sale) {
+        var container = document.getElementById('kanban-content');
+        if (!container) return;
+
+        var svcForSale = (sale.serviceIds || []).map(function (sid) {
+            return services.find(function (sv) { return String(sv.id) === String(sid); });
+        }).filter(Boolean);
+
+        // Build tabs per service that has a template
+        var withTemplate = svcForSale.filter(function (sv) { return sv.template_saludo; });
+        if (!withTemplate.length) { alert('Ninguno de los servicios del evento tiene template de saludo configurado.\nAgrégalo en Configuración → Servicios.'); return; }
+
+        var selectedIdx = 0;
+        function buildModal(idx) {
+            var sv = withTemplate[idx];
+            var msg = fillTemplate(sv.template_saludo, sale);
+            var tabs = withTemplate.map(function (s, i) {
+                return '<button class="toggle-option' + (i === idx ? ' active' : '') + '" data-svc-idx="' + i + '">' + s.name + '</button>';
+            }).join('');
+            return '<div style="position:fixed;inset:0;background:rgba(0,0,0,0.7);z-index:1000;display:flex;align-items:center;justify-content:center" id="kb-saludo-overlay">' +
+                '<div style="background:var(--bg-secondary);border-radius:12px;padding:var(--space-xl);width:min(600px,95vw);max-height:85vh;overflow-y:auto;display:flex;flex-direction:column;gap:var(--space-md)">' +
+                    '<div style="display:flex;justify-content:space-between;align-items:center">' +
+                        '<strong style="font-size:15px">Saludo para ' + (sale.clientName || 'el cliente') + '</strong>' +
+                        '<button id="kb-saludo-close" style="background:none;border:none;font-size:20px;color:var(--text-muted);cursor:pointer">&times;</button>' +
+                    '</div>' +
+                    (withTemplate.length > 1 ? '<div class="toggle-group">' + tabs + '</div>' : '') +
+                    '<div style="font-size:11px;color:var(--text-muted)">Variables usadas del traspaso: contacto, cliente, evento, fecha, lugar, encargado</div>' +
+                    '<textarea id="kb-saludo-text" class="form-control" rows="12" style="font-size:13px;line-height:1.6;resize:vertical">' + msg + '</textarea>' +
+                    '<div style="display:flex;gap:var(--space-sm)">' +
+                        '<button class="btn-primary" id="kb-saludo-copy">Copiar mensaje</button>' +
+                        '<button class="btn-secondary" id="kb-saludo-close2">Cerrar</button>' +
+                    '</div>' +
+                '</div>' +
+            '</div>';
+        }
+
+        var overlay = document.createElement('div');
+        overlay.id = 'kb-saludo-wrapper';
+        overlay.innerHTML = buildModal(0);
+        document.body.appendChild(overlay);
+
+        function close() { var el = document.getElementById('kb-saludo-wrapper'); if (el) el.remove(); }
+
+        overlay.addEventListener('click', function (e) {
+            if (e.target.id === 'kb-saludo-overlay') close();
+            if (e.target.id === 'kb-saludo-close' || e.target.id === 'kb-saludo-close2') close();
+            if (e.target.id === 'kb-saludo-copy') {
+                var ta = document.getElementById('kb-saludo-text');
+                if (ta) { ta.select(); document.execCommand('copy'); e.target.textContent = 'Copiado!'; setTimeout(function () { if (e.target) e.target.textContent = 'Copiar mensaje'; }, 2000); }
+            }
+            var idx = e.target.dataset.svcIdx;
+            if (idx !== undefined) {
+                overlay.innerHTML = buildModal(Number(idx));
+            }
+        });
     }
 
     // ---- init ----

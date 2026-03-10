@@ -395,6 +395,30 @@ window.Mazelab.Modules.SettingsModule = (function () {
                 <div style="text-align:right;margin-top:var(--space-sm);font-size:13px;color:var(--text-secondary)">
                     Total plantilla: <strong id="svc-ct-total">${formatCLP((s.cost_template || []).reduce(function(acc, i){ return acc + (i.cantidad || 1) * (i.monto_unitario || 0); }, 0))}</strong>
                 </div>
+            </div>
+
+            <div style="margin-top:var(--space-lg);border-top:1px solid var(--border-color);padding-top:var(--space-md)">
+                <div style="font-size:13px;font-weight:700;color:var(--text-secondary);letter-spacing:0.5px;text-transform:uppercase;margin-bottom:var(--space-md)">Ficha Operacional</div>
+                <div class="form-group">
+                    <label for="svc-specs">Especificaciones técnicas <span style="font-weight:400;color:var(--text-muted)">(medidas, espacio mínimo, consumo eléctrico, conexiones)</span></label>
+                    <textarea id="svc-specs" class="form-control" rows="3" placeholder="Ej: Espacio mínimo 2x2m. Consumo 300W (1 tomacorriente estándar). Conexión: 1 cable HDMI.">${escapeHtml(s.specs || '')}</textarea>
+                </div>
+                <div class="form-group">
+                    <label for="svc-notas-ops">Notas operacionales <span style="font-weight:400;color:var(--text-muted)">(qué debe saber el equipo antes de llegar)</span></label>
+                    <textarea id="svc-notas-ops" class="form-control" rows="3" placeholder="Ej: Verificar que el exterior del Holobox esté impecable. Llevar film de protección en traslado.">${escapeHtml(s.notas_ops || '')}</textarea>
+                </div>
+                <div class="form-group">
+                    <label for="svc-faq">Preguntas frecuentes del cliente <span style="font-weight:400;color:var(--text-muted)">(una por línea: P: … / R: …)</span></label>
+                    <textarea id="svc-faq" class="form-control" rows="5" placeholder="P: ¿Se puede agregar una base de datos?\nR: Sí, coordinarlo con el equipo de desarrollo con al menos 10 días de anticipación.\n\nP: ¿Cuántas impresiones por hora?\nR: Aproximadamente 60-80 fotos por hora.">${escapeHtml(s.faq || '')}</textarea>
+                </div>
+                <div class="form-group">
+                    <label for="svc-template-saludo">Template: Saludo inicial al cliente <span style="font-weight:400;color:var(--text-muted)">(usa {cliente}, {evento}, {fecha}, {encargado})</span></label>
+                    <textarea id="svc-template-saludo" class="form-control" rows="5" placeholder="Hola {contacto}, te escribo de parte de MazeLab. Quedé a cargo de la coordinación de {servicio} para el evento {evento} el {fecha}.\n\nMe pongo en contacto para coordinar los detalles y asegurarnos de que todo esté perfecto para el día del evento.\n\n¿Cuándo tienes disponibilidad para conversar?">${escapeHtml(s.template_saludo || '')}</textarea>
+                </div>
+                <div class="form-group">
+                    <label for="svc-template-diseno">Template: Solicitud de diseño/branding <span style="font-weight:400;color:var(--text-muted)">(cuando el cliente debe enviarnos archivos)</span></label>
+                    <textarea id="svc-template-diseno" class="form-control" rows="5" placeholder="Hola {contacto}, para poder preparar el {servicio} necesitamos los siguientes archivos de diseño:\n\n- Formato: JPG o PNG\n- Medidas: [completar]\n- Plazo máximo: 5 días antes del evento\n\nCualquier consulta estamos disponibles.">${escapeHtml(s.template_diseno || '')}</textarea>
+                </div>
             </div>`;
     }
 
@@ -413,7 +437,12 @@ window.Mazelab.Modules.SettingsModule = (function () {
             duracion_default: document.getElementById('svc-duracion-default').value ? Number(document.getElementById('svc-duracion-default').value) : null,
             featured: document.getElementById('svc-featured').checked,
             activo: document.getElementById('svc-activo').checked,
-            cost_template: costTemplate
+            cost_template: costTemplate,
+            specs:            (document.getElementById('svc-specs')            || {}).value || null,
+            notas_ops:        (document.getElementById('svc-notas-ops')        || {}).value || null,
+            faq:              (document.getElementById('svc-faq')               || {}).value || null,
+            template_saludo:  (document.getElementById('svc-template-saludo')  || {}).value || null,
+            template_diseno:  (document.getElementById('svc-template-diseno')  || {}).value || null
         };
     }
 
