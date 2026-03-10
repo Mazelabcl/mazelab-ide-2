@@ -11,7 +11,9 @@ window.Mazelab.Modules.ImportModule = (function () {
         { key: 'payables', label: 'CXP', icon: '&#128181;', desc: 'Cuentas por pagar' },
         { key: 'clients', label: 'Clientes', icon: '&#128101;', desc: 'Base de clientes' },
         { key: 'services', label: 'Servicios', icon: '&#9881;', desc: 'Cat\u00e1logo de servicios' },
-        { key: 'staff', label: 'Staff', icon: '&#128100;', desc: 'Personal / vendedores' }
+        { key: 'staff', label: 'Staff', icon: '&#128100;', desc: 'Personal / vendedores' },
+        { key: 'fichas', label: 'Fichas', icon: '&#128203;', desc: 'Fichas operacionales de servicios (specs, saludo, FAQ)' },
+        { key: 'bodega', label: 'Bodega', icon: '&#128230;', desc: 'Inventario de equipos' }
     ];
 
     const FIELD_ALIASES = {
@@ -51,7 +53,16 @@ window.Mazelab.Modules.ImportModule = (function () {
         ctConcepto: ['ct_concepto','concepto_costo','costo_concepto','costo_descripcion'],
         ctTipo: ['ct_tipo','tipo_beneficiario','tipo_costo','tipo_proveedor'],
         ctCantidad: ['ct_cantidad','cantidad','qty'],
-        ctMonto: ['ct_monto','monto_unitario','costo_unitario','precio_unitario']
+        ctMonto: ['ct_monto','monto_unitario','costo_unitario','precio_unitario'],
+        // Fichas de servicio
+        specs: ['specs','especificaciones','especificacion','ficha_tecnica'],
+        notas_ops: ['notas_ops','notas_operacionales','notas_op','operaciones'],
+        faq: ['faq','preguntas_frecuentes','preguntas','q&a'],
+        template_saludo: ['template_saludo','saludo','plantilla_saludo','template saludo'],
+        template_diseno: ['template_diseno','diseno','plantilla_diseno','template diseño','diseño'],
+        // Bodega
+        equipo_id: ['equipo_id','id_equipo','codigo','código','code'],
+        estado: ['estado','status','state','condicion','condición']
     };
 
     // --- Utility functions ---
@@ -444,9 +455,22 @@ window.Mazelab.Modules.ImportModule = (function () {
         };
     }
 
+    function buildBodegaRecord(row) {
+        var equipoId = (row.equipo_id || '').trim();
+        return {
+            id: equipoId || generateId(),
+            equipo_id: equipoId || (row.nombre || '').trim(),
+            nombre: (row.nombre || row.name || '').trim(),
+            categoria: (row.categoria || 'Otro').trim(),
+            estado: (row.estado || 'bueno').trim().toLowerCase(),
+            notas: (row.notas || row.comments || '').trim()
+        };
+    }
+
     function buildRecords(mappedRows, type) {
         // Services use multi-row aggregation (varios ítems de costo por servicio)
         if (type === 'services') return buildServiceRecords(mappedRows);
+        if (type === 'bodega') return mappedRows.map(buildBodegaRecord);
 
         var builders = {
             sales: buildSaleRecord,
@@ -543,6 +567,8 @@ window.Mazelab.Modules.ImportModule = (function () {
                         typeCards +
                     '</div>' +
                 '</div>' +
+
+                '<div id="import-format-hint" style="display:none;margin-bottom:16px"></div>' +
 
                 '<div class="form-group" id="import-dropzone-area" style="display:none;">' +
                     '<label>Archivo CSV</label>' +
@@ -674,24 +700,47 @@ window.Mazelab.Modules.ImportModule = (function () {
 
             // Build records
             setStatus('Procesando filas...');
-            var records = buildRecords(parsedRows, selectedType);
+            var savedCount = 0;
 
-            // Import with batch progress
-            var BATCH = 100;
-            var total = records.length;
-            var saved = 0;
-            var allSaved = [];
-            var table = DS.isUsingSupabase
-                ? (DS.isUsingSupabase() ? 'db' : 'local')
-                : 'local';
-            for (var b = 0; b < records.length; b += BATCH) {
-                var batch = records.slice(b, b + BATCH);
-                setStatus('Importando... (' + Math.min(b + BATCH, total) + ' / ' + total + ')');
-                var batchResult = await DS.importMany(selectedType, batch);
-                saved += Array.isArray(batchResult) ? batchResult.length : batch.length;
-                if (Array.isArray(batchResult)) allSaved = allSaved.concat(batchResult);
+            if (selectedType === 'fichas') {
+                // Special: match by service name, update existing service records
+                setStatus('Cargando servicios existentes...');
+                var existingServices = await DS.getAll('services') || [];
+                var fichaUpdates = parsedRows.map(function (row) {
+                    var nameKey = (row.nombre || row.name || row.serviceNames || row.servicio || '').trim().toLowerCase();
+                    var existing = existingServices.find(function (sv) {
+                        return (sv.name || sv.nombre || '').trim().toLowerCase() === nameKey;
+                    });
+                    if (!existing) return null;
+                    return {
+                        id: existing.id,
+                        specs: row.specs || '',
+                        notas_ops: row.notas_ops || '',
+                        faq: row.faq || '',
+                        template_saludo: row.template_saludo || '',
+                        template_diseno: row.template_diseno || ''
+                    };
+                }).filter(Boolean);
+                for (var fi = 0; fi < fichaUpdates.length; fi++) {
+                    setStatus('Actualizando fichas... (' + (fi + 1) + ' / ' + fichaUpdates.length + ')');
+                    await DS.update('services', fichaUpdates[fi].id, fichaUpdates[fi]);
+                }
+                savedCount = fichaUpdates.length;
+            } else {
+                var records = buildRecords(parsedRows, selectedType);
+
+                // Import with batch progress
+                var BATCH = 100;
+                var total = records.length;
+                var saved = 0;
+                for (var b = 0; b < records.length; b += BATCH) {
+                    var batch = records.slice(b, b + BATCH);
+                    setStatus('Importando... (' + Math.min(b + BATCH, total) + ' / ' + total + ')');
+                    var batchResult = await DS.importMany(selectedType, batch);
+                    saved += Array.isArray(batchResult) ? batchResult.length : batch.length;
+                }
+                savedCount = saved || total;
             }
-            var savedCount = saved || total;
 
             // Show results
             var typeLabel = IMPORT_TYPES.find(function (t) { return t.key === selectedType; });
@@ -746,6 +795,30 @@ window.Mazelab.Modules.ImportModule = (function () {
 
     // --- Init ---
 
+    var FORMAT_HINTS = {
+        fichas: {
+            cols: 'servicio, specs, notas_ops, faq, template_saludo, template_diseno',
+            notes: 'Actualiza las fichas de servicios existentes por nombre. El campo <strong>servicio</strong> debe coincidir exactamente con el nombre del servicio en Configurar. Variables disponibles en templates: {contacto}, {cliente}, {evento}, {fecha}, {lugar}, {encargado}, {servicio}.'
+        },
+        bodega: {
+            cols: 'equipo_id, nombre, categoria, estado, notas',
+            notes: 'Crea o actualiza equipos en bodega. <strong>equipo_id</strong> es el código único (NB-001, CAM-003, etc.). Si se omite, se genera automático. Categorías: Cómputo, Captura, Impresión, Pantallas, Sensores, Iluminación, Soportes, Mobiliario, Cables. Estados: bueno, dañado, mantenimiento, baja.'
+        }
+    };
+
+    function showFormatHint(type) {
+        var el = document.getElementById('import-format-hint');
+        if (!el) return;
+        var h = FORMAT_HINTS[type];
+        if (!h) { el.style.display = 'none'; el.innerHTML = ''; return; }
+        el.style.display = '';
+        el.innerHTML = '<div style="background:rgba(139,92,246,0.1);border:1px solid rgba(139,92,246,0.3);border-radius:8px;padding:14px 16px">' +
+            '<div style="font-weight:600;margin-bottom:6px;color:var(--accent)">Formato CSV requerido</div>' +
+            '<code style="font-size:12px;color:var(--text-secondary)">' + h.cols + '</code>' +
+            '<div style="font-size:12px;color:var(--text-secondary);margin-top:8px">' + h.notes + '</div>' +
+        '</div>';
+    }
+
     function init() {
         // Type selector
         var typeCards = document.querySelectorAll('.import-type-card');
@@ -758,6 +831,7 @@ window.Mazelab.Modules.ImportModule = (function () {
                 var dropArea = document.getElementById('import-dropzone-area');
                 if (dropArea) dropArea.style.display = '';
 
+                showFormatHint(selectedType);
                 resetState();
             });
         });
