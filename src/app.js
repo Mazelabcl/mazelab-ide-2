@@ -11,6 +11,7 @@ window.Mazelab.Modules = window.Mazelab.Modules || {};
         pagos: 'PagosModule',
         events: 'EventsModule',
         kanban: 'KanbanModule',
+        bodega: 'BodegaModule',
         cashflow: 'CashflowModule',
         analytics: 'AnalyticsModule',
         settings: 'SettingsModule',

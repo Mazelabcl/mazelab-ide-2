@@ -7,6 +7,7 @@ window.Mazelab.Modules.KanbanModule = (function () {
     var sales = [], receivables = [], payables = [], clients = [], services = [], staff = [];
     var currentSaleId = null;
     var activeTab = 'info';
+    var traspasoEditMode = false; // false = show brief when complete, true = show form
     var activeBoard = 'pre';   // 'pre' | 'post'
     var postYearMin = '2026';  // default year filter for post board
     var dragSaleId = null;
@@ -339,6 +340,119 @@ window.Mazelab.Modules.KanbanModule = (function () {
         return Object.keys(vals).sort();
     }
 
+    // ---- alerts ----
+
+    function computeAlerts() {
+        var today = new Date(todayStr());
+        var alerts = [];
+        var preSales = sales.filter(function (s) {
+            var col = Number(s.boardColumn);
+            return col >= 1 && col <= 3 && (s.eventDate || '') >= todayStr();
+        });
+
+        preSales.forEach(function (s) {
+            if (!s.eventDate) return;
+            var days = Math.ceil((new Date(s.eventDate) - today) / (1000 * 60 * 60 * 24));
+            var cl = s.checklist || [];
+            var done = function (key) {
+                var item = cl.find(function (i) { return i.key === key; });
+                return !!(item && item.done);
+            };
+            var sev = function (d) { return d <= 3 ? 'critico' : d <= 7 ? 'urgente' : 'aviso'; };
+
+            if (!isTraspasoComplete(s)) {
+                alerts.push({ sale: s, type: 'traspaso', label: 'Sin traspaso completo', sev: sev(days), days: days });
+            }
+            if (days <= 7 && !done('pre_diseno_ok')) {
+                alerts.push({ sale: s, type: 'diseno', label: 'Diseño sin aprobar', sev: sev(days), days: days });
+            }
+            if (days <= 5 && !done('pre_nomina_env')) {
+                alerts.push({ sale: s, type: 'nomina', label: 'Nómina no lista', sev: days <= 3 ? 'critico' : 'urgente', days: days });
+            }
+            if (days <= 5 && !done('pre_nomina_cap')) {
+                alerts.push({ sale: s, type: 'nomina_cap', label: 'Personal no capacitado', sev: days <= 3 ? 'critico' : 'urgente', days: days });
+            }
+            if (days <= 3 && !done('pre_equipos')) {
+                alerts.push({ sale: s, type: 'equipos', label: 'Equipos no configurados', sev: 'critico', days: days });
+            }
+        });
+
+        // Sort: more critical first, then closest event
+        var order = { critico: 0, urgente: 1, aviso: 2 };
+        alerts.sort(function (a, b) {
+            if (order[a.sev] !== order[b.sev]) return order[a.sev] - order[b.sev];
+            return a.days - b.days;
+        });
+        return alerts;
+    }
+
+    function updateSidebarBadge() {
+        var alerts = computeAlerts();
+        var navItem = document.querySelector('.nav-item[data-route="kanban"]');
+        if (!navItem) return;
+        var existing = navItem.querySelector('.nav-alert-badge');
+        if (existing) existing.remove();
+        if (alerts.length > 0) {
+            var badge = document.createElement('span');
+            badge.className = 'nav-alert-badge';
+            badge.textContent = alerts.length;
+            badge.style.cssText = 'background:#f87171;color:#fff;border-radius:10px;padding:1px 6px;font-size:11px;font-weight:700;margin-left:auto;min-width:18px;text-align:center';
+            navItem.style.position = 'relative';
+            navItem.appendChild(badge);
+        }
+    }
+
+    function openAlertsPanel() {
+        var alerts = computeAlerts();
+        var sevMeta = {
+            critico: { label: 'Crítico', color: '#f87171', bg: 'rgba(248,113,113,0.12)' },
+            urgente: { label: 'Urgente', color: '#fb923c', bg: 'rgba(251,146,60,0.12)' },
+            aviso:   { label: 'Aviso',   color: '#facc15', bg: 'rgba(250,204,21,0.12)' }
+        };
+
+        var rows = alerts.length === 0
+            ? '<div style="text-align:center;padding:32px;color:var(--text-secondary)">No hay alertas activas.</div>'
+            : alerts.map(function (a) {
+                var m = sevMeta[a.sev];
+                var daysLabel = a.days === 0 ? 'Hoy' : a.days === 1 ? 'Mañana' : 'En ' + a.days + ' días';
+                return '<div style="display:flex;align-items:center;gap:12px;padding:10px 14px;border-radius:8px;background:' + m.bg + ';margin-bottom:8px;cursor:pointer" class="kb-alert-row" data-sale-id="' + a.sale.id + '">' +
+                    '<span style="width:72px;text-align:center;font-size:11px;font-weight:700;color:' + m.color + ';background:' + m.bg + ';border:1px solid ' + m.color + '44;border-radius:12px;padding:2px 6px;white-space:nowrap">' + m.label + '</span>' +
+                    '<div style="flex:1;min-width:0">' +
+                        '<div style="font-weight:600;font-size:0.9rem">' + a.label + '</div>' +
+                        '<div style="font-size:0.8rem;color:var(--text-secondary)">' + (a.sale.eventName || '-') + ' · ' + (a.sale.clientName || '') + '</div>' +
+                    '</div>' +
+                    '<span style="font-size:0.8rem;color:' + m.color + ';font-weight:600;white-space:nowrap">' + daysLabel + '</span>' +
+                '</div>';
+            }).join('');
+
+        var html = '<div id="kb-alerts-wrapper" style="position:fixed;inset:0;background:rgba(0,0,0,0.88);z-index:1000;display:flex;align-items:center;justify-content:center">' +
+            '<div style="background:#1e1b2e;border:1px solid rgba(255,255,255,0.12);border-radius:14px;padding:28px;width:min(560px,96vw);max-height:90vh;overflow-y:auto">' +
+                '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:20px">' +
+                    '<h3 style="margin:0">Alertas operativas</h3>' +
+                    '<button id="kb-alerts-close" style="background:none;border:none;color:var(--text-secondary);font-size:1.4rem;cursor:pointer;line-height:1">&times;</button>' +
+                '</div>' +
+                '<div id="kb-alerts-list">' + rows + '</div>' +
+            '</div>' +
+        '</div>';
+
+        var mc = document.getElementById('modal-container');
+        mc.innerHTML = html;
+
+        document.getElementById('kb-alerts-close').addEventListener('click', function () { mc.innerHTML = ''; });
+        document.getElementById('kb-alerts-wrapper').addEventListener('click', function (e) {
+            if (e.target.id === 'kb-alerts-wrapper') mc.innerHTML = '';
+        });
+        mc.querySelectorAll('.kb-alert-row').forEach(function (row) {
+            row.addEventListener('click', function () {
+                mc.innerHTML = '';
+                currentSaleId = this.dataset.saleId;
+                var s = sales.find(function (x) { return String(x.id) === String(currentSaleId); });
+                activeTab = (s && !isTraspasoComplete(s)) ? 'traspaso' : 'checklist';
+                refreshContent();
+            });
+        });
+    }
+
     // ---- card indicator ----
 
     function getCardIndicator(sale) {
@@ -377,12 +491,24 @@ window.Mazelab.Modules.KanbanModule = (function () {
                 '<select class="form-control" id="kb-year-filter" style="display:inline-block;width:auto;height:28px;padding:2px 8px;font-size:13px">' + yearOpts + '</select>';
         }
 
+        var alertCount = computeAlerts().length;
+        var alertBtn = '<button id="kb-alerts-btn" style="margin-left:auto;display:flex;align-items:center;gap:6px;background:' +
+            (alertCount > 0 ? 'rgba(248,113,113,0.15)' : 'var(--bg-secondary)') +
+            ';border:1px solid ' + (alertCount > 0 ? 'rgba(248,113,113,0.5)' : 'rgba(255,255,255,0.1)') +
+            ';color:' + (alertCount > 0 ? '#f87171' : 'var(--text-secondary)') +
+            ';border-radius:8px;padding:5px 12px;font-size:13px;font-weight:600;cursor:pointer">' +
+            (alertCount > 0
+                ? '<span style="background:#f87171;color:#fff;border-radius:10px;padding:0 6px;font-size:11px">' + alertCount + '</span> Alertas'
+                : 'Alertas') +
+            '</button>';
+
         return '<div style="display:flex;align-items:center;gap:var(--space-sm);margin-bottom:var(--space-md);flex-wrap:wrap">' +
             '<div class="toggle-group">' +
                 '<button class="toggle-option' + preActive + '" id="kb-board-pre">Pre-evento</button>' +
                 '<button class="toggle-option' + postActive + '" id="kb-board-post">Post-evento</button>' +
             '</div>' +
             yearToggle +
+            alertBtn +
             '</div>';
     }
 
@@ -463,6 +589,7 @@ window.Mazelab.Modules.KanbanModule = (function () {
         var facPct = cxcS.pct !== null ? Math.round(cxcS.pct * 100) + '%' : '-';
         var pagPct = cxpS.pct !== null ? Math.round(cxpS.pct * 100) + '%' : '-';
         var progColor = prog.pct >= 0.7 ? 'var(--success)' : (prog.pct > 0.3 ? 'var(--warning)' : 'var(--danger)');
+        var traspasoOk = isTraspasoComplete(sale);
 
         // Services as small tags
         var svcTags = '';
@@ -491,6 +618,7 @@ window.Mazelab.Modules.KanbanModule = (function () {
             '</div>' +
             '<div class="kanban-card-footer">' +
                 '<div class="kanban-card-badges">' +
+                    (board === 'pre' && !traspasoOk ? '<span class="badge badge-danger" title="Traspaso incompleto">Sin traspaso</span>' : '') +
                     '<span class="badge badge-info" title="Facturado">' + facPct + ' fac</span>' +
                     '<span class="badge badge-neutral" title="Pagado CXP">' + pagPct + ' pag</span>' +
                 '</div>' +
@@ -758,6 +886,140 @@ window.Mazelab.Modules.KanbanModule = (function () {
             groupsHTML;
     }
 
+    // ---- render: detail - traspaso ----
+
+    function isTraspasoComplete(sale) {
+        var t = sale.traspaso || {};
+        return !!(t.contactoNombre && t.lugar && t.horarioServicio);
+    }
+
+    function renderDetailTraspaso(sale) {
+        var complete = isTraspasoComplete(sale);
+        // Show brief when complete and not in edit mode
+        if (complete && !traspasoEditMode) {
+            return renderBrief(sale);
+        }
+        traspasoEditMode = false; // reset after use
+        var t = sale.traspaso || {};
+        var vest = t.vestimenta || 'Negra sin logos (est\u00e1ndar MazeLab)';
+        var banner = complete
+            ? ''
+            : '<div style="background:rgba(251,191,36,0.10);border:1px solid rgba(251,191,36,0.3);border-radius:8px;padding:10px 14px;margin-bottom:var(--space-lg);font-size:13px;color:var(--warning)">Completa al menos: contacto del cliente, lugar y horario del servicio.</div>';
+
+        return banner +
+            '<div class="form-row">' +
+                '<div class="form-group">' +
+                    '<label>Contacto en terreno \u2014 Nombre</label>' +
+                    '<input type="text" class="form-control" id="tr-contactoNombre" value="' + (t.contactoNombre || '') + '" placeholder="Ej: Paola Riquelme">' +
+                '</div>' +
+                '<div class="form-group">' +
+                    '<label>Tel\u00e9fono</label>' +
+                    '<input type="text" class="form-control" id="tr-contactoTel" value="' + (t.contactoTel || '') + '" placeholder="+56 9 ...">' +
+                '</div>' +
+            '</div>' +
+            '<div class="form-group">' +
+                '<label>Email de contacto</label>' +
+                '<input type="text" class="form-control" id="tr-contactoEmail" value="' + (t.contactoEmail || '') + '" placeholder="correo@cliente.cl">' +
+            '</div>' +
+            '<div class="form-row">' +
+                '<div class="form-group">' +
+                    '<label>Lugar del evento (direcci\u00f3n completa)</label>' +
+                    '<input type="text" class="form-control" id="tr-lugar" value="' + (t.lugar || '') + '" placeholder="Av. Siempreviva 742, Santiago">' +
+                '</div>' +
+                '<div class="form-group">' +
+                    '<label>PAX estimado</label>' +
+                    '<input type="number" class="form-control" id="tr-pax" value="' + (t.pax || '') + '" placeholder="Nro. de asistentes" min="0">' +
+                '</div>' +
+            '</div>' +
+            '<div class="form-row">' +
+                '<div class="form-group">' +
+                    '<label>Horario servicio (inicio \u2013 t\u00e9rmino)</label>' +
+                    '<input type="text" class="form-control" id="tr-horarioServicio" value="' + (t.horarioServicio || '') + '" placeholder="20:30 \u2013 22:30">' +
+                '</div>' +
+                '<div class="form-group">' +
+                    '<label>Montaje</label>' +
+                    '<input type="text" class="form-control" id="tr-horarioMontaje" value="' + (t.horarioMontaje || '') + '" placeholder="09:00 \u2013 12:00">' +
+                '</div>' +
+                '<div class="form-group">' +
+                    '<label>Desmontaje</label>' +
+                    '<input type="text" class="form-control" id="tr-horarioDesmontaje" value="' + (t.horarioDesmontaje || '') + '" placeholder="22:30 \u2013 23:30">' +
+                '</div>' +
+            '</div>' +
+            '<div class="form-group">' +
+                '<label>Vestimenta</label>' +
+                '<input type="text" class="form-control" id="tr-vestimenta" value="' + vest + '" placeholder="Negra sin logos (est\u00e1ndar MazeLab)">' +
+            '</div>' +
+            '<div class="form-group">' +
+                '<label>Requerimientos especiales del cliente</label>' +
+                '<textarea class="form-control" id="tr-requerimientos" rows="3" placeholder="Ej: nos entregan una figurita de mimbre, el holobox debe estar impecable...">' + (t.requerimientos || '') + '</textarea>' +
+            '</div>' +
+            '<div class="form-group">' +
+                '<label>Nota de traspaso del vendedor</label>' +
+                '<textarea class="form-control" id="tr-notaVendedor" rows="4" placeholder="Qu\u00e9 cerraste con el cliente, promesas, detalles que no est\u00e1n en el contrato...">' + (t.notaVendedor || '') + '</textarea>' +
+            '</div>' +
+            '<div style="display:flex;gap:var(--space-sm);margin-top:var(--space-md)">' +
+                '<button class="btn-primary" id="tr-save-btn">Guardar traspaso</button>' +
+                (complete ? '<button class="btn-secondary" id="tr-cancel-edit-btn">Cancelar</button>' : '') +
+            '</div>';
+    }
+
+    function briefTextForClipboard(sale) {
+        var t = sale.traspaso || {};
+        var lines = [
+            'BRIEF DE OPERACIONES — ' + (sale.eventName || '').toUpperCase(),
+            '─'.repeat(40),
+            'Cliente:      ' + (sale.clientName || '-'),
+            'Fecha:        ' + formatDate(sale.eventDate),
+            'Servicios:    ' + (sale.serviceNames || '-'),
+            'Contacto:     ' + [t.contactoNombre, t.contactoTel, t.contactoEmail].filter(Boolean).join(' · '),
+            'Lugar:        ' + (t.lugar || '-'),
+            t.pax         ? 'PAX:          ' + t.pax : '',
+            'Servicio:     ' + (t.horarioServicio || '-'),
+            t.horarioMontaje    ? 'Montaje:      ' + t.horarioMontaje    : '',
+            t.horarioDesmontaje ? 'Desmontaje:   ' + t.horarioDesmontaje : '',
+            'Vestimenta:   ' + (t.vestimenta || 'Negra sin logos'),
+            'Encargado:    ' + (sale.encargado || '-'),
+            t.requerimientos ? '\nRequerimientos:\n' + t.requerimientos : '',
+            t.notaVendedor   ? '\nNota vendedor:\n' + t.notaVendedor   : ''
+        ].filter(Boolean).join('\n');
+        return lines;
+    }
+
+    function renderBrief(sale) {
+        var t = sale.traspaso || {};
+        return '<div style="background:rgba(34,197,94,0.06);border:1px solid rgba(34,197,94,0.2);border-radius:8px;padding:10px 14px;margin-bottom:var(--space-md);font-size:13px;color:var(--success)">Traspaso completo \u2014 brief listo para compartir.</div>' +
+            '<div style="background:rgba(255,255,255,0.04);border-radius:10px;padding:var(--space-lg);font-size:13px;line-height:1.8">' +
+            '<table style="width:100%;border-collapse:collapse">' +
+                briefRow('Cliente',        sale.clientName) +
+                briefRow('Evento',         sale.eventName) +
+                briefRow('Fecha',          formatDate(sale.eventDate)) +
+                briefRow('Servicios',      sale.serviceNames) +
+                briefRow('Contacto',       [t.contactoNombre, t.contactoTel, t.contactoEmail].filter(Boolean).join(' \u00b7 ')) +
+                briefRow('Lugar',          t.lugar) +
+                (t.pax ? briefRow('PAX', t.pax) : '') +
+                briefRow('Servicio',       t.horarioServicio) +
+                (t.horarioMontaje    ? briefRow('Montaje',    t.horarioMontaje)    : '') +
+                (t.horarioDesmontaje ? briefRow('Desmontaje', t.horarioDesmontaje) : '') +
+                briefRow('Vestimenta',     t.vestimenta || 'Negra sin logos') +
+                (sale.encargado ? briefRow('Encargado',  sale.encargado) : '') +
+                (t.requerimientos ? briefRow('Requerimientos', t.requerimientos) : '') +
+                (t.notaVendedor   ? briefRow('Nota vendedor',  t.notaVendedor)   : '') +
+            '</table>' +
+            '</div>' +
+            '<div style="display:flex;gap:var(--space-sm);margin-top:var(--space-md)">' +
+                '<button class="btn-primary" id="tr-copy-brief-btn">Copiar brief</button>' +
+                '<button class="btn-secondary" id="tr-edit-traspaso-btn">Editar</button>' +
+            '</div>';
+    }
+
+    function briefRow(label, value) {
+        if (!value) return '';
+        return '<tr style="border-bottom:1px solid rgba(255,255,255,0.06)">' +
+            '<td style="padding:7px 0;color:var(--text-muted);width:160px;vertical-align:top">' + label + '</td>' +
+            '<td style="padding:7px 0;color:var(--text-primary);white-space:pre-wrap">' + value + '</td>' +
+            '</tr>';
+    }
+
     // ---- render: detail - notas ----
 
     function renderDetailNotas(sale) {
@@ -774,10 +1036,16 @@ window.Mazelab.Modules.KanbanModule = (function () {
         var finSt = getFinancialStatus(sale);
         var meta = STATUS_META[finSt];
 
+        var svcForSale = (sale.serviceIds || []).map(function (sid) {
+            return services.find(function (sv) { return String(sv.id) === String(sid); });
+        }).filter(Boolean);
+        var hasSaludo = svcForSale.some(function (sv) { return sv.template_saludo; });
+
         var header = '<div class="kanban-detail-header">' +
-            '<div style="display:flex;gap:var(--space-sm)">' +
+            '<div style="display:flex;gap:var(--space-sm);flex-wrap:wrap">' +
                 '<button class="btn-secondary" id="kb-back-btn">\u2190 Volver al Board</button>' +
-                '<button class="btn-secondary" id="kb-remove-board-btn" style="font-size:12px;color:var(--text-muted);border-color:rgba(255,255,255,0.1)" title="Ocultar este evento del board">Quitar del board</button>' +
+                (hasSaludo ? '<button class="btn-primary" id="kb-generar-saludo-btn" style="font-size:12px">Generar saludo</button>' : '') +
+                '<button class="btn-secondary" id="kb-remove-board-btn" style="font-size:12px;color:var(--text-muted);border-color:rgba(255,255,255,0.1)">Quitar del board</button>' +
             '</div>' +
             '<div class="kanban-detail-info">' +
                 '<h2 class="kanban-detail-title">#' + displayId + ' \u2014 ' + (sale.eventName || '-') + '</h2>' +
@@ -791,15 +1059,24 @@ window.Mazelab.Modules.KanbanModule = (function () {
             '<span class="badge ' + meta.cls + '" style="font-size:13px;padding:6px 14px;align-self:flex-start">' + meta.label + '</span>' +
             '</div>';
 
+        var traspasoComplete = isTraspasoComplete(sale);
+        var traspasoLabel = 'Traspaso' + (!traspasoComplete ? ' \u26a0\ufe0f' : ' \u2713');
+
         var tabs = '<div class="tabs">' +
-            ['info', 'finanzas', 'checklist', 'notas'].map(function (t) {
-                var labels = { info: 'Info General', finanzas: 'Finanzas', checklist: 'Checklist', notas: 'Notas' };
-                return '<button class="tab' + (activeTab === t ? ' active' : '') + '" data-tab="' + t + '">' + labels[t] + '</button>';
+            [
+                { id: 'traspaso', label: traspasoLabel },
+                { id: 'info',     label: 'Info General' },
+                { id: 'finanzas', label: 'Finanzas'     },
+                { id: 'checklist',label: 'Checklist'    },
+                { id: 'notas',    label: 'Notas'        }
+            ].map(function (t) {
+                return '<button class="tab' + (activeTab === t.id ? ' active' : '') + '" data-tab="' + t.id + '">' + t.label + '</button>';
             }).join('') +
             '</div>';
 
         var tabContent = '';
-        if (activeTab === 'info')       tabContent = renderDetailInfo(sale);
+        if (activeTab === 'traspaso')   tabContent = renderDetailTraspaso(sale);
+        else if (activeTab === 'info')       tabContent = renderDetailInfo(sale);
         else if (activeTab === 'finanzas') tabContent = renderDetailFinanzas(sale);
         else if (activeTab === 'checklist') tabContent = renderDetailChecklist(sale);
         else if (activeTab === 'notas')    tabContent = renderDetailNotas(sale);
@@ -821,6 +1098,7 @@ window.Mazelab.Modules.KanbanModule = (function () {
     function refreshContent() {
         var container = document.getElementById('kanban-content');
         if (!container) return;
+        updateSidebarBadge();
         if (currentSaleId) {
             var sale = sales.find(function (s) { return String(s.id) === String(currentSaleId); });
             if (!sale) { currentSaleId = null; refreshContent(); return; }
@@ -849,6 +1127,10 @@ window.Mazelab.Modules.KanbanModule = (function () {
             refreshContent();
         });
 
+        // Alerts panel
+        var alertsBtn = document.getElementById('kb-alerts-btn');
+        if (alertsBtn) alertsBtn.addEventListener('click', openAlertsPanel);
+
         // Year filter (post board only)
         var yearSel = document.getElementById('kb-year-filter');
         if (yearSel) yearSel.addEventListener('change', function () {
@@ -875,7 +1157,9 @@ window.Mazelab.Modules.KanbanModule = (function () {
             card.addEventListener('click', function (e) {
                 if (e.target.closest('.kanban-card-arrows')) return;
                 currentSaleId = this.dataset.saleId;
-                activeTab = 'info';
+                // Open traspaso tab if traspaso is not complete, else info
+                var s = sales.find(function (x) { return String(x.id) === String(currentSaleId); });
+                activeTab = (s && !isTraspasoComplete(s)) ? 'traspaso' : 'info';
                 refreshContent();
             });
         });
@@ -950,6 +1234,11 @@ window.Mazelab.Modules.KanbanModule = (function () {
             refreshContent();
         });
 
+        var saludoBtn = document.getElementById('kb-generar-saludo-btn');
+        if (saludoBtn) saludoBtn.addEventListener('click', function () {
+            openSaludoModal(sale);
+        });
+
         var removeBtn = document.getElementById('kb-remove-board-btn');
         if (removeBtn) removeBtn.addEventListener('click', function () {
             if (!confirm('¿Quitar "' + (sale.eventName || 'este evento') + '" del board operativo?\n\nEl evento seguirá en Ventas y no se perderá ningún dato.')) return;
@@ -999,6 +1288,53 @@ window.Mazelab.Modules.KanbanModule = (function () {
             });
         });
 
+        // Traspaso save
+        var trSaveBtn = document.getElementById('tr-save-btn');
+        if (trSaveBtn) trSaveBtn.addEventListener('click', function () {
+            var fields = ['contactoNombre','contactoTel','contactoEmail','lugar','pax',
+                          'horarioServicio','horarioMontaje','horarioDesmontaje','vestimenta',
+                          'requerimientos','notaVendedor'];
+            var data = {};
+            fields.forEach(function (f) {
+                var el = document.getElementById('tr-' + f);
+                if (el) data[f] = el.value.trim();
+            });
+            traspasoEditMode = false;
+            saveTraspaso(sale, data);
+        });
+
+        // Traspaso: cancel edit → back to brief
+        var trCancelEdit = document.getElementById('tr-cancel-edit-btn');
+        if (trCancelEdit) trCancelEdit.addEventListener('click', function () {
+            traspasoEditMode = false;
+            refreshContent();
+        });
+
+        // Traspaso: copy brief to clipboard
+        var trCopyBtn = document.getElementById('tr-copy-brief-btn');
+        if (trCopyBtn) trCopyBtn.addEventListener('click', function () {
+            var text = briefTextForClipboard(sale);
+            navigator.clipboard.writeText(text).then(function () {
+                trCopyBtn.textContent = 'Copiado!';
+                setTimeout(function () { if (trCopyBtn) trCopyBtn.textContent = 'Copiar brief'; }, 2000);
+            }).catch(function () {
+                // Fallback for older browsers
+                var ta = document.createElement('textarea');
+                ta.value = text; ta.style.position = 'fixed'; ta.style.opacity = '0';
+                document.body.appendChild(ta); ta.select(); document.execCommand('copy');
+                document.body.removeChild(ta);
+                trCopyBtn.textContent = 'Copiado!';
+                setTimeout(function () { if (trCopyBtn) trCopyBtn.textContent = 'Copiar brief'; }, 2000);
+            });
+        });
+
+        // Traspaso: edit button (from brief view)
+        var trEditBtn = document.getElementById('tr-edit-traspaso-btn');
+        if (trEditBtn) trEditBtn.addEventListener('click', function () {
+            traspasoEditMode = true;
+            refreshContent();
+        });
+
         var encInput = document.getElementById('kb-encargado');
         if (encInput) encInput.addEventListener('blur', function () {
             saveEncargado(sale, this.value);
@@ -1039,6 +1375,16 @@ window.Mazelab.Modules.KanbanModule = (function () {
         await window.Mazelab.DataService.update('sales', sale.id, { kanbanNotes: value });
     }
 
+    async function saveTraspaso(sale, data) {
+        sale.traspaso = data;
+        try {
+            await window.Mazelab.DataService.update('sales', sale.id, { traspaso: data });
+            refreshContent();
+        } catch (e) {
+            alert('Error al guardar traspaso: ' + e.message);
+        }
+    }
+
     async function addCustomChecklistItem(sale, group, label) {
         var key = 'custom_' + Date.now();
         var cl = Array.isArray(sale.checklist) ? sale.checklist.slice() : [];
@@ -1053,6 +1399,103 @@ window.Mazelab.Modules.KanbanModule = (function () {
         sale.checklist = cl.filter(function (c) { return c.key !== key; });
         await window.Mazelab.DataService.update('sales', sale.id, { checklist: sale.checklist });
         refreshContent();
+    }
+
+    // ---- saludo modal ----
+
+    var DEFAULT_SALUDO_TEMPLATES = [
+        {
+            label: 'Saludo inicial',
+            text: 'Hola {contacto}, te escribo de parte de MazeLab. Quedé a cargo de la coordinación de {servicio} para el evento de {cliente} el {fecha} en {lugar}.\n\nMe pongo en contacto para coordinar los detalles y asegurarme de que todo esté perfecto para el día del evento.\n\n¿Cuándo tienes disponibilidad para conversar?\n\nSaludos,\n{encargado}\nMazeLab'
+        },
+        {
+            label: 'Con solicitud de diseño',
+            text: 'Hola {contacto}, te escribo de parte de MazeLab por el evento de {cliente} el {fecha}.\n\nPara preparar {servicio} necesitamos que nos envíes los archivos de diseño/branding con al menos 5 días de anticipación al evento.\n\n¿Puedes confirmarme el formato y si ya lo tienes en proceso?\n\nSaludos,\n{encargado}\nMazeLab'
+        },
+        {
+            label: 'Confirmación de llegada',
+            text: 'Hola {contacto}, te confirmamos que el equipo de MazeLab llegará al evento de {cliente} el {fecha} en {lugar} a la hora de montaje acordada.\n\nTe pedimos que nos tengan un punto de corriente asignado cerca del área de instalación.\n\nCualquier consulta estamos disponibles.\n\nSaludos,\n{encargado}\nMazeLab'
+        }
+    ];
+
+    function fillTemplate(tpl, sale) {
+        var t = sale.traspaso || {};
+        return (tpl || '')
+            .replace(/\{contacto\}/g,   t.contactoNombre || '[nombre contacto]')
+            .replace(/\{cliente\}/g,    sale.clientName  || '[cliente]')
+            .replace(/\{evento\}/g,     sale.eventName   || '[evento]')
+            .replace(/\{fecha\}/g,      formatDate(sale.eventDate))
+            .replace(/\{lugar\}/g,      t.lugar          || '[lugar]')
+            .replace(/\{encargado\}/g,  sale.encargado   || 'el equipo de MazeLab')
+            .replace(/\{servicio\}/g,   sale.serviceNames || '[servicio]');
+    }
+
+    function openSaludoModal(sale) {
+        var svcForSale = (sale.serviceIds || []).map(function (sid) {
+            return services.find(function (sv) { return String(sv.id) === String(sid); });
+        }).filter(Boolean);
+
+        var customTemplates = svcForSale.filter(function (sv) { return sv.template_saludo; }).map(function (sv) {
+            return { label: sv.name, text: sv.template_saludo };
+        });
+
+        // Merge: custom service templates first, then defaults
+        var allTemplates = customTemplates.concat(DEFAULT_SALUDO_TEMPLATES);
+
+        function buildContent(idx) {
+            var msg = fillTemplate(allTemplates[idx].text, sale);
+            var presetBtns = allTemplates.map(function (tpl, i) {
+                return '<button class="kb-saludo-preset' + (i === idx ? ' active' : '') + '" data-tpl-idx="' + i + '" style="font-size:11px;padding:4px 10px;border-radius:20px;border:1px solid rgba(255,255,255,' + (i === idx ? '0.4' : '0.15') + ');background:' + (i === idx ? 'rgba(255,255,255,0.12)' : 'transparent') + ';color:var(--text-secondary);cursor:pointer;white-space:nowrap">' + tpl.label + '</button>';
+            }).join('');
+            return '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:var(--space-md)">' +
+                '<strong style="font-size:15px">Saludo \u2014 ' + (sale.clientName || 'cliente') + '</strong>' +
+                '<button id="kb-saludo-close" style="background:none;border:none;font-size:22px;color:var(--text-muted);cursor:pointer;line-height:1">&times;</button>' +
+            '</div>' +
+            '<div style="font-size:11px;color:var(--text-muted);margin-bottom:8px">Elige una base y edita libremente antes de copiar:</div>' +
+            '<div style="display:flex;flex-wrap:wrap;gap:6px;margin-bottom:var(--space-md)" id="kb-saludo-presets">' + presetBtns + '</div>' +
+            '<textarea id="kb-saludo-text" class="form-control" rows="13" style="font-size:13px;line-height:1.7;resize:vertical">' + msg + '</textarea>' +
+            '<div style="display:flex;gap:var(--space-sm);margin-top:var(--space-md)">' +
+                '<button class="btn-primary" id="kb-saludo-copy">Copiar mensaje</button>' +
+                '<button class="btn-secondary" id="kb-saludo-close2">Cerrar</button>' +
+            '</div>';
+        }
+
+        // Build overlay
+        var wrapper = document.createElement('div');
+        wrapper.id = 'kb-saludo-wrapper';
+        wrapper.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.88);z-index:1000;display:flex;align-items:center;justify-content:center';
+        var panel = document.createElement('div');
+        panel.style.cssText = 'background:#1e1b2e;border:1px solid rgba(255,255,255,0.12);border-radius:14px;padding:28px;width:min(620px,96vw);max-height:90vh;overflow-y:auto;display:flex;flex-direction:column';
+        panel.innerHTML = buildContent(0);
+        wrapper.appendChild(panel);
+        document.body.appendChild(wrapper);
+
+        function close() { var el = document.getElementById('kb-saludo-wrapper'); if (el) el.remove(); }
+        function getCurrentMsg() { var ta = document.getElementById('kb-saludo-text'); return ta ? ta.value : ''; }
+
+        // Close on backdrop click
+        wrapper.addEventListener('click', function (e) { if (e.target === wrapper) close(); });
+
+        // Use event delegation on panel only — no propagation surprises
+        panel.addEventListener('click', function (e) {
+            var t = e.target;
+            if (t.id === 'kb-saludo-close' || t.id === 'kb-saludo-close2') { close(); return; }
+            if (t.id === 'kb-saludo-copy') {
+                var text = getCurrentMsg();
+                navigator.clipboard.writeText(text).catch(function () {
+                    var ta2 = document.createElement('textarea');
+                    ta2.value = text; ta2.style.cssText = 'position:fixed;opacity:0';
+                    document.body.appendChild(ta2); ta2.select(); document.execCommand('copy'); document.body.removeChild(ta2);
+                });
+                t.textContent = '\u2713 Copiado!';
+                setTimeout(function () { if (t) t.textContent = 'Copiar mensaje'; }, 2000);
+                return;
+            }
+            var tplIdx = t.dataset.tplIdx;
+            if (tplIdx !== undefined) {
+                panel.innerHTML = buildContent(Number(tplIdx));
+            }
+        });
     }
 
     // ---- init ----

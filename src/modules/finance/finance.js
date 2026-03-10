@@ -534,6 +534,7 @@ window.Mazelab.Modules.FinanceModule = (function () {
         html += '  </div>';
         var hasActiveFilters = Object.keys(columnFilters).some(function(k) { return columnFilters[k]; });
         html += '  <button class="btn-secondary btn-sm" id="finance-clear-filters"' + (hasActiveFilters ? '' : ' style="opacity:.45"') + '>\u2715 Limpiar filtros</button>';
+        html += '  <button class="btn-primary btn-sm" id="finance-nueva-factura" style="margin-left:auto">+ Nueva Factura</button>';
         html += '</div>';
 
         if (currentView === 'agrupada') {
@@ -966,6 +967,14 @@ window.Mazelab.Modules.FinanceModule = (function () {
             });
         }
 
+        // Nueva Factura manual
+        var nuevaFacturaBtn = document.getElementById('finance-nueva-factura');
+        if (nuevaFacturaBtn) {
+            nuevaFacturaBtn.addEventListener('click', function () {
+                openNuevaFacturaModal();
+            });
+        }
+
         // Facturar buttons (sin_factura records)
         document.querySelectorAll('.btn-facturar').forEach(function (btn) {
             btn.addEventListener('click', function () {
@@ -1379,6 +1388,152 @@ window.Mazelab.Modules.FinanceModule = (function () {
         bindAbonoEvents();
     }
 
+    function openNuevaFacturaModal() {
+        var modalContainer = document.getElementById('finance-modal-container');
+        if (!modalContainer) return;
+
+        var today = new Date();
+        var dd = String(today.getDate()).padStart(2, '0');
+        var mm = String(today.getMonth() + 1).padStart(2, '0');
+        var yyyy = today.getFullYear();
+        var todayDMY = dd + '/' + mm + '/' + yyyy;
+
+        var html = '<div class="modal-overlay active" id="nueva-fac-overlay">' +
+            '<div class="modal">' +
+            '  <div class="modal-header">' +
+            '    <h3>Nueva Factura — ingreso manual</h3>' +
+            '    <button class="modal-close" id="nf-close-x">&times;</button>' +
+            '  </div>' +
+            '  <p style="color:var(--text-secondary);font-size:13px;margin-bottom:12px">Asocia esta factura a un evento existente.</p>' +
+            '  <div class="form-group">' +
+            '    <label>ID del evento <span style="color:var(--text-muted);font-weight:400">(escribe el n\u00famero, ej: 850)</span></label>' +
+            '    <input type="text" class="form-control" id="nf-id-search" placeholder="Ej: 850" autocomplete="off">' +
+            '  </div>' +
+            '  <input type="hidden" id="nf-sale-id">' +
+            '  <div id="nf-sale-info" style="background:var(--bg-tertiary);border-radius:6px;padding:8px 12px;margin:-4px 0 12px 0;font-size:12px;color:var(--text-secondary);min-height:32px">Escribe el ID para buscar el evento.</div>' +
+            '  <div class="form-row">' +
+            '    <div class="form-group">' +
+            '      <label>N\u00b0 Factura</label>' +
+            '      <input type="text" class="form-control" id="nf-number" placeholder="Ej: F-001245">' +
+            '    </div>' +
+            '    <div class="form-group">' +
+            '      <label>Fecha Emisi\u00f3n (DD/MM/AAAA)</label>' +
+            '      <input type="text" class="form-control" id="nf-date" value="' + todayDMY + '">' +
+            '    </div>' +
+            '  </div>' +
+            '  <div class="form-row">' +
+            '    <div class="form-group">' +
+            '      <label>Monto Neto (sin IVA)</label>' +
+            '      <input type="number" class="form-control" id="nf-amount" placeholder="Ej: 650000" min="0">' +
+            '    </div>' +
+            '    <div class="form-group">' +
+            '      <label>Cond. de Pago (d\u00edas)</label>' +
+            '      <input type="number" class="form-control" id="nf-terms" value="30" min="1">' +
+            '    </div>' +
+            '  </div>' +
+            '  <div class="form-group" style="margin-bottom:8px">' +
+            '    <label>Tipo de documento</label>' +
+            '    <select class="form-control" id="nf-tipo">' +
+            '      <option value="F">Factura (+ 19% IVA)</option>' +
+            '      <option value="E">Factura Exenta (sin IVA)</option>' +
+            '    </select>' +
+            '  </div>' +
+            '  <div style="background:var(--bg-tertiary);border-radius:var(--radius-sm);padding:12px;margin-bottom:16px;font-size:13px;">' +
+            '    <span style="color:var(--text-secondary)">IVA (19%): </span><strong id="nf-iva-preview">$0</strong>' +
+            '    &nbsp;&nbsp; <span style="color:var(--text-secondary)">Total con IVA: </span><strong id="nf-total-preview">$0</strong>' +
+            '  </div>' +
+            '  <div class="form-actions">' +
+            '    <button class="btn btn-secondary" id="nf-cancel-btn">Cancelar</button>' +
+            '    <button class="btn btn-primary" id="nf-save-btn">Guardar Factura</button>' +
+            '  </div>' +
+            '</div></div>';
+
+        modalContainer.innerHTML = html;
+
+        function closeModal() { modalContainer.innerHTML = ''; }
+        document.getElementById('nf-close-x').addEventListener('click', closeModal);
+        document.getElementById('nf-cancel-btn').addEventListener('click', closeModal);
+        document.getElementById('nueva-fac-overlay').addEventListener('click', function (e) {
+            if (e.target === this) closeModal();
+        });
+
+        function updatePreview() {
+            var neto = Number(document.getElementById('nf-amount').value) || 0;
+            var tipo = document.getElementById('nf-tipo').value;
+            var iva  = tipo === 'E' ? 0 : Math.round(neto * 0.19);
+            document.getElementById('nf-iva-preview').textContent = tipo === 'E' ? '$0 (exenta)' : formatCLP(iva);
+            document.getElementById('nf-total-preview').textContent = formatCLP(neto + iva);
+        }
+        document.getElementById('nf-amount').addEventListener('input', updatePreview);
+        document.getElementById('nf-tipo').addEventListener('change', updatePreview);
+
+        // ID search → auto-fill sale info
+        document.getElementById('nf-id-search').addEventListener('input', function () {
+            var q = this.value.trim();
+            var info = document.getElementById('nf-sale-info');
+            var hidSaleId = document.getElementById('nf-sale-id');
+            if (!q) {
+                info.textContent = 'Escribe el ID para buscar el evento.';
+                info.style.color = 'var(--text-muted)';
+                hidSaleId.value = '';
+                this.style.borderColor = '';
+                return;
+            }
+            var found = (cachedSales || []).find(function (s) {
+                return String(s.sourceId || '') === q || String(s.id || '') === q;
+            });
+            if (found) {
+                hidSaleId.value = found.id;
+                info.innerHTML = '<strong style="color:var(--text-primary)">#' + (found.sourceId || found.id) + ' — ' + (found.eventName || '-') + '</strong>' +
+                    '<span style="margin-left:8px">' + (found.clientName || '') + '</span>' +
+                    (found.eventDate ? '<span style="margin-left:8px;color:var(--text-muted)">' + found.eventDate + '</span>' : '') +
+                    (found.amount ? '<span style="margin-left:8px;color:var(--success)">' + formatCLP(Number(found.amount)) + '</span>' : '');
+                this.style.borderColor = 'var(--success)';
+            } else {
+                hidSaleId.value = '';
+                info.textContent = q.length >= 2 ? 'Evento no encontrado — verifica el ID.' : 'Escribe el ID para buscar el evento.';
+                info.style.color = q.length >= 2 ? 'var(--danger)' : 'var(--text-muted)';
+                this.style.borderColor = q.length >= 2 ? 'var(--danger)' : '';
+            }
+        });
+
+        document.getElementById('nf-save-btn').addEventListener('click', async function () {
+            var saleId = document.getElementById('nf-sale-id').value;
+            var invoiceNumber = document.getElementById('nf-number').value.trim();
+            var billingMonth  = document.getElementById('nf-date').value.trim();
+            var invoicedAmount = Number(document.getElementById('nf-amount').value) || 0;
+            var paymentTerms  = Number(document.getElementById('nf-terms').value) || 30;
+            var tipoDoc = document.getElementById('nf-tipo').value;
+
+            if (!saleId) { alert('Selecciona el evento al que pertenece esta factura.'); return; }
+            if (!/^\d{2}\/\d{2}\/\d{4}$/.test(billingMonth)) { alert('La fecha debe tener formato DD/MM/AAAA'); return; }
+            if (invoicedAmount <= 0) { alert('Ingresa el monto neto facturado.'); return; }
+
+            var sale = (cachedSales || []).find(function (s) { return String(s.id) === saleId; });
+
+            try {
+                await window.Mazelab.DataService.create('receivables', {
+                    id:             window.Mazelab.Storage.generateId(),
+                    eventName:      sale ? (sale.eventName  || '') : '',
+                    eventDate:      sale ? (sale.eventDate  || '') : '',
+                    clientName:     sale ? (sale.clientName || '') : '',
+                    montoNeto:      invoicedAmount,
+                    invoicedAmount: invoicedAmount,
+                    monto_venta:    invoicedAmount,
+                    invoiceNumber:  invoiceNumber,
+                    billingMonth:   billingMonth,
+                    paymentTerms:   paymentTerms,
+                    tipoDoc:        tipoDoc,
+                    status:         'pendiente_pago',
+                    saleId:         saleId,
+                    payments:       []
+                });
+                closeModal();
+                await loadAndRender();
+            } catch (err) { alert('Error al guardar: ' + err.message); }
+        });
+    }
+
     function openFacturarModal(id) {
         var rec = allReceivables.find(function (r) { return r.id === id; });
         if (!rec) return;
@@ -1468,6 +1623,7 @@ window.Mazelab.Modules.FinanceModule = (function () {
         }
         document.getElementById('fac-amount').addEventListener('input', updateIvaPreview);
         document.getElementById('fac-tipo').addEventListener('change', updateIvaPreview);
+        updateIvaPreview(); // populate on open
         document.getElementById('fac-btn-50').addEventListener('click', function () {
             document.getElementById('fac-amount').value = Math.round(refAmount / 2);
             updateIvaPreview();
