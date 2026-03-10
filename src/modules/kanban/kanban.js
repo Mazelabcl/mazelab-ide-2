@@ -12,6 +12,7 @@ window.Mazelab.Modules.KanbanModule = (function () {
     var postYearMin = '2026';  // default year filter for post board
     var dragSaleId = null;
     var filters = { client: '', service: '', seller: '', financial: '' };
+    var bodegaEquipos = [];
 
     // ---- column definitions ----
 
@@ -658,6 +659,68 @@ window.Mazelab.Modules.KanbanModule = (function () {
         return Object.keys(map).sort().map(function (n) {
             return '<option value="' + escapeHtml(n) + '">';
         }).join('');
+    }
+
+    function getBusyEquipoIds(forSaleId, forEventDate) {
+        var busy = {};
+        sales.forEach(function (s) {
+            if (String(s.id) === String(forSaleId)) return;
+            if (s.eventDate !== forEventDate) return; // same-date conflict only
+            (s.equiposAsignados || []).forEach(function (a) {
+                if (a.equipoId && !a.retornado) busy[String(a.equipoId)] = s.eventName || '?';
+            });
+        });
+        return busy;
+    }
+
+    function initEquiposFromTemplates(sale) {
+        var items = [];
+        var now = Date.now();
+        (sale.serviceIds || []).forEach(function (sid) {
+            var sv = services.find(function (s) { return String(s.id) === String(sid); });
+            if (!sv || !sv.equipos_checklist) return;
+            var lines = String(sv.equipos_checklist).split('\n').map(function (l) { return l.trim(); }).filter(Boolean);
+            lines.forEach(function (line, idx) {
+                items.push({
+                    itemId: 'item_' + (now + idx),
+                    label: line,
+                    serviceId: String(sv.id),
+                    serviceName: sv.name || sv.nombre || '',
+                    equipoId: null,
+                    equipoDisplayId: null,
+                    equipoNombre: null,
+                    estadoSalida: 'bueno',
+                    retornado: false,
+                    estadoRetorno: null,
+                    notaRetorno: ''
+                });
+            });
+        });
+        return items;
+    }
+
+    function collectEquiposFromDOM(sale) {
+        var items = JSON.parse(JSON.stringify(sale.equiposAsignados || []));
+        document.querySelectorAll('.kb-eq-equipo-sel').forEach(function (sel) {
+            var itemId = sel.dataset.itemId;
+            var item = items.find(function (i) { return i.itemId === itemId; });
+            if (!item) return;
+            var equipoId = sel.value || null;
+            item.equipoId = equipoId;
+            if (equipoId) {
+                var eq = bodegaEquipos.find(function (e) { return String(e.id) === String(equipoId); });
+                if (eq) { item.equipoDisplayId = eq.equipo_id || ''; item.equipoNombre = eq.nombre || ''; }
+            } else {
+                item.equipoDisplayId = null;
+                item.equipoNombre = null;
+            }
+        });
+        document.querySelectorAll('.kb-eq-estado-sal').forEach(function (sel) {
+            var itemId = sel.dataset.itemId;
+            var item = items.find(function (i) { return i.itemId === itemId; });
+            if (item) item.estadoSalida = sel.value;
+        });
+        return items;
     }
 
     function getDaysInfo(sale) {
@@ -1335,6 +1398,120 @@ window.Mazelab.Modules.KanbanModule = (function () {
             '</div>';
     }
 
+    // ---- render: detail - equipos ----
+
+    function renderDetailEquipos(sale) {
+        var isPost = (sale.eventDate || '') < todayStr();
+        var items = sale.equiposAsignados || [];
+        var ESTADOS_EQ = ['bueno', 'dañado', 'mantenimiento'];
+
+        function estOpts(selected) {
+            return ESTADOS_EQ.map(function (e) {
+                return '<option value="' + e + '"' + (selected === e ? ' selected' : '') + '>' + e.charAt(0).toUpperCase() + e.slice(1) + '</option>';
+            }).join('');
+        }
+
+        if (items.length === 0) {
+            var hasTpl = (sale.serviceIds || []).some(function (sid) {
+                var sv = services.find(function (s) { return String(s.id) === String(sid); });
+                return sv && sv.equipos_checklist;
+            });
+            return '<div style="padding:24px;text-align:center">' +
+                '<div style="color:var(--text-secondary);margin-bottom:20px">No hay equipos asignados a este evento.</div>' +
+                (hasTpl
+                    ? '<button class="btn btn-primary" id="kb-eq-init-btn" style="margin-bottom:12px">Inicializar desde plantillas del servicio \u2192</button><br>'
+                    : '') +
+                '<button class="btn btn-secondary" id="kb-eq-add-extra-btn">+ Agregar equipo manualmente</button>' +
+            '</div>';
+        }
+
+        var busyIds = getBusyEquipoIds(sale.id, sale.eventDate);
+        var thisAssigned = {};
+        items.forEach(function (it) { if (it.equipoId) thisAssigned[String(it.equipoId)] = true; });
+        var selectableEquipos = bodegaEquipos.filter(function (eq) {
+            return eq.estado !== 'baja' && (!busyIds[String(eq.id)] || thisAssigned[String(eq.id)]);
+        });
+
+        var groupOrder = [], groups = {};
+        items.forEach(function (item) {
+            var gid = item.serviceId || '__extra__';
+            var gname = item.serviceName || (item.serviceId ? item.serviceId : 'Equipos extras');
+            if (!groups[gid]) { groups[gid] = { name: gname, items: [] }; groupOrder.push(gid); }
+            groups[gid].items.push(item);
+        });
+
+        var retornados = items.filter(function (i) { return i.retornado; }).length;
+
+        var groupsHtml = groupOrder.map(function (gid) {
+            var g = groups[gid];
+            var rows = g.items.map(function (item) {
+                if (isPost) {
+                    if (item.retornado) {
+                        return '<div style="display:flex;align-items:center;gap:8px;padding:7px 0;border-bottom:1px solid rgba(255,255,255,0.05)">' +
+                            '<span style="color:#4ade80;font-size:13px;flex-shrink:0">\u2713</span>' +
+                            '<span style="flex:1;font-size:13px;color:var(--text-secondary)">' + escapeHtml(item.label) +
+                                (item.equipoDisplayId ? ' <code style="font-size:10px;opacity:0.6">' + escapeHtml(item.equipoDisplayId) + '</code>' : '') +
+                            '</span>' +
+                            '<span style="font-size:11px;color:var(--text-muted)">' +
+                                escapeHtml(item.estadoRetorno || '') +
+                                (item.notaRetorno ? ' \u00b7 ' + escapeHtml(item.notaRetorno) : '') +
+                            '</span>' +
+                        '</div>';
+                    }
+                    return '<div style="display:flex;align-items:center;gap:8px;padding:7px 0;border-bottom:1px solid rgba(255,255,255,0.05)">' +
+                        '<div style="flex:1">' +
+                            '<div style="font-size:13px;font-weight:500">' + escapeHtml(item.label) + '</div>' +
+                            (item.equipoDisplayId
+                                ? '<div style="font-size:11px;color:var(--text-muted)">' + escapeHtml(item.equipoDisplayId) + ' \u00b7 sali\u00f3: ' + escapeHtml(item.estadoSalida || '-') + '</div>'
+                                : '<div style="font-size:11px;color:var(--text-muted)">Sin equipo asignado</div>') +
+                        '</div>' +
+                        '<select class="form-control kb-eq-retorno-estado" data-item-id="' + item.itemId + '" style="width:130px;height:28px;font-size:12px">' + estOpts(item.estadoRetorno || 'bueno') + '</select>' +
+                        '<input type="text" class="form-control kb-eq-retorno-nota" data-item-id="' + item.itemId + '" placeholder="Nota da\u00f1o..." value="' + escapeHtml(item.notaRetorno || '') + '" style="width:120px;height:28px;font-size:12px">' +
+                        '<button class="btn btn-primary kb-eq-retorno-btn" data-item-id="' + item.itemId + '" style="height:28px;padding:0 10px;font-size:12px;white-space:nowrap">\u2713 Recib\u00ed conforme</button>' +
+                    '</div>';
+                } else {
+                    var equipoOpts = '<option value="">— Sin asignar —</option>' +
+                        selectableEquipos.map(function (eq) {
+                            var sel = item.equipoId && String(item.equipoId) === String(eq.id) ? ' selected' : '';
+                            return '<option value="' + eq.id + '"' + sel + '>[' + escapeHtml(eq.equipo_id || '') + '] ' + escapeHtml(eq.nombre || '') + '</option>';
+                        }).join('');
+                    return '<div style="display:flex;align-items:center;gap:8px;padding:7px 0;border-bottom:1px solid rgba(255,255,255,0.05)">' +
+                        '<div style="flex:1;font-size:13px">' + escapeHtml(item.label) + '</div>' +
+                        '<select class="form-control kb-eq-equipo-sel" data-item-id="' + item.itemId + '" style="width:200px;height:28px;font-size:12px">' + equipoOpts + '</select>' +
+                        '<select class="form-control kb-eq-estado-sal" data-item-id="' + item.itemId + '" style="width:125px;height:28px;font-size:12px">' + estOpts(item.estadoSalida || 'bueno') + '</select>' +
+                        '<button class="kb-eq-remove-btn" data-item-id="' + item.itemId + '" style="height:26px;width:26px;border-radius:4px;padding:0;font-size:16px;line-height:1;background:rgba(248,113,113,0.1);color:#f87171;border:1px solid rgba(248,113,113,0.3);cursor:pointer" title="Quitar">&times;</button>' +
+                    '</div>';
+                }
+            }).join('');
+
+            var addRow = !isPost
+                ? '<div style="padding:6px 0;display:flex;gap:6px">' +
+                    '<input type="text" class="form-control kb-eq-new-input" data-service-id="' + gid + '" data-service-name="' + escapeHtml(g.name) + '" placeholder="Agregar \u00edtem de equipo..." style="flex:1;height:28px;font-size:12px">' +
+                    '<button class="kb-eq-add-item-btn" data-service-id="' + gid + '" data-service-name="' + escapeHtml(g.name) + '" style="height:28px;padding:0 10px;font-size:12px;background:rgba(255,255,255,0.07);border:1px solid rgba(255,255,255,0.15);border-radius:6px;color:var(--text-secondary);cursor:pointer">+ A\u00f1adir</button>' +
+                  '</div>'
+                : '';
+
+            return '<div style="margin-bottom:var(--space-lg)">' +
+                '<div style="font-size:11px;font-weight:700;color:var(--text-muted);letter-spacing:0.5px;text-transform:uppercase;padding-bottom:8px">' + escapeHtml(g.name) + '</div>' +
+                rows + addRow +
+            '</div>';
+        }).join('');
+
+        var title = isPost ? 'RETORNO DE EQUIPOS' : 'EQUIPOS DEL EVENTO';
+        var subtitle = isPost
+            ? '<div style="font-size:12px;color:' + (retornados === items.length ? '#4ade80' : 'var(--text-muted)') + ';margin-bottom:12px">' + retornados + '/' + items.length + ' equipos retornados</div>'
+            : '';
+        var actionBar = !isPost
+            ? '<div style="margin-top:var(--space-md);display:flex;gap:8px;padding-top:var(--space-md);border-top:1px solid rgba(255,255,255,0.06)">' +
+                '<button class="btn btn-primary" id="kb-eq-save-btn">Guardar</button>' +
+                '<button class="btn btn-secondary" id="kb-eq-add-extra-btn">+ Equipo extra</button>' +
+              '</div>'
+            : '';
+
+        return '<div style="font-size:11px;font-weight:700;color:var(--text-muted);letter-spacing:0.5px;margin-bottom:12px">' + title + '</div>' +
+            subtitle + groupsHtml + actionBar;
+    }
+
     // ---- render: detail view ----
 
     function renderDetail(sale) {
@@ -1364,6 +1541,7 @@ window.Mazelab.Modules.KanbanModule = (function () {
             [
                 { id: 'resumen',      label: 'Resumen'      },
                 { id: 'checklist',    label: 'Checklist'    },
+                { id: 'equipos',      label: 'Equipos'      },
                 { id: 'finanzas',     label: 'Finanzas'     },
                 { id: 'comunicacion', label: 'Comunicación' },
                 { id: 'notas',        label: 'Notas'        }
@@ -1375,6 +1553,7 @@ window.Mazelab.Modules.KanbanModule = (function () {
         var tabContent = '';
         if (activeTab === 'resumen')          tabContent = renderDetailResumen(sale);
         else if (activeTab === 'checklist')   tabContent = renderDetailChecklist(sale);
+        else if (activeTab === 'equipos')     tabContent = renderDetailEquipos(sale);
         else if (activeTab === 'finanzas')    tabContent = renderDetailFinanzas(sale);
         else if (activeTab === 'comunicacion') tabContent = renderDetailComunicacion(sale);
         else if (activeTab === 'notas')       tabContent = renderDetailNotas(sale);
@@ -1732,6 +1911,69 @@ window.Mazelab.Modules.KanbanModule = (function () {
         if (notesArea) notesArea.addEventListener('blur', function () {
             saveNotes(sale, this.value);
         });
+
+        // Equipos tab: initialize from templates
+        var eqInitBtn = document.getElementById('kb-eq-init-btn');
+        if (eqInitBtn) eqInitBtn.addEventListener('click', function () {
+            var items = initEquiposFromTemplates(sale);
+            saveEquiposAsignados(sale, items);
+        });
+
+        // Equipos tab: add extra equipo manually
+        var eqAddExtra = document.getElementById('kb-eq-add-extra-btn');
+        if (eqAddExtra) eqAddExtra.addEventListener('click', function () {
+            var label = prompt('Nombre del equipo a agregar:');
+            if (!label || !label.trim()) return;
+            var items = (sale.equiposAsignados || []).slice();
+            items.push({ itemId: 'item_' + Date.now(), label: label.trim(), serviceId: null, serviceName: null, equipoId: null, equipoDisplayId: null, estadoSalida: 'bueno', retornado: false, estadoRetorno: null, notaRetorno: '' });
+            saveEquiposAsignados(sale, items);
+        });
+
+        // Equipos tab: save assignment
+        var eqSaveBtn = document.getElementById('kb-eq-save-btn');
+        if (eqSaveBtn) eqSaveBtn.addEventListener('click', function () {
+            saveEquiposAsignados(sale, collectEquiposFromDOM(sale));
+        });
+
+        // Equipos tab: add item to group
+        document.querySelectorAll('.kb-eq-add-item-btn').forEach(function (btn) {
+            btn.addEventListener('click', function () {
+                var gid = this.dataset.serviceId;
+                var gname = this.dataset.serviceName;
+                var inp = document.querySelector('.kb-eq-new-input[data-service-id="' + gid + '"]');
+                var label = inp ? inp.value.trim() : '';
+                if (!label) return;
+                var items = collectEquiposFromDOM(sale);
+                items.push({ itemId: 'item_' + Date.now(), label: label, serviceId: gid !== '__extra__' ? gid : null, serviceName: gid !== '__extra__' ? gname : null, equipoId: null, equipoDisplayId: null, estadoSalida: 'bueno', retornado: false, estadoRetorno: null, notaRetorno: '' });
+                saveEquiposAsignados(sale, items);
+            });
+        });
+        document.querySelectorAll('.kb-eq-new-input').forEach(function (inp) {
+            inp.addEventListener('keydown', function (e) {
+                if (e.key !== 'Enter') return;
+                var btn = document.querySelector('.kb-eq-add-item-btn[data-service-id="' + this.dataset.serviceId + '"]');
+                if (btn) btn.click();
+            });
+        });
+
+        // Equipos tab: remove item
+        document.querySelectorAll('.kb-eq-remove-btn').forEach(function (btn) {
+            btn.addEventListener('click', function () {
+                var itemId = this.dataset.itemId;
+                var items = collectEquiposFromDOM(sale).filter(function (i) { return i.itemId !== itemId; });
+                saveEquiposAsignados(sale, items);
+            });
+        });
+
+        // Equipos tab: retorno
+        document.querySelectorAll('.kb-eq-retorno-btn').forEach(function (btn) {
+            btn.addEventListener('click', function () {
+                var itemId = this.dataset.itemId;
+                var estadoEl = document.querySelector('.kb-eq-retorno-estado[data-item-id="' + itemId + '"]');
+                var notaEl   = document.querySelector('.kb-eq-retorno-nota[data-item-id="' + itemId + '"]');
+                returnEquipo(sale, itemId, estadoEl ? estadoEl.value : 'bueno', notaEl ? notaEl.value.trim() : '');
+            });
+        });
     }
 
     // ---- checklist / notes persistence ----
@@ -1791,6 +2033,44 @@ window.Mazelab.Modules.KanbanModule = (function () {
         sale.checklist = cl.filter(function (c) { return c.key !== key; });
         await window.Mazelab.DataService.update('sales', sale.id, { checklist: sale.checklist });
         refreshContent();
+    }
+
+    async function saveEquiposAsignados(sale, items) {
+        sale.equiposAsignados = items;
+        await window.Mazelab.DataService.update('sales', sale.id, { equiposAsignados: items });
+        // Update global occupation map for bodega
+        var today = todayStr();
+        window.Mazelab.BodegaOccupied = window.Mazelab.BodegaOccupied || {};
+        items.forEach(function (it) {
+            if (it.equipoId && !it.retornado && (sale.eventDate || '') >= today) {
+                window.Mazelab.BodegaOccupied[String(it.equipoId)] = { eventName: sale.eventName || '', eventDate: sale.eventDate || '' };
+            } else if (it.equipoId && it.retornado) {
+                delete window.Mazelab.BodegaOccupied[String(it.equipoId)];
+            }
+        });
+        refreshContent();
+    }
+
+    async function returnEquipo(sale, itemId, estadoRetorno, notaRetorno) {
+        var items = JSON.parse(JSON.stringify(sale.equiposAsignados || []));
+        var item = items.find(function (i) { return i.itemId === itemId; });
+        if (!item) return;
+        item.retornado = true;
+        item.estadoRetorno = estadoRetorno;
+        item.notaRetorno = notaRetorno;
+        // Update bodega equipo estado (if the equipo is in our loaded list)
+        if (item.equipoId) {
+            var eq = bodegaEquipos.find(function (e) { return String(e.id) === String(item.equipoId); });
+            if (eq) {
+                eq.estado = estadoRetorno;
+                var appendNote = notaRetorno ? '[Retorno ' + (sale.eventName || '') + ']: ' + notaRetorno : '';
+                await window.Mazelab.DataService.update('bodega', item.equipoId, {
+                    estado: estadoRetorno,
+                    notas: (eq.notas ? eq.notas + (appendNote ? '\n' + appendNote : '') : appendNote) || ''
+                });
+            }
+        }
+        await saveEquiposAsignados(sale, items);
     }
 
     // ---- saludo modal ----
@@ -1905,14 +2185,28 @@ window.Mazelab.Modules.KanbanModule = (function () {
                 DS.getAll('payables'),
                 DS.getAll('clients'),
                 DS.getAll('services'),
-                DS.getAll('staff')
+                DS.getAll('staff'),
+                DS.getAll('bodega')
             ]);
-            sales       = results[0] || [];
-            receivables = results[1] || [];
-            payables    = results[2] || [];
-            clients     = results[3] || [];
-            services    = results[4] || [];
-            staff       = results[5] || [];
+            sales          = results[0] || [];
+            receivables    = results[1] || [];
+            payables       = results[2] || [];
+            clients        = results[3] || [];
+            services       = results[4] || [];
+            staff          = results[5] || [];
+            bodegaEquipos  = results[6] || [];
+
+            // Populate global occupation map for bodega display
+            var today = todayStr();
+            window.Mazelab.BodegaOccupied = {};
+            sales.forEach(function (s) {
+                if ((s.eventDate || '') < today) return;
+                (s.equiposAsignados || []).forEach(function (a) {
+                    if (a.equipoId && !a.retornado) {
+                        window.Mazelab.BodegaOccupied[String(a.equipoId)] = { eventName: s.eventName || '', eventDate: s.eventDate || '' };
+                    }
+                });
+            });
 
             runMigration();
             refreshContent();

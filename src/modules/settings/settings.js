@@ -419,6 +419,10 @@ window.Mazelab.Modules.SettingsModule = (function () {
                     <label for="svc-template-diseno">Template: Solicitud de diseño/branding <span style="font-weight:400;color:var(--text-muted)">(cuando el cliente debe enviarnos archivos)</span></label>
                     <textarea id="svc-template-diseno" class="form-control" rows="5" placeholder="Hola {contacto}, para poder preparar el {servicio} necesitamos los siguientes archivos de diseño:\n\n- Formato: JPG o PNG\n- Medidas: [completar]\n- Plazo máximo: 5 días antes del evento\n\nCualquier consulta estamos disponibles.">${escapeHtml(s.template_diseno || '')}</textarea>
                 </div>
+                <div class="form-group">
+                    <label for="svc-equipos-checklist">Checklist de equipos del servicio <span style="font-weight:400;color:var(--text-muted)">(uno por línea — el operador puede agregar extras por evento)</span></label>
+                    <textarea id="svc-equipos-checklist" class="form-control" rows="5" placeholder="Ej:\nAro de luz portátil\niPhone XR para impresión\nImpresora DNP DS820\nRoll de papel fotográfico">${escapeHtml(s.equipos_checklist || '')}</textarea>
+                </div>
             </div>`;
     }
 
@@ -442,7 +446,8 @@ window.Mazelab.Modules.SettingsModule = (function () {
             notas_ops:        (document.getElementById('svc-notas-ops')        || {}).value || null,
             faq:              (document.getElementById('svc-faq')               || {}).value || null,
             template_saludo:  (document.getElementById('svc-template-saludo')  || {}).value || null,
-            template_diseno:  (document.getElementById('svc-template-diseno')  || {}).value || null
+            template_diseno:  (document.getElementById('svc-template-diseno')  || {}).value || null,
+            equipos_checklist: (document.getElementById('svc-equipos-checklist') || {}).value || null,
         };
     }
 

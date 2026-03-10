@@ -98,11 +98,15 @@ window.Mazelab.Modules.BodegaModule = (function () {
         var rows = list.map(function (e) {
             var est = estadoInfo(e.estado);
             var badge = '<span style="background:' + est.color + '22;color:' + est.color + ';border:1px solid ' + est.color + '44;padding:2px 10px;border-radius:20px;font-size:0.75rem;font-weight:600">' + escapeHtml(est.label) + '</span>';
+            var occupied = window.Mazelab && window.Mazelab.BodegaOccupied && window.Mazelab.BodegaOccupied[String(e.id)];
+            var enUsoBadge = occupied
+                ? '<span style="background:rgba(167,139,250,0.15);color:#a78bfa;border:1px solid rgba(167,139,250,0.4);padding:2px 10px;border-radius:20px;font-size:0.75rem;font-weight:600;margin-left:6px">En uso: ' + escapeHtml(occupied.eventName) + '</span>'
+                : '';
             return '<tr>' +
                 '<td><code style="font-size:0.8rem;color:var(--text-secondary)">' + escapeHtml(e.equipo_id || '—') + '</code></td>' +
                 '<td><strong>' + escapeHtml(e.nombre || '—') + '</strong></td>' +
                 '<td>' + escapeHtml(e.categoria || '—') + '</td>' +
-                '<td>' + badge + '</td>' +
+                '<td>' + badge + enUsoBadge + '</td>' +
                 '<td style="color:var(--text-secondary);font-size:0.85rem;max-width:250px;white-space:pre-wrap">' + escapeHtml(e.notas || '') + '</td>' +
                 '<td>' +
                     '<button class="btn btn-sm btn-secondary bodega-edit-btn" data-id="' + e.id + '">Editar</button> ' +
