@@ -661,16 +661,44 @@ window.Mazelab.Modules.KanbanModule = (function () {
         }).join('');
     }
 
-    function getBusyEquipoIds(forSaleId, forEventDate) {
+    function getBusyEquipoIds(forSaleId, forEventDate, forEventDateFin) {
         var busy = {};
+        var rangeStart = forEventDate || '';
+        var rangeEnd   = forEventDateFin || forEventDate || '';
         sales.forEach(function (s) {
             if (String(s.id) === String(forSaleId)) return;
-            if (s.eventDate !== forEventDate) return; // same-date conflict only
+            var tOther    = s.traspaso || {};
+            var otherStart = s.eventDate || '';
+            var otherEnd   = tOther.eventDateFin || otherStart;
+            if (!otherStart || !rangeStart) return;
+            // Overlap: A.start <= B.end && B.start <= A.end
+            if (rangeStart > otherEnd || otherStart > rangeEnd) return;
             (s.equiposAsignados || []).forEach(function (a) {
                 if (a.equipoId && !a.retornado) busy[String(a.equipoId)] = s.eventName || '?';
             });
         });
         return busy;
+    }
+
+    // Smart category matching: "Cámara" → equipos en categoría "Cámaras"
+    function getEquiposForItem(itemLabel, allEquipos) {
+        function norm(s) {
+            return (s || '').toLowerCase()
+                .normalize('NFD').replace(/[\u0300-\u036f]/g, '')
+                .replace(/es$/, '').replace(/s$/, '');
+        }
+        var words = norm(itemLabel).split(/\s+/).filter(function (w) { return w.length >= 4; });
+        if (words.length === 0) return { list: allEquipos, matchedCat: null };
+        var byCat = allEquipos.filter(function (eq) {
+            var cat = norm(eq.categoria || '');
+            return cat && words.some(function (w) { return cat.indexOf(w) !== -1 || w.indexOf(cat) !== -1; });
+        });
+        if (byCat.length > 0) return { list: byCat, matchedCat: byCat[0].categoria || null };
+        var byName = allEquipos.filter(function (eq) {
+            var nom = norm(eq.nombre || '');
+            return words.some(function (w) { return nom.indexOf(w) !== -1; });
+        });
+        return { list: byName.length > 0 ? byName : allEquipos, matchedCat: null };
     }
 
     function initEquiposFromTemplates(sale) {
@@ -1195,6 +1223,10 @@ window.Mazelab.Modules.KanbanModule = (function () {
                 '</div>' +
             '</div>' +
             '<div class="form-group">' +
+                '<label>Fecha de t\u00e9rmino <span style="font-weight:400;color:var(--text-muted)">(solo si es evento multi-jornada)</span></label>' +
+                '<input type="date" class="form-control" id="tr-eventDateFin" value="' + (t.eventDateFin || '') + '" style="width:200px">' +
+            '</div>' +
+            '<div class="form-group">' +
                 '<label>Vestimenta</label>' +
                 '<input type="text" class="form-control" id="tr-vestimenta" value="' + vest + '" placeholder="Negra sin logos (est\u00e1ndar MazeLab)">' +
             '</div>' +
@@ -1245,6 +1277,7 @@ window.Mazelab.Modules.KanbanModule = (function () {
                 briefRow('Fecha',          formatDate(sale.eventDate)) +
                 briefRow('Servicios',      getSaleServiceNames(sale)) +
                 (sale.jornadas ? briefRow('Jornadas', sale.jornadas) : '') +
+                (t.eventDateFin ? briefRow('Fecha t\u00e9rmino', formatDate(t.eventDateFin)) : '') +
                 briefRow('Contacto',       [t.contactoNombre, t.contactoTel, t.contactoEmail].filter(Boolean).join(' \u00b7 ')) +
                 briefRow('Lugar',          t.lugar) +
                 (t.pax ? briefRow('PAX', t.pax) : '') +
@@ -1416,16 +1449,23 @@ window.Mazelab.Modules.KanbanModule = (function () {
                 var sv = services.find(function (s) { return String(s.id) === String(sid); });
                 return sv && sv.equipos_checklist;
             });
-            return '<div style="padding:24px;text-align:center">' +
-                '<div style="color:var(--text-secondary);margin-bottom:20px">No hay equipos asignados a este evento.</div>' +
+            return '<div style="padding:16px 0">' +
+                '<div style="color:var(--text-secondary);margin-bottom:16px">No hay equipos asignados a este evento.</div>' +
                 (hasTpl
-                    ? '<button class="btn btn-primary" id="kb-eq-init-btn" style="margin-bottom:12px">Inicializar desde plantillas del servicio \u2192</button><br>'
+                    ? '<button class="btn btn-primary" id="kb-eq-init-btn" style="margin-bottom:20px">Inicializar desde plantillas del servicio \u2192</button>'
                     : '') +
-                '<button class="btn btn-secondary" id="kb-eq-add-extra-btn">+ Agregar equipo manualmente</button>' +
+                '<div style="border-top:1px solid rgba(255,255,255,0.08);padding-top:16px">' +
+                    '<div style="font-size:11px;font-weight:700;color:var(--text-muted);letter-spacing:0.5px;padding-bottom:8px">AGREGAR MANUALMENTE</div>' +
+                    '<div style="display:flex;gap:6px">' +
+                        '<input type="text" class="form-control kb-eq-new-input" data-service-id="__extra__" data-service-name="Extras" placeholder="Nombre del equipo o material..." style="flex:1;height:32px;font-size:13px">' +
+                        '<button class="kb-eq-add-item-btn" data-service-id="__extra__" data-service-name="Extras" style="height:32px;padding:0 14px;font-size:13px;background:rgba(255,255,255,0.07);border:1px solid rgba(255,255,255,0.15);border-radius:6px;color:var(--text-secondary);cursor:pointer">+ A\u00f1adir</button>' +
+                    '</div>' +
+                '</div>' +
             '</div>';
         }
 
-        var busyIds = getBusyEquipoIds(sale.id, sale.eventDate);
+        var tSale = sale.traspaso || {};
+        var busyIds = getBusyEquipoIds(sale.id, sale.eventDate, tSale.eventDateFin);
         var thisAssigned = {};
         items.forEach(function (it) { if (it.equipoId) thisAssigned[String(it.equipoId)] = true; });
         var selectableEquipos = bodegaEquipos.filter(function (eq) {
@@ -1470,13 +1510,21 @@ window.Mazelab.Modules.KanbanModule = (function () {
                         '<button class="btn btn-primary kb-eq-retorno-btn" data-item-id="' + item.itemId + '" style="height:28px;padding:0 10px;font-size:12px;white-space:nowrap">\u2713 Recib\u00ed conforme</button>' +
                     '</div>';
                 } else {
+                    var matched = getEquiposForItem(item.label, selectableEquipos);
+                    var filteredEqs = matched.list;
+                    var catHint = matched.matchedCat
+                        ? '<div style="font-size:10px;color:var(--text-muted);margin-top:2px">' + filteredEqs.length + ' en ' + escapeHtml(matched.matchedCat) + '</div>'
+                        : '';
                     var equipoOpts = '<option value="">— Sin asignar —</option>' +
-                        selectableEquipos.map(function (eq) {
+                        filteredEqs.map(function (eq) {
                             var sel = item.equipoId && String(item.equipoId) === String(eq.id) ? ' selected' : '';
                             return '<option value="' + eq.id + '"' + sel + '>[' + escapeHtml(eq.equipo_id || '') + '] ' + escapeHtml(eq.nombre || '') + '</option>';
                         }).join('');
                     return '<div style="display:flex;align-items:center;gap:8px;padding:7px 0;border-bottom:1px solid rgba(255,255,255,0.05)">' +
-                        '<div style="flex:1;font-size:13px">' + escapeHtml(item.label) + '</div>' +
+                        '<div style="flex:1">' +
+                            '<div style="font-size:13px">' + escapeHtml(item.label) + '</div>' +
+                            catHint +
+                        '</div>' +
                         '<select class="form-control kb-eq-equipo-sel" data-item-id="' + item.itemId + '" style="width:200px;height:28px;font-size:12px">' + equipoOpts + '</select>' +
                         '<select class="form-control kb-eq-estado-sal" data-item-id="' + item.itemId + '" style="width:125px;height:28px;font-size:12px">' + estOpts(item.estadoSalida || 'bueno') + '</select>' +
                         '<button class="kb-eq-remove-btn" data-item-id="' + item.itemId + '" style="height:26px;width:26px;border-radius:4px;padding:0;font-size:16px;line-height:1;background:rgba(248,113,113,0.1);color:#f87171;border:1px solid rgba(248,113,113,0.3);cursor:pointer" title="Quitar">&times;</button>' +
@@ -1504,7 +1552,6 @@ window.Mazelab.Modules.KanbanModule = (function () {
         var actionBar = !isPost
             ? '<div style="margin-top:var(--space-md);display:flex;gap:8px;padding-top:var(--space-md);border-top:1px solid rgba(255,255,255,0.06)">' +
                 '<button class="btn btn-primary" id="kb-eq-save-btn">Guardar</button>' +
-                '<button class="btn btn-secondary" id="kb-eq-add-extra-btn">+ Equipo extra</button>' +
               '</div>'
             : '';
 
@@ -1859,8 +1906,8 @@ window.Mazelab.Modules.KanbanModule = (function () {
         var trSaveBtn = document.getElementById('tr-save-btn');
         if (trSaveBtn) trSaveBtn.addEventListener('click', function () {
             var fields = ['contactoNombre','contactoTel','contactoEmail','lugar','pax',
-                          'horarioServicio','horarioMontaje','horarioDesmontaje','vestimenta',
-                          'requerimientos','notaVendedor'];
+                          'horarioServicio','horarioMontaje','horarioDesmontaje','eventDateFin',
+                          'vestimenta','requerimientos','notaVendedor'];
             var data = {};
             fields.forEach(function (f) {
                 var el = document.getElementById('tr-' + f);
@@ -1916,16 +1963,6 @@ window.Mazelab.Modules.KanbanModule = (function () {
         var eqInitBtn = document.getElementById('kb-eq-init-btn');
         if (eqInitBtn) eqInitBtn.addEventListener('click', function () {
             var items = initEquiposFromTemplates(sale);
-            saveEquiposAsignados(sale, items);
-        });
-
-        // Equipos tab: add extra equipo manually
-        var eqAddExtra = document.getElementById('kb-eq-add-extra-btn');
-        if (eqAddExtra) eqAddExtra.addEventListener('click', function () {
-            var label = prompt('Nombre del equipo a agregar:');
-            if (!label || !label.trim()) return;
-            var items = (sale.equiposAsignados || []).slice();
-            items.push({ itemId: 'item_' + Date.now(), label: label.trim(), serviceId: null, serviceName: null, equipoId: null, equipoDisplayId: null, estadoSalida: 'bueno', retornado: false, estadoRetorno: null, notaRetorno: '' });
             saveEquiposAsignados(sale, items);
         });
 
