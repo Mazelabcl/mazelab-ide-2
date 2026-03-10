@@ -649,6 +649,17 @@ window.Mazelab.Modules.KanbanModule = (function () {
 
     // ---- render: card ----
 
+    function getContactSuggestions() {
+        var map = {};
+        sales.forEach(function (s) {
+            var t = s.traspaso || {};
+            if (t.contactoNombre) map[t.contactoNombre] = true;
+        });
+        return Object.keys(map).sort().map(function (n) {
+            return '<option value="' + escapeHtml(n) + '">';
+        }).join('');
+    }
+
     function getDaysInfo(sale) {
         if (!sale.eventDate) return { days: null, label: '', color: 'var(--text-muted)' };
         var today = new Date(todayStr());
@@ -677,12 +688,45 @@ window.Mazelab.Modules.KanbanModule = (function () {
         return '';
     }
 
+    function getCardAlertChips(sale) {
+        var chips = [];
+        var board = getBoardForSale(sale);
+        var di = getDaysInfo(sale);
+        var cl = sale.checklist || [];
+        var done = function (key) {
+            var item = cl.find(function (i) { return i.key === key; });
+            return !!(item && (item.checked || item.done));
+        };
+
+        if (board === 'pre') {
+            var complete = isTraspasoComplete(sale);
+            var minimo = isTraspasoMinimo(sale);
+            if (di.days !== null && di.days <= 14) {
+                if (!minimo && !complete) {
+                    chips.push({ label: 'Sin traspaso', color: '#f87171', bg: 'rgba(248,113,113,0.15)' });
+                } else if (!complete) {
+                    chips.push({ label: 'Traspaso parcial', color: '#fb923c', bg: 'rgba(251,146,60,0.15)' });
+                }
+            }
+            if (di.days !== null && di.days <= 7 && !done('pre_diseno_ok')) {
+                chips.push({ label: 'Sin dise\u00f1o', color: '#facc15', bg: 'rgba(250,204,21,0.15)' });
+            }
+            if (di.days !== null && di.days <= 5 && !done('pre_nomina_env')) {
+                chips.push({ label: 'Sin n\u00f3mina', color: '#fb923c', bg: 'rgba(251,146,60,0.15)' });
+            }
+        } else {
+            var cxc = getCXCSummary(getEventCXC(sale));
+            if (cxc.totalOwed === 0) {
+                chips.push({ label: 'Sin fact', color: '#f87171', bg: 'rgba(248,113,113,0.15)' });
+            } else if (cxc.pct !== null && cxc.pct < 0.9999) {
+                chips.push({ label: 'Cobro pendiente', color: '#facc15', bg: 'rgba(250,204,21,0.15)' });
+            }
+        }
+        return chips.slice(0, 3);
+    }
+
     function renderCard(sale) {
         var displayId = sale.sourceId || String(sale.id || '').slice(-6);
-        var indicator = getCardIndicator(sale);
-        var amount = Number(sale.amount || 0);
-        var cxcS = getCXCSummary(getEventCXC(sale));
-        var cxpS = getCXPSummary(getEventCXP(sale));
         var col = Number(sale.boardColumn);
         var prog = getChecklistProgress(sale);
         var board = getBoardForSale(sale);
@@ -690,43 +734,39 @@ window.Mazelab.Modules.KanbanModule = (function () {
         var maxCol = board === 'pre' ? 3 : 6;
         var di = getDaysInfo(sale);
         var urgencyBorder = activeBoard === 'pre' ? getCardUrgencyBorder(sale) : '';
-
-        var facPct = cxcS.pct !== null ? Math.round(cxcS.pct * 100) + '%' : '-';
-        var pagPct = cxpS.pct !== null ? Math.round(cxpS.pct * 100) + '%' : '-';
         var progColor = prog.pct >= 0.7 ? 'var(--success)' : (prog.pct > 0.3 ? 'var(--warning)' : 'var(--danger)');
-        var traspasoOk = isTraspasoComplete(sale);
 
-        // Services as small tags
-        var svcTags = '';
-        if (sale.serviceNames) {
-            svcTags = '<div class="kanban-card-svc-tags">' +
-                sale.serviceNames.split(',').map(function (s) {
+        // Services as small tags (with fallback to serviceIds lookup)
+        var svcNames = getSaleServiceNames(sale);
+        var svcTags = svcNames
+            ? '<div class="kanban-card-svc-tags">' +
+                svcNames.split(',').map(function (s) {
                     return '<span class="kanban-svc-tag">' + s.trim() + '</span>';
                 }).join('') +
-                '</div>';
-        }
+              '</div>'
+            : '';
+
+        // Alert chips
+        var alertChips = getCardAlertChips(sale);
+        var chipsHtml = alertChips.length > 0
+            ? '<div style="display:flex;flex-wrap:wrap;gap:4px;margin-top:5px">' +
+                alertChips.map(function (c) {
+                    return '<span style="font-size:10px;font-weight:700;padding:2px 7px;border-radius:10px;background:' + c.bg + ';color:' + c.color + ';border:1px solid ' + c.color + '55">! ' + c.label + '</span>';
+                }).join('') +
+              '</div>'
+            : '';
 
         return '<div class="kanban-card" draggable="true" data-sale-id="' + sale.id + '" style="' + urgencyBorder + '">' +
             '<div class="kanban-card-top">' +
                 '<span class="kanban-card-id">#' + displayId + '</span>' +
-                '<span style="display:flex;align-items:center;gap:4px">' +
-                    (di.label ? '<span style="font-size:11px;font-weight:600;color:' + di.color + '">' + di.label + '</span>' : '') +
-                    '<span class="kanban-card-indicator">' + indicator.icon + '</span>' +
-                '</span>' +
+                (di.label ? '<span style="font-size:11px;font-weight:600;color:' + di.color + '">\u23f1 ' + di.label + '</span>' : '') +
             '</div>' +
-            '<div class="kanban-card-title">' + (sale.eventName || '-') + '</div>' +
             '<div class="kanban-card-client">' + (sale.clientName || '-') + '</div>' +
+            '<div class="kanban-card-title">' + (sale.eventName || '-') + '</div>' +
+            '<div class="kanban-card-date" style="font-size:12px;color:var(--text-muted);margin-bottom:4px">' + formatDate(sale.eventDate) + '</div>' +
             svcTags +
-            '<div class="kanban-card-meta">' +
-                '<span class="kanban-card-date">' + formatDate(sale.eventDate) + '</span>' +
-                '<span class="kanban-card-amount">' + formatCLP(amount) + '</span>' +
-            '</div>' +
-            '<div class="kanban-card-footer">' +
-                '<div class="kanban-card-badges">' +
-                    (board === 'pre' && !traspasoOk ? '<span class="badge badge-danger" title="Traspaso incompleto">Sin traspaso</span>' : '') +
-                    '<span class="badge badge-info" title="Facturado">' + facPct + ' fac</span>' +
-                    '<span class="badge badge-neutral" title="Pagado CXP">' + pagPct + ' pag</span>' +
-                '</div>' +
+            chipsHtml +
+            '<div class="kanban-card-footer" style="margin-top:8px">' +
                 '<div class="kanban-card-arrows">' +
                     '<button class="kb-arrow-left" data-sale-id="' + sale.id + '" data-dir="left"' + (col <= minCol ? ' disabled' : '') + ' title="Mover izquierda">\u2190</button>' +
                     '<button class="kb-arrow-right" data-sale-id="' + sale.id + '" data-dir="right"' + (col >= maxCol ? ' disabled' : '') + ' title="Mover derecha">\u2192</button>' +
@@ -821,6 +861,32 @@ window.Mazelab.Modules.KanbanModule = (function () {
         var cxpList = getEventCXP(sale);
         var cxc = getCXCSummary(cxcList);
         var cxp = getCXPSummary(cxpList);
+        var amount = Number(sale.amount || 0);
+        var totalCost = cxp.totalAmount;
+        var margin = amount - totalCost;
+        var marginPct = amount > 0 ? (margin / amount) * 100 : null;
+
+        var kpiGrid = '<div class="kpi-grid" style="margin-bottom:var(--space-xl)">' +
+            '<div class="kpi-card accent">' +
+                '<div class="kpi-label">Venta</div>' +
+                '<div class="kpi-value">' + formatCLP(amount) + '</div>' +
+            '</div>' +
+            '<div class="kpi-card danger">' +
+                '<div class="kpi-label">Costo Real (CXP)</div>' +
+                '<div class="kpi-value">' + formatCLP(totalCost) + '</div>' +
+                '<div class="kpi-sub">' + cxpList.length + ' registro' + (cxpList.length !== 1 ? 's' : '') + '</div>' +
+            '</div>' +
+            '<div class="kpi-card ' + (margin >= 0 ? 'success' : 'danger') + '">' +
+                '<div class="kpi-label">Margen</div>' +
+                '<div class="kpi-value ' + (margin >= 0 ? 'text-success' : 'text-danger') + '">' + formatCLP(margin) + '</div>' +
+                '<div class="kpi-sub">' + (marginPct !== null ? Math.round(marginPct) + '%' : '-') + '</div>' +
+            '</div>' +
+            '<div class="kpi-card ' + (cxc.pct === null || cxc.pct >= 0.9999 ? 'success' : 'warning') + '">' +
+                '<div class="kpi-label">CXC Cobrado</div>' +
+                '<div class="kpi-value">' + formatCLP(cxc.totalPaid) + '</div>' +
+                '<div class="kpi-sub">de ' + formatCLP(cxc.totalOwed) + (cxc.pct !== null ? ' (' + Math.round(cxc.pct * 100) + '%)' : '') + '</div>' +
+            '</div>' +
+        '</div>';
 
         var cxcActive = cxcList.filter(function (r) {
             return (r.tipoDoc || '').toUpperCase() !== 'NC' && (r.status || '').toLowerCase() !== 'anulada';
@@ -894,7 +960,7 @@ window.Mazelab.Modules.KanbanModule = (function () {
                 '<th class="text-right">Monto</th><th class="text-right">Pagado</th><th>Estado</th>' +
             '</tr></thead><tbody>' + cxpRows + '</tbody></table></div>';
 
-        return cxcBlock + cxpBlock;
+        return kpiGrid + cxcBlock + cxpBlock;
     }
 
     // ---- render: detail - checklist ----
@@ -998,6 +1064,19 @@ window.Mazelab.Modules.KanbanModule = (function () {
         return !!(t.contactoNombre && t.lugar && t.horarioServicio);
     }
 
+    function isTraspasoMinimo(sale) {
+        var t = sale.traspaso || {};
+        return !!(t.contactoNombre && (t.contactoTel || t.contactoEmail));
+    }
+
+    function getSaleServiceNames(sale) {
+        if (sale.serviceNames) return sale.serviceNames;
+        return (sale.serviceIds || []).map(function (sid) {
+            var sv = services.find(function (s) { return String(s.id) === String(sid); });
+            return sv ? sv.name : null;
+        }).filter(Boolean).join(', ') || '';
+    }
+
     function renderDetailTraspaso(sale) {
         var complete = isTraspasoComplete(sale);
         // Show brief when complete and not in edit mode
@@ -1011,11 +1090,13 @@ window.Mazelab.Modules.KanbanModule = (function () {
             ? ''
             : '<div style="background:rgba(251,191,36,0.10);border:1px solid rgba(251,191,36,0.3);border-radius:8px;padding:10px 14px;margin-bottom:var(--space-lg);font-size:13px;color:var(--warning)">Completa al menos: contacto del cliente, lugar y horario del servicio.</div>';
 
+        var contactoSuggestions = getContactSuggestions();
         return banner +
+            '<datalist id="tr-contactos-list">' + contactoSuggestions + '</datalist>' +
             '<div class="form-row">' +
                 '<div class="form-group">' +
                     '<label>Contacto en terreno \u2014 Nombre</label>' +
-                    '<input type="text" class="form-control" id="tr-contactoNombre" value="' + (t.contactoNombre || '') + '" placeholder="Ej: Paola Riquelme">' +
+                    '<input type="text" class="form-control" id="tr-contactoNombre" list="tr-contactos-list" value="' + (t.contactoNombre || '') + '" placeholder="Ej: Paola Riquelme">' +
                 '</div>' +
                 '<div class="form-group">' +
                     '<label>Tel\u00e9fono</label>' +
@@ -1075,7 +1156,7 @@ window.Mazelab.Modules.KanbanModule = (function () {
             '─'.repeat(40),
             'Cliente:      ' + (sale.clientName || '-'),
             'Fecha:        ' + formatDate(sale.eventDate),
-            'Servicios:    ' + (sale.serviceNames || '-'),
+            'Servicios:    ' + (getSaleServiceNames(sale) || '-'),
             sale.jornadas ? 'Jornadas:     ' + sale.jornadas : '',
             'Contacto:     ' + [t.contactoNombre, t.contactoTel, t.contactoEmail].filter(Boolean).join(' · '),
             'Lugar:        ' + (t.lugar || '-'),
@@ -1099,7 +1180,7 @@ window.Mazelab.Modules.KanbanModule = (function () {
                 briefRow('Cliente',        sale.clientName) +
                 briefRow('Evento',         sale.eventName) +
                 briefRow('Fecha',          formatDate(sale.eventDate)) +
-                briefRow('Servicios',      sale.serviceNames) +
+                briefRow('Servicios',      getSaleServiceNames(sale)) +
                 (sale.jornadas ? briefRow('Jornadas', sale.jornadas) : '') +
                 briefRow('Contacto',       [t.contactoNombre, t.contactoTel, t.contactoEmail].filter(Boolean).join(' \u00b7 ')) +
                 briefRow('Lugar',          t.lugar) +
@@ -1166,12 +1247,28 @@ window.Mazelab.Modules.KanbanModule = (function () {
         if (isTraspasoComplete(sale)) {
             return renderHitosList(sale) + renderBrief(sale);
         }
-        // Incomplete: show info + CTA
-        return renderHitosList(sale) + renderDetailInfo(sale) +
-            '<div style="margin-top:var(--space-xl);background:rgba(251,191,36,0.07);border:1px solid rgba(251,191,36,0.25);border-radius:10px;padding:24px;text-align:center">' +
-                '<div style="font-size:1rem;font-weight:600;margin-bottom:8px">Traspaso de venta pendiente</div>' +
-                '<div style="color:var(--text-secondary);font-size:13px;margin-bottom:16px">Completa los datos operacionales para activar la coordinación del evento.</div>' +
-                '<button class="btn btn-primary" id="kb-completar-traspaso-btn" style="padding:10px 28px;font-size:15px">Completar traspaso →</button>' +
+        // Incomplete: show hitos + basic event info (no KPIs) + CTA
+        var svcLabel = getSaleServiceNames(sale) || '-';
+        var basicInfo = '<div style="background:rgba(255,255,255,0.03);border-radius:10px;padding:14px 18px;margin-bottom:var(--space-md)">' +
+            '<table style="width:100%;border-collapse:collapse">' +
+                briefRow('Cliente',   sale.clientName) +
+                briefRow('Evento',    sale.eventName) +
+                briefRow('Fecha',     formatDate(sale.eventDate)) +
+                briefRow('Servicios', svcLabel) +
+                (sale.encargado ? briefRow('Encargado', sale.encargado) : '') +
+            '</table>' +
+            '</div>';
+
+        var minimo = isTraspasoMinimo(sale);
+        var banner = minimo
+            ? '<div style="background:rgba(251,146,60,0.10);border:1px solid rgba(251,146,60,0.3);border-radius:8px;padding:10px 14px;margin-bottom:var(--space-md);font-size:13px;color:#fb923c">Traspaso parcial \u2014 falta lugar y/o horario del servicio.</div>'
+            : '<div style="background:rgba(251,191,36,0.07);border:1px solid rgba(251,191,36,0.25);border-radius:8px;padding:10px 14px;margin-bottom:var(--space-md);font-size:13px;color:var(--warning)">Traspaso pendiente \u2014 ingresa los datos operacionales del evento.</div>';
+
+        return renderHitosList(sale) + basicInfo + banner +
+            '<div style="text-align:center">' +
+                '<button class="btn btn-primary" id="kb-completar-traspaso-btn" style="padding:10px 28px;font-size:15px">' +
+                    (minimo ? 'Completar traspaso \u2192' : 'Iniciar traspaso \u2192') +
+                '</button>' +
             '</div>';
     }
 
@@ -1769,7 +1866,7 @@ window.Mazelab.Modules.KanbanModule = (function () {
 
     async function init() {
         currentSaleId = null;
-        activeTab = 'info';
+        activeTab = 'resumen';
         filters = { client: '', service: '', seller: '', financial: '' };
 
         try {

@@ -224,6 +224,11 @@ window.Mazelab.Modules.BodegaModule = (function () {
     }
 
     function refreshContent() {
+        var toolbarEl = document.getElementById('bodega-toolbar-area');
+        if (toolbarEl) {
+            toolbarEl.innerHTML = renderToolbar();
+            bindToolbarListeners();
+        }
         var el = document.getElementById('bodega-content');
         if (el) el.innerHTML = renderContent();
         bindContentListeners();
@@ -280,7 +285,7 @@ window.Mazelab.Modules.BodegaModule = (function () {
                 '<h2>Bodega</h2>' +
                 '<p class="module-subtitle">Inventario de equipos</p>' +
             '</div>' +
-            renderToolbar() +
+            '<div id="bodega-toolbar-area"></div>' +
             '<div id="bodega-content">' +
                 '<div class="empty-state"><p>Cargando...</p></div>' +
             '</div>' +
@@ -290,7 +295,6 @@ window.Mazelab.Modules.BodegaModule = (function () {
     async function init() {
         await loadData();
         refreshContent();
-        bindToolbarListeners();
     }
 
     return { render, init };
