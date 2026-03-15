@@ -74,7 +74,7 @@ window.Mazelab.Modules = window.Mazelab.Modules || {};
     // --- Apply nav permissions based on role ---
     function applyNavPermissions() {
         var Auth = window.Mazelab.Auth;
-        if (!Auth) return;
+        if (!Auth || !Auth.getUser()) return; // No auth or no user = show all nav
         document.querySelectorAll('.nav-item[data-route]').forEach(function (item) {
             var route = item.dataset.route;
             item.style.display = Auth.canAccess(route) ? '' : 'none';
