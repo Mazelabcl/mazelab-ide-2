@@ -147,10 +147,15 @@ window.Mazelab.Modules = window.Mazelab.Modules || {};
 
         // If not logged in, show login screen
         if (!Auth || !Auth.isLoggedIn()) {
-            // Hide app container
-            var appContainer = document.querySelector('.app-container');
-            if (appContainer) appContainer.style.display = 'none';
-            window.Mazelab.AuthUI.show();
+            if (window.Mazelab.AuthUI) {
+                var appContainer = document.querySelector('.app-container');
+                if (appContainer) appContainer.style.display = 'none';
+                window.Mazelab.AuthUI.show();
+            } else {
+                // AuthUI not loaded — skip auth and show app directly
+                console.warn('AuthUI not available, skipping login screen.');
+                await initApp();
+            }
             return;
         }
 
