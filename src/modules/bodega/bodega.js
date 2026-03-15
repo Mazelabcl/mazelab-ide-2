@@ -98,9 +98,9 @@ window.Mazelab.Modules.BodegaModule = (function () {
         var rows = list.map(function (e) {
             var est = estadoInfo(e.estado);
             var badge = '<span style="background:' + est.color + '22;color:' + est.color + ';border:1px solid ' + est.color + '44;padding:2px 10px;border-radius:20px;font-size:0.75rem;font-weight:600">' + escapeHtml(est.label) + '</span>';
-            var occupied = window.Mazelab && window.Mazelab.BodegaOccupied && window.Mazelab.BodegaOccupied[String(e.id)];
-            var enUsoBadge = occupied
-                ? '<span style="background:rgba(167,139,250,0.15);color:#a78bfa;border:1px solid rgba(167,139,250,0.4);padding:2px 10px;border-radius:20px;font-size:0.75rem;font-weight:600;margin-left:6px">En uso: ' + escapeHtml(occupied.eventName) + '</span>'
+            var occupiedCount = (window.Mazelab && window.Mazelab.BodegaOccupied && window.Mazelab.BodegaOccupied[String(e.id)]) || 0;
+            var enUsoBadge = occupiedCount > 0
+                ? '<span style="background:rgba(167,139,250,0.15);color:#a78bfa;border:1px solid rgba(167,139,250,0.4);padding:2px 10px;border-radius:20px;font-size:0.75rem;font-weight:600;margin-left:6px">Asignado a ' + occupiedCount + ' evento' + (occupiedCount > 1 ? 's' : '') + '</span>'
                 : '';
             return '<tr>' +
                 '<td><code style="font-size:0.8rem;color:var(--text-secondary)">' + escapeHtml(e.equipo_id || '—') + '</code></td>' +
@@ -109,6 +109,7 @@ window.Mazelab.Modules.BodegaModule = (function () {
                 '<td>' + badge + enUsoBadge + '</td>' +
                 '<td style="color:var(--text-secondary);font-size:0.85rem;max-width:250px;white-space:pre-wrap">' + escapeHtml(e.notas || '') + '</td>' +
                 '<td>' +
+                    '<button class="btn btn-sm btn-secondary bodega-hist-btn" data-id="' + e.id + '">Ver historial</button> ' +
                     '<button class="btn btn-sm btn-secondary bodega-edit-btn" data-id="' + e.id + '">Editar</button> ' +
                     '<button class="btn btn-sm btn-danger bodega-del-btn" data-id="' + e.id + '">Eliminar</button>' +
                 '</td>' +
@@ -183,6 +184,89 @@ window.Mazelab.Modules.BodegaModule = (function () {
             if (e.target.id === 'bodega-modal') closeModal();
         });
         document.getElementById('bodega-modal-save').addEventListener('click', saveEquipo);
+    }
+
+    function estadoBadgeHtml(val) {
+        var colorMap = { bueno: '#4ade80', dañado: '#f87171', mantenimiento: '#facc15' };
+        var labelMap = { bueno: 'Bueno', dañado: 'Dañado', mantenimiento: 'En mantenimiento' };
+        var color = colorMap[val] || '#6b7280';
+        var label = labelMap[val] || val || '—';
+        return '<span style="background:' + color + '22;color:' + color + ';border:1px solid ' + color + '44;padding:2px 10px;border-radius:20px;font-size:0.75rem;font-weight:600">' + escapeHtml(label) + '</span>';
+    }
+
+    async function openHistorialModal(equipo) {
+        var sales = [];
+        try {
+            sales = await window.Mazelab.DataService.getAll('sales');
+        } catch (err) {
+            sales = [];
+        }
+
+        var historial = [];
+        sales.forEach(function (sale) {
+            var asignados = sale.equiposAsignados;
+            if (!asignados || !Array.isArray(asignados)) return;
+            asignados.forEach(function (item) {
+                if (String(item.equipoId) !== String(equipo.id)) return;
+                historial.push({
+                    evento: sale.eventName || sale.clientName || '—',
+                    fecha: sale.eventDate || sale.date || '',
+                    estadoSalida: item.estadoSalida || '',
+                    estadoRetorno: item.estadoRetorno || '',
+                    notaRetorno: item.notaRetorno || '',
+                    retornado: item.retornado
+                });
+            });
+        });
+
+        historial.sort(function (a, b) {
+            if (a.fecha > b.fecha) return -1;
+            if (a.fecha < b.fecha) return 1;
+            return 0;
+        });
+
+        var bodyContent = '';
+        if (historial.length === 0) {
+            bodyContent = '<div class="empty-state" style="padding:24px 0"><p>Este equipo no tiene historial de uso.</p></div>';
+        } else {
+            var rows = historial.map(function (h) {
+                var retornoBadge = h.retornado ? estadoBadgeHtml(h.estadoRetorno) : '<span style="color:var(--text-secondary);font-size:0.85rem">Pendiente</span>';
+                return '<tr>' +
+                    '<td>' + escapeHtml(h.evento) + '</td>' +
+                    '<td>' + escapeHtml(h.fecha) + '</td>' +
+                    '<td>' + estadoBadgeHtml(h.estadoSalida) + '</td>' +
+                    '<td>' + retornoBadge + '</td>' +
+                    '<td style="color:var(--text-secondary);font-size:0.85rem;max-width:200px;white-space:pre-wrap">' + escapeHtml(h.notaRetorno) + '</td>' +
+                '</tr>';
+            }).join('');
+
+            bodyContent = '<div class="table-scroll"><table class="data-table">' +
+                '<thead><tr><th>Evento</th><th>Fecha</th><th>Estado salida</th><th>Estado retorno</th><th>Nota retorno</th></tr></thead>' +
+                '<tbody>' + rows + '</tbody>' +
+            '</table></div>';
+        }
+
+        var displayId = equipo.equipo_id || equipo.id;
+        var html = '<div class="modal-overlay active" id="bodega-historial-modal">' +
+            '<div class="modal" style="max-width:720px">' +
+                '<div class="modal-header">' +
+                    '<h3>' + escapeHtml(displayId) + ' ' + escapeHtml(equipo.nombre || '') + ' — Historial</h3>' +
+                    '<button class="modal-close" id="bodega-historial-close">&times;</button>' +
+                '</div>' +
+                '<div class="modal-body">' + bodyContent + '</div>' +
+                '<div class="modal-footer">' +
+                    '<button class="btn btn-secondary" id="bodega-historial-ok">Cerrar</button>' +
+                '</div>' +
+            '</div>' +
+        '</div>';
+
+        document.getElementById('modal-container').innerHTML = html;
+
+        document.getElementById('bodega-historial-close').addEventListener('click', closeModal);
+        document.getElementById('bodega-historial-ok').addEventListener('click', closeModal);
+        document.getElementById('bodega-historial-modal').addEventListener('click', function (e) {
+            if (e.target.id === 'bodega-historial-modal') closeModal();
+        });
     }
 
     function closeModal() {
@@ -264,6 +348,14 @@ window.Mazelab.Modules.BodegaModule = (function () {
     }
 
     function bindContentListeners() {
+        document.querySelectorAll('.bodega-hist-btn').forEach(function (btn) {
+            btn.addEventListener('click', function () {
+                var id = this.dataset.id;
+                var eq = equipos.find(function (e) { return String(e.id) === String(id); });
+                if (eq) openHistorialModal(eq);
+            });
+        });
+
         document.querySelectorAll('.bodega-edit-btn').forEach(function (btn) {
             btn.addEventListener('click', function () {
                 var id = this.dataset.id;

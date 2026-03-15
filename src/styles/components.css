@@ -731,3 +731,89 @@ textarea.form-control {
 .gap-md {
     gap: var(--space-md);
 }
+
+/* Accordion */
+.accordion-section {
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    border-radius: var(--radius-md);
+    margin-bottom: var(--space-md);
+    overflow: hidden;
+}
+
+.accordion-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 12px 16px;
+    background: rgba(0, 0, 0, 0.15);
+    cursor: pointer;
+    user-select: none;
+    transition: background var(--transition-fast);
+}
+
+.accordion-header:hover {
+    background: rgba(0, 0, 0, 0.25);
+}
+
+.accordion-header .acc-title {
+    font-size: 13px;
+    font-weight: 700;
+    color: var(--text-secondary);
+    letter-spacing: 0.5px;
+    text-transform: uppercase;
+}
+
+.accordion-header .acc-arrow {
+    color: var(--text-muted);
+    font-size: 14px;
+    transition: transform var(--transition-fast);
+}
+
+.accordion-section.open .accordion-header .acc-arrow {
+    transform: rotate(180deg);
+}
+
+.accordion-section.open .accordion-header {
+    border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+}
+
+.accordion-body {
+    display: none;
+    padding: 16px;
+}
+
+.accordion-section.open .accordion-body {
+    display: block;
+}
+
+/* Tarifario items */
+.tarif-item {
+    display: flex;
+    gap: var(--space-md);
+    align-items: flex-end;
+    padding: var(--space-sm) 0;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.04);
+}
+
+.tarif-item:last-child {
+    border-bottom: none;
+}
+
+.tarif-item .form-group {
+    margin-bottom: 0;
+}
+
+.tarif-item .tarif-label {
+    flex: 2;
+    min-width: 0;
+}
+
+.tarif-item .tarif-desc {
+    flex: 3;
+    min-width: 0;
+}
+
+.tarif-item .tarif-price {
+    flex: 1;
+    min-width: 120px;
+}

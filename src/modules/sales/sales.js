@@ -314,7 +314,7 @@ window.Mazelab.Modules.SalesModule = (function () {
         const clientSelect = document.getElementById('sale-client');
         if (clientSelect) {
             clientSelect.innerHTML = '<option value="">Seleccionar cliente...</option>' +
-                clients.map(c => {
+                clients.slice().sort((a, b) => ((a.name || a.nombre || '')).localeCompare(b.name || b.nombre || '')).map(c => {
                     const name = c.name || c.nombre || '';
                     return `<option value="${c.id}">${name}</option>`;
                 }).join('');
@@ -324,7 +324,7 @@ window.Mazelab.Modules.SalesModule = (function () {
         const staffSelect = document.getElementById('sale-staff');
         if (staffSelect) {
             staffSelect.innerHTML = '<option value="">Seleccionar vendedor...</option>' +
-                staff.map(s => {
+                staff.slice().sort((a, b) => ((a.name || a.nombre || '')).localeCompare(b.name || b.nombre || '')).map(s => {
                     const name = s.name || s.nombre || '';
                     return `<option value="${s.id}">${name}</option>`;
                 }).join('');

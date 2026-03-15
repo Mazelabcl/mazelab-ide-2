@@ -11,7 +11,7 @@
     <link rel="stylesheet" href="src/styles/kanban.css">
 </head>
 <body>
-    <div class="app-container">
+    <div class="app-container" style="display:none">
         <aside class="sidebar">
             <div class="sidebar-header">
                 <h1>MAZELAB</h1>
@@ -66,6 +66,10 @@
                         <span class="nav-icon">&#128230;</span>
                         <span>Bodega</span>
                     </div>
+                    <div class="nav-item" data-route="cotizador">
+                        <span class="nav-icon">&#128196;</span>
+                        <span>Cotizador</span>
+                    </div>
                 </div>
                 <div class="nav-section">
                     <div class="nav-section-title">Sistema</div>
@@ -79,6 +83,11 @@
                     </div>
                 </div>
             </nav>
+            <div class="sidebar-footer" id="sidebar-user-info" style="display:none;padding:12px 16px;border-top:1px solid var(--border-color);margin-top:auto;">
+                <div id="sidebar-user-name" style="font-size:13px;font-weight:600;color:var(--text-primary);"></div>
+                <div id="sidebar-user-role" style="font-size:11px;color:var(--text-secondary);margin-bottom:8px;"></div>
+                <button class="btn btn-secondary btn-sm" id="logout-btn" style="width:100%;font-size:11px;">Cerrar sesion</button>
+            </div>
         </aside>
         <main class="main-content">
             <div id="app-content"></div>
@@ -89,7 +98,10 @@
 
     <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
     <script src="src/shared/supabase.js"></script>
+    <script src="src/shared/auth.js"></script>
+    <script src="src/shared/auth-ui.js"></script>
     <script src="src/shared/storage.js"></script>
+    <script src="src/shared/ai-service.js"></script>
     <script src="src/shared/data-service.js"></script>
     <script src="src/modules/dashboard/dashboard.js"></script>
     <script src="src/modules/sales/sales.js"></script>
@@ -104,6 +116,8 @@
     <script src="src/modules/analytics/analytics.js"></script>
     <script src="src/modules/nominas/nominas.js"></script>
     <script src="src/modules/pagos/pagos.js"></script>
+    <script src="src/modules/cotizador/cotizador.js"></script>
+    <script src="src/shared/demo-data.js"></script>
     <script src="src/app.js"></script>
 </body>
 </html>

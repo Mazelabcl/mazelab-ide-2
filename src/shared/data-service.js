@@ -11,7 +11,8 @@ window.Mazelab = window.Mazelab || {};
         sales: 'ventas',
         receivables: 'facturas',
         payables: 'costos',
-        bodega: 'equipos'
+        bodega: 'equipos',
+        cotizaciones: 'cotizaciones'
     };
 
     // ── In-memory cache ──────────────────────────────────────────────────
@@ -65,7 +66,9 @@ window.Mazelab = window.Mazelab || {};
             clients: window.Mazelab.Storage.ClientsService,
             sales: window.Mazelab.Storage.SalesService,
             receivables: window.Mazelab.Storage.ReceivablesService,
-            payables: window.Mazelab.Storage.PayablesService
+            payables: window.Mazelab.Storage.PayablesService,
+            bodega: window.Mazelab.Storage.BodegaService,
+            cotizaciones: window.Mazelab.Storage.CotizacionesService
         };
         return serviceMap[entityType];
     }

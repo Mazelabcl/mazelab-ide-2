@@ -7,7 +7,9 @@ window.Mazelab = window.Mazelab || {};
         clients: 'mazelab_clients',
         sales: 'mazelab_sales',
         receivables: 'mazelab_receivables',
-        payables: 'mazelab_payables'
+        payables: 'mazelab_payables',
+        bodega: 'mazelab_bodega',
+        cotizaciones: 'mazelab_cotizaciones'
     };
 
     function generateId() {
@@ -104,6 +106,8 @@ window.Mazelab = window.Mazelab || {};
         ClientsService: createService(KEYS.clients),
         SalesService: createService(KEYS.sales),
         ReceivablesService: createService(KEYS.receivables),
-        PayablesService: createService(KEYS.payables)
+        PayablesService: createService(KEYS.payables),
+        BodegaService: createService(KEYS.bodega),
+        CotizacionesService: createService(KEYS.cotizaciones)
     };
 })();

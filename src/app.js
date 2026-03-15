@@ -12,6 +12,7 @@ window.Mazelab.Modules = window.Mazelab.Modules || {};
         events: 'EventsModule',
         kanban: 'KanbanModule',
         bodega: 'BodegaModule',
+        cotizador: 'CotizadorModule',
         cashflow: 'CashflowModule',
         analytics: 'AnalyticsModule',
         settings: 'SettingsModule',
@@ -20,8 +21,6 @@ window.Mazelab.Modules = window.Mazelab.Modules || {};
 
     let currentRoute = 'dashboard';
 
-    // Auto-wrap data-tables in a scrollable div if not already wrapped.
-    // Called after each module init so wide tables scroll horizontally.
     function wrapTables() {
         document.querySelectorAll('.data-table').forEach(function (table) {
             if (table.parentElement && !table.parentElement.classList.contains('table-scroll')) {
@@ -35,6 +34,14 @@ window.Mazelab.Modules = window.Mazelab.Modules || {};
 
     function navigateTo(route) {
         if (!routes[route]) return;
+
+        // Route guard — check permissions
+        var Auth = window.Mazelab.Auth;
+        if (Auth && !Auth.canAccess(route)) {
+            navigateTo('dashboard');
+            return;
+        }
+
         currentRoute = route;
 
         document.querySelectorAll('.nav-item').forEach(item => {
@@ -53,12 +60,10 @@ window.Mazelab.Modules = window.Mazelab.Modules || {};
         container.innerHTML = mod.render();
 
         if (mod.init) {
-            // Wrap tables immediately (for tables in initial render)
             setTimeout(() => {
                 wrapTables();
                 const p = mod.init();
                 if (p && p.then) p.then(wrapTables);
-                // Second wrap after async init populates dynamic content
                 setTimeout(wrapTables, 500);
             }, 0);
         }
@@ -66,7 +71,44 @@ window.Mazelab.Modules = window.Mazelab.Modules || {};
 
     window.Mazelab.navigateTo = navigateTo;
 
-    document.addEventListener('DOMContentLoaded', async () => {
+    // --- Apply nav permissions based on role ---
+    function applyNavPermissions() {
+        var Auth = window.Mazelab.Auth;
+        if (!Auth) return;
+        document.querySelectorAll('.nav-item[data-route]').forEach(function (item) {
+            var route = item.dataset.route;
+            item.style.display = Auth.canAccess(route) ? '' : 'none';
+        });
+    }
+
+    // --- Show user info in sidebar ---
+    function showUserInfo() {
+        var Auth = window.Mazelab.Auth;
+        if (!Auth) return;
+        var user = Auth.getUser();
+        var footer = document.getElementById('sidebar-user-info');
+        if (footer && user) {
+            footer.style.display = '';
+            var nameEl = document.getElementById('sidebar-user-name');
+            var roleEl = document.getElementById('sidebar-user-role');
+            if (nameEl) nameEl.textContent = user.name || user.email;
+            if (roleEl) {
+                var roleLabels = Auth.ROLE_LABELS || { superadmin: 'Super Admin', socio: 'Socio', comercial: 'Comercial', operaciones: 'Operaciones' };
+                roleEl.textContent = roleLabels[user.role] || user.role;
+            }
+        }
+    }
+
+    // --- Main app init (called after successful auth) ---
+    async function initApp() {
+        // Show app container
+        var appContainer = document.querySelector('.app-container');
+        if (appContainer) appContainer.style.display = '';
+
+        // Apply role-based nav visibility
+        applyNavPermissions();
+        showUserInfo();
+
         // Initialize data service
         if (window.Mazelab.DataService && window.Mazelab.DataService.init) {
             try {
@@ -83,7 +125,36 @@ window.Mazelab.Modules = window.Mazelab.Modules || {};
             });
         });
 
+        // Logout button
+        var logoutBtn = document.getElementById('logout-btn');
+        if (logoutBtn) {
+            logoutBtn.addEventListener('click', function () {
+                window.Mazelab.Auth.logout();
+                location.reload();
+            });
+        }
+
         // Navigate to initial route
         navigateTo('dashboard');
+    }
+
+    // Expose for AuthUI callback
+    window.Mazelab.initApp = initApp;
+
+    // --- Entry point ---
+    document.addEventListener('DOMContentLoaded', async () => {
+        var Auth = window.Mazelab.Auth;
+
+        // If not logged in, show login screen
+        if (!Auth || !Auth.isLoggedIn()) {
+            // Hide app container
+            var appContainer = document.querySelector('.app-container');
+            if (appContainer) appContainer.style.display = 'none';
+            window.Mazelab.AuthUI.show();
+            return;
+        }
+
+        // Already logged in — init app directly
+        await initApp();
     });
 })();

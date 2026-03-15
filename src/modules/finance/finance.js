@@ -1071,7 +1071,11 @@ window.Mazelab.Modules.FinanceModule = (function () {
     }
 
     async function fetchAICobrarEmail(rec, cobrosCount, overdueDays, userContext, companyInfo) {
-        var body = {
+        var AI = window.Mazelab && window.Mazelab.AIService;
+        if (!AI || !AI.getConfig().apiKey) {
+            throw new Error('API Key no configurada. Ve a Configurar > Inteligencia Artificial.');
+        }
+        return await AI.generateCobranza({
             clientName:    rec.clientName || '',
             eventName:     rec.eventName  || '',
             invoiceNumber: rec.invoiceNumber || '',
@@ -1081,15 +1085,7 @@ window.Mazelab.Modules.FinanceModule = (function () {
             overdueDays:   overdueDays,
             userContext:   userContext || '',
             companyInfo:   companyInfo || {}
-        };
-        var res = await fetch('/api/cobrar/generar', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(body)
         });
-        if (!res.ok) throw new Error('API error ' + res.status);
-        var data = await res.json();
-        return data.email || '';
     }
 
     function renderCobrarHistory(cobros) {
@@ -1212,7 +1208,12 @@ window.Mazelab.Modules.FinanceModule = (function () {
                 console.warn('AI generation failed, falling back to template:', err);
                 var fallback = buildCobrarTemplate(rec, cobrosCount, overdueDays, userContext, companyInfo);
                 showEmailArea(fallback, 'template');
-                alert('La generaci\u00f3n con IA no est\u00e1 disponible. Se us\u00f3 la plantilla en su lugar.');
+                var errMsg = err.message || 'Error desconocido';
+                if (errMsg.indexOf('API Key') !== -1) {
+                    alert(errMsg);
+                } else {
+                    alert('La generaci\u00f3n con IA fall\u00f3: ' + errMsg + '\nSe us\u00f3 la plantilla en su lugar.');
+                }
             } finally {
                 btn.disabled = false;
                 if (loadingEl) loadingEl.style.display = 'none';

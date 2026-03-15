@@ -114,6 +114,44 @@ window.Mazelab.Modules.SettingsModule = (function () {
         if (costoBaseEl && total > 0) costoBaseEl.value = total;
     }
 
+    function bindEquiposChecklistEvents() {
+        const list = document.getElementById('svc-eq-items-list');
+        const addBtn = document.getElementById('svc-eq-add-btn');
+        const catInput = document.getElementById('svc-eq-new-cat');
+        const labelInput = document.getElementById('svc-eq-new-label');
+        if (!list || !addBtn) return;
+
+        function makeItemHTML(cat, label) {
+            return `<div class="svc-eq-item" data-categoria="${escapeHtml(cat)}" data-label="${escapeHtml(label)}" style="display:flex;align-items:center;gap:8px;padding:5px 0;border-bottom:1px solid rgba(255,255,255,0.05)">
+                <span style="font-size:11px;background:rgba(167,139,250,0.12);color:#a78bfa;border:1px solid rgba(167,139,250,0.3);padding:2px 8px;border-radius:12px;white-space:nowrap;min-width:70px;text-align:center">${escapeHtml(cat || '—')}</span>
+                <span style="flex:1;font-size:13px">${escapeHtml(label)}</span>
+                <button type="button" class="svc-eq-del-btn" style="background:none;border:none;color:#f87171;cursor:pointer;font-size:18px;padding:0 4px;line-height:1" title="Eliminar">&times;</button>
+            </div>`;
+        }
+
+        function addItem() {
+            const cat = catInput ? catInput.value.trim() : '';
+            const label = labelInput ? labelInput.value.trim() : '';
+            if (!label) return;
+            const empty = list.querySelector('.svc-eq-empty');
+            if (empty) empty.remove();
+            list.insertAdjacentHTML('beforeend', makeItemHTML(cat, label));
+            if (catInput) catInput.value = '';
+            if (labelInput) { labelInput.value = ''; labelInput.focus(); }
+        }
+
+        addBtn.addEventListener('click', addItem);
+        if (labelInput) labelInput.addEventListener('keydown', e => { if (e.key === 'Enter') { e.preventDefault(); addItem(); } });
+        list.addEventListener('click', e => {
+            if (e.target.classList.contains('svc-eq-del-btn')) {
+                e.target.closest('.svc-eq-item').remove();
+                if (!list.querySelector('.svc-eq-item')) {
+                    list.innerHTML = '<div class="svc-eq-empty" style="color:var(--text-muted);font-size:13px;padding:6px 0">Sin equipos definidos.</div>';
+                }
+            }
+        });
+    }
+
     function bindCostTemplateEvents() {
         const tbody = document.getElementById('svc-cost-template-rows');
         const addBtn = document.getElementById('btn-add-ct-row');
@@ -149,6 +187,55 @@ window.Mazelab.Modules.SettingsModule = (function () {
         });
     }
 
+    function makeTarifItemHTML(label, desc, unitario, className) {
+        return '<div class="form-group tarif-label"><input type="text" class="form-control tarif-item-label" value="' + escapeHtml(label) + '" placeholder="Nombre"></div>' +
+            '<div class="form-group tarif-desc"><input type="text" class="form-control tarif-item-desc" value="' + escapeHtml(desc) + '" placeholder="Descripcion breve"></div>' +
+            '<div class="form-group tarif-price"><input type="number" class="form-control tarif-item-unit" value="' + (unitario || '') + '" min="0" placeholder="Precio"></div>' +
+            '<div style="padding-bottom:var(--space-sm)"><button type="button" class="btn btn-secondary btn-remove-tarif" style="padding:6px 10px">&#10005;</button></div>';
+    }
+
+    function bindTarifarioEvents() {
+        // Add adicional
+        var addAdic = document.getElementById('btn-add-tarif-adicional');
+        if (addAdic) {
+            addAdic.addEventListener('click', function() {
+                var container = document.getElementById('tarif-adicionales-list');
+                if (!container) return;
+                var div = document.createElement('div');
+                div.className = 'tarif-item tarif-adicional';
+                div.innerHTML = makeTarifItemHTML('', '', '', 'tarif-adicional');
+                container.appendChild(div);
+            });
+        }
+        // Add pack
+        var addPack = document.getElementById('btn-add-tarif-pack');
+        if (addPack) {
+            addPack.addEventListener('click', function() {
+                var container = document.getElementById('tarif-packs-list');
+                if (!container) return;
+                var div = document.createElement('div');
+                div.className = 'tarif-item tarif-pack';
+                div.innerHTML = makeTarifItemHTML('', '', '', 'tarif-pack');
+                container.appendChild(div);
+            });
+        }
+        // Remove delegation
+        document.querySelectorAll('#tarif-adicionales-list, #tarif-packs-list').forEach(function(list) {
+            list.addEventListener('click', function(e) {
+                var btn = e.target.closest('.btn-remove-tarif');
+                if (btn) btn.closest('.tarif-item').remove();
+            });
+        });
+    }
+
+    function bindAccordionEvents() {
+        document.querySelectorAll('.accordion-header').forEach(function(header) {
+            header.addEventListener('click', function() {
+                this.closest('.accordion-section').classList.toggle('open');
+            });
+        });
+    }
+
     // --- Rendering ---
 
     function render() {
@@ -162,6 +249,8 @@ window.Mazelab.Modules.SettingsModule = (function () {
                 <button class="tab ${activeTab === 'staff' ? 'active' : ''}" data-tab="staff">Staff</button>
                 <button class="tab ${activeTab === 'clientes' ? 'active' : ''}" data-tab="clientes">Clientes</button>
                 <button class="tab ${activeTab === 'empresa' ? 'active' : ''}" data-tab="empresa">Empresa</button>
+                <button class="tab ${activeTab === 'ia' ? 'active' : ''}" data-tab="ia">Inteligencia Artificial</button>
+                ${window.Mazelab.Auth && window.Mazelab.Auth.canManageUsers() ? '<button class="tab ' + (activeTab === 'usuarios' ? 'active' : '') + '" data-tab="usuarios">Usuarios</button>' : ''}
             </div>
             <div id="settings-tab-content">
                 ${renderTabContent()}
@@ -192,6 +281,8 @@ window.Mazelab.Modules.SettingsModule = (function () {
             case 'staff': return renderStaffTab();
             case 'clientes': return renderClientesTab();
             case 'empresa': return renderEmpresaTab();
+            case 'ia': return renderIATab();
+            case 'usuarios': return renderUsuariosTab();
             default: return '';
         }
     }
@@ -244,6 +335,141 @@ window.Mazelab.Modules.SettingsModule = (function () {
         </div>`;
     }
 
+    // --- Inteligencia Artificial Tab ---
+
+    function renderIATab() {
+        var AI = window.Mazelab.AIService;
+        var config = AI ? AI.getConfig() : { apiKey: '', model: 'claude-sonnet-4-20250514', prompts: {} };
+        var defaults = AI ? AI.getDefaultPrompts() : { cobranza: '', cotizador: '' };
+        var maskedKey = config.apiKey ? config.apiKey.substring(0, 10) + '...' + config.apiKey.slice(-4) : '';
+
+        return `
+        <div class="card" style="max-width:720px">
+            <div class="card-header"><h3 class="card-title">Inteligencia Artificial</h3></div>
+            <div style="padding:var(--space-md)">
+                <p style="color:var(--text-secondary);font-size:13px;margin-bottom:16px">
+                    Configura la conexión a Claude API para generar mensajes de cobranza y cotizaciones con IA.
+                    La API Key se guarda solo en tu navegador y nunca se envía a nuestros servidores.
+                </p>
+
+                <div class="form-row">
+                    <div class="form-group" style="flex:2">
+                        <label>API Key de Claude</label>
+                        <div style="display:flex;gap:8px">
+                            <input type="password" id="ia-apikey" class="form-control" value="${escapeHtml(config.apiKey)}" placeholder="sk-ant-api03-...">
+                            <button type="button" class="btn btn-secondary" id="ia-toggle-key" style="white-space:nowrap;padding:0 12px" title="Mostrar/ocultar key">&#128065;</button>
+                        </div>
+                    </div>
+                    <div class="form-group" style="flex:1">
+                        <label>Modelo</label>
+                        <select id="ia-model" class="form-control">
+                            <option value="claude-sonnet-4-20250514" ${config.model === 'claude-sonnet-4-20250514' ? 'selected' : ''}>Claude Sonnet 4</option>
+                            <option value="claude-opus-4-0-20250115" ${config.model === 'claude-opus-4-0-20250115' ? 'selected' : ''}>Claude Opus 4</option>
+                            <option value="claude-haiku-3-5-20241022" ${config.model === 'claude-haiku-3-5-20241022' ? 'selected' : ''}>Claude Haiku 3.5</option>
+                        </select>
+                    </div>
+                </div>
+
+                <div class="form-group">
+                    <label>
+                        System Prompt: Cobranza
+                        <button type="button" class="btn btn-secondary" id="ia-reset-cobranza" style="font-size:11px;padding:2px 8px;margin-left:8px">Restaurar default</button>
+                    </label>
+                    <textarea id="ia-prompt-cobranza" class="form-control" rows="6" placeholder="Instrucciones para generar mensajes de cobro...">${escapeHtml(config.prompts.cobranza || '')}</textarea>
+                </div>
+
+                <div class="form-group">
+                    <label>
+                        System Prompt: Cotizador
+                        <button type="button" class="btn btn-secondary" id="ia-reset-cotizador" style="font-size:11px;padding:2px 8px;margin-left:8px">Restaurar default</button>
+                    </label>
+                    <textarea id="ia-prompt-cotizador" class="form-control" rows="6" placeholder="Instrucciones para el agente cotizador...">${escapeHtml(config.prompts.cotizador || '')}</textarea>
+                </div>
+
+                <div class="form-actions" style="display:flex;gap:12px;align-items:center;flex-wrap:wrap">
+                    <button type="button" class="btn btn-primary" id="ia-save-btn">Guardar</button>
+                    <button type="button" class="btn btn-secondary" id="ia-test-btn">Probar Conexión</button>
+                    <span id="ia-save-msg" style="display:none;color:var(--success);font-size:13px">&#10003; Guardado</span>
+                    <span id="ia-test-msg" style="font-size:13px"></span>
+                </div>
+            </div>
+        </div>`;
+    }
+
+    // --- Usuarios Tab (superadmin only) ---
+
+    var usersData = [];
+
+    function renderUsuariosTab() {
+        var Auth = window.Mazelab.Auth;
+        if (!Auth || !Auth.canManageUsers()) return '<p style="color:var(--text-secondary);padding:1rem;">Acceso restringido.</p>';
+
+        var currentUser = Auth.getUser();
+        var isSuperAdmin = Auth.isSuperAdmin();
+        var roleLabels = Auth.ROLE_LABELS || {};
+
+        var rows = usersData.length === 0
+            ? '<tr><td colspan="6" style="text-align:center;padding:2rem;color:#888;">Cargando usuarios...</td></tr>'
+            : usersData.map(function (u) {
+                var isSelf = u.id === currentUser.id;
+                var roleLabel = roleLabels[u.role] || u.role;
+                var roleSelect = isSelf
+                    ? '<span class="badge badge-info">' + escapeHtml(roleLabel) + '</span>'
+                    : '<select class="form-control users-role-select" data-id="' + u.id + '" style="font-size:12px;padding:2px 6px;width:auto;">' +
+                      '<option value="operaciones"' + (u.role === 'operaciones' ? ' selected' : '') + '>Operaciones</option>' +
+                      '<option value="comercial"' + (u.role === 'comercial' ? ' selected' : '') + '>Comercial</option>' +
+                      '<option value="socio"' + (u.role === 'socio' ? ' selected' : '') + '>Socio</option>' +
+                      (isSuperAdmin ? '<option value="superadmin"' + (u.role === 'superadmin' ? ' selected' : '') + '>Super Admin</option>' : '') +
+                      '</select>';
+                var statusBadge = u.active !== false
+                    ? '<span class="badge badge-success">Activo</span>'
+                    : '<span class="badge badge-danger">Inactivo</span>';
+                var actions = isSelf ? '<span style="color:var(--text-secondary);font-size:11px;">Tu cuenta</span>' :
+                    '<button class="btn-icon users-reset-pwd-btn" data-id="' + u.id + '" data-name="' + escapeHtml(u.name || u.email) + '" title="Reset contraseña" style="margin-right:4px;">&#128273;</button>' +
+                    (isSuperAdmin ? '<button class="btn-icon users-toggle-btn" data-id="' + u.id + '" data-active="' + (u.active !== false) + '" title="' + (u.active !== false ? 'Desactivar' : 'Activar') + '">' +
+                    (u.active !== false ? '&#9940;' : '&#9989;') + '</button>' +
+                    '<button class="btn-icon users-delete-btn" data-id="' + u.id + '" title="Eliminar" style="color:var(--danger);margin-left:4px;">&#128465;</button>' : '');
+                return '<tr>' +
+                    '<td>' + escapeHtml(u.name || '') + '</td>' +
+                    '<td>' + escapeHtml(u.email) + '</td>' +
+                    '<td>' + roleSelect + '</td>' +
+                    '<td>' + statusBadge + '</td>' +
+                    '<td>' + formatDateShort(u.created_at) + '</td>' +
+                    '<td style="white-space:nowrap;">' + actions + '</td>' +
+                    '</tr>';
+            }).join('');
+
+        var roleDescHTML = '' +
+            '<div style="margin-bottom:16px;padding:12px;background:var(--bg-tertiary);border-radius:8px;font-size:12px;color:var(--text-secondary);line-height:1.6;">' +
+                '<strong style="color:var(--text-primary);">Perfiles disponibles:</strong><br>' +
+                '<strong>Operaciones</strong> — Kanban, Bodega, Dashboard operativo (eventos, alertas). Ve ratio de pagos a freelancers pero no montos.<br>' +
+                '<strong>Comercial</strong> — Ventas, CXC, Cotizador + todo lo de Operaciones.<br>' +
+                '<strong>Socio</strong> — Acceso completo (igual que Super Admin pero no puede eliminar usuarios).<br>' +
+                '<strong>Super Admin</strong> — Control total del sistema.' +
+            '</div>';
+
+        return `
+        <div class="card" style="max-width:960px">
+            <div class="card-header"><h3 class="card-title">Usuarios Registrados</h3></div>
+            <div style="padding:var(--space-md)">
+                ${roleDescHTML}
+                <div style="overflow-x:auto;">
+                    <table class="data-table" id="users-table">
+                        <thead><tr>
+                            <th>Nombre</th><th>Email</th><th>Perfil</th><th>Estado</th><th>Registro</th><th>Acciones</th>
+                        </tr></thead>
+                        <tbody id="users-table-body">${rows}</tbody>
+                    </table>
+                </div>
+            </div>
+        </div>`;
+    }
+
+    function formatDateShort(d) {
+        if (!d) return '-';
+        try { return new Date(d).toLocaleDateString('es-CL'); } catch (e) { return d; }
+    }
+
     // --- Servicios Tab ---
 
     function getFilteredServices() {
@@ -272,10 +498,16 @@ window.Mazelab.Modules.SettingsModule = (function () {
                 const costoDisplay = ctTotal > 0
                     ? formatCLP(ctTotal) + ' <span class="badge-info" style="font-size:10px">' + ctItems.length + ' ítems</span>'
                     : formatCLP(s.costo_base_estimado);
+                const tarifBase = (() => {
+                    try { return JSON.parse(s.tarifario || '{}').base || {}; } catch(e) { return {}; }
+                })();
+                const precioDisplay = tarifBase.unitario > 0
+                    ? formatCLP(tarifBase.unitario) + ' <span class="badge-info" style="font-size:10px">Tarifario</span>'
+                    : formatCLP(s.precio_base);
                 return `
                 <tr data-id="${s.id}">
                     <td>${escapeHtml(name)}</td>
-                    <td>${formatCLP(s.precio_base)}</td>
+                    <td>${precioDisplay}</td>
                     <td>${costoDisplay}</td>
                     <td>${escapeHtml(durLabel)}</td>
                     <td>${featuredBadge}</td>
@@ -326,6 +558,38 @@ window.Mazelab.Modules.SettingsModule = (function () {
             .filter(Boolean);
         const allCats = Array.from(new Set([...existingCats, ...DEFAULT_CATS])).sort();
         const duracionTipos = ['horas', 'jornada', 'dias'];
+
+        // Equipos del servicio — pre-compute before main template
+        const EQ_CATS = ['Notebooks','PCs','Tablets','Teléfonos','Cámaras','Impresoras','Pantallas','Totems','Sensores','Iluminación','Trípodes','Mobiliario','Cables','Accesorios','Otro'];
+        let eqItems = [];
+        try {
+            const parsed = JSON.parse(s.equipos_checklist || '[]');
+            if (Array.isArray(parsed)) eqItems = parsed;
+        } catch(e) {
+            if (s.equipos_checklist) {
+                eqItems = s.equipos_checklist.split('\n').filter(l => l.trim()).map(l => ({ categoria: '', label: l.trim() }));
+            }
+        }
+        const eqItemRowsHTML = eqItems.map(item =>
+            '<div class="svc-eq-item" data-categoria="' + escapeHtml(item.categoria || '') + '" data-label="' + escapeHtml(item.label || '') + '" style="display:flex;align-items:center;gap:8px;padding:5px 0;border-bottom:1px solid rgba(255,255,255,0.05)">' +
+                '<span style="font-size:11px;background:rgba(167,139,250,0.12);color:#a78bfa;border:1px solid rgba(167,139,250,0.3);padding:2px 8px;border-radius:12px;white-space:nowrap;min-width:70px;text-align:center">' + escapeHtml(item.categoria || '—') + '</span>' +
+                '<span style="flex:1;font-size:13px">' + escapeHtml(item.label || '') + '</span>' +
+                '<button type="button" class="svc-eq-del-btn" style="background:none;border:none;color:#f87171;cursor:pointer;font-size:18px;padding:0 4px;line-height:1" title="Eliminar">&times;</button>' +
+            '</div>'
+        ).join('');
+        const eqCatListHTML = EQ_CATS.map(c => '<option value="' + escapeHtml(c) + '">').join('');
+        const eqSectionHTML = '<div class="form-group" style="margin-top:var(--space-md)">' +
+            '<label>Equipos del servicio <span style="font-weight:400;color:var(--text-muted)">(el operador asigna IDs por evento)</span></label>' +
+            '<datalist id="svc-eq-cat-list">' + eqCatListHTML + '</datalist>' +
+            '<div id="svc-eq-items-list" style="margin-bottom:10px;min-height:20px">' +
+                (eqItemRowsHTML || '<div class="svc-eq-empty" style="color:var(--text-muted);font-size:13px;padding:6px 0">Sin equipos definidos.</div>') +
+            '</div>' +
+            '<div style="display:flex;gap:6px;align-items:center">' +
+                '<input type="text" list="svc-eq-cat-list" id="svc-eq-new-cat" class="form-control" placeholder="Categoría..." style="width:150px;height:34px;font-size:13px">' +
+                '<input type="text" id="svc-eq-new-label" class="form-control" placeholder="Nombre del ítem..." style="flex:1;height:34px;font-size:13px">' +
+                '<button type="button" id="svc-eq-add-btn" style="white-space:nowrap;height:34px;padding:0 12px;font-size:13px;background:rgba(255,255,255,0.07);border:1px solid rgba(255,255,255,0.15);border-radius:6px;color:var(--text-secondary);cursor:pointer">+ Añadir</button>' +
+            '</div>' +
+        '</div>';
 
         return `
             <div class="form-row">
@@ -384,46 +648,109 @@ window.Mazelab.Modules.SettingsModule = (function () {
                 </div>
             </div>
 
-            <div class="form-group" style="margin-top:var(--space-lg);border-top:1px solid var(--border-color);padding-top:var(--space-md)">
-                <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:var(--space-md)">
-                    <label style="margin:0;font-weight:600">Plantilla de Costos</label>
-                    <button type="button" class="btn btn-secondary" id="btn-add-ct-row">+ Agregar costo</button>
-                </div>
-                <div id="svc-cost-template-rows">
-                    ${renderCostTemplateRows(s.cost_template || [])}
-                </div>
-                <div style="text-align:right;margin-top:var(--space-sm);font-size:13px;color:var(--text-secondary)">
-                    Total plantilla: <strong id="svc-ct-total">${formatCLP((s.cost_template || []).reduce(function(acc, i){ return acc + (i.cantidad || 1) * (i.monto_unitario || 0); }, 0))}</strong>
-                </div>
-            </div>
+            ${(() => {
+                let tarifario = { base: { label: '', descripcion: '', unitario: '' }, adicionales: [], packs: [] };
+                try {
+                    var parsed = JSON.parse(s.tarifario || '{}');
+                    if (parsed.base) tarifario = parsed;
+                } catch(e) {}
+                const adicionalesHTML = (tarifario.adicionales || []).map(a =>
+                    '<div class="tarif-item tarif-adicional">' + makeTarifItemHTML(a.label || '', a.descripcion || '', a.unitario || '', 'tarif-adicional') + '</div>'
+                ).join('');
+                const packsHTML = (tarifario.packs || []).map(p =>
+                    '<div class="tarif-item tarif-pack">' + makeTarifItemHTML(p.label || '', p.descripcion || '', p.unitario || '', 'tarif-pack') + '</div>'
+                ).join('');
+                return '<div style="margin-top:var(--space-lg);border-top:1px solid var(--border-color);padding-top:var(--space-md)">' +
 
-            <div style="margin-top:var(--space-lg);border-top:1px solid var(--border-color);padding-top:var(--space-md)">
-                <div style="font-size:13px;font-weight:700;color:var(--text-secondary);letter-spacing:0.5px;text-transform:uppercase;margin-bottom:var(--space-md)">Ficha Operacional</div>
-                <div class="form-group">
-                    <label for="svc-specs">Especificaciones técnicas <span style="font-weight:400;color:var(--text-muted)">(medidas, espacio mínimo, consumo eléctrico, conexiones)</span></label>
-                    <textarea id="svc-specs" class="form-control" rows="3" placeholder="Ej: Espacio mínimo 2x2m. Consumo 300W (1 tomacorriente estándar). Conexión: 1 cable HDMI.">${escapeHtml(s.specs || '')}</textarea>
-                </div>
-                <div class="form-group">
-                    <label for="svc-notas-ops">Notas operacionales <span style="font-weight:400;color:var(--text-muted)">(qué debe saber el equipo antes de llegar)</span></label>
-                    <textarea id="svc-notas-ops" class="form-control" rows="3" placeholder="Ej: Verificar que el exterior del Holobox esté impecable. Llevar film de protección en traslado.">${escapeHtml(s.notas_ops || '')}</textarea>
-                </div>
-                <div class="form-group">
-                    <label for="svc-faq">Preguntas frecuentes del cliente <span style="font-weight:400;color:var(--text-muted)">(una por línea: P: … / R: …)</span></label>
-                    <textarea id="svc-faq" class="form-control" rows="5" placeholder="P: ¿Se puede agregar una base de datos?\nR: Sí, coordinarlo con el equipo de desarrollo con al menos 10 días de anticipación.\n\nP: ¿Cuántas impresiones por hora?\nR: Aproximadamente 60-80 fotos por hora.">${escapeHtml(s.faq || '')}</textarea>
-                </div>
-                <div class="form-group">
-                    <label for="svc-template-saludo">Template: Saludo inicial al cliente <span style="font-weight:400;color:var(--text-muted)">(usa {cliente}, {evento}, {fecha}, {encargado})</span></label>
-                    <textarea id="svc-template-saludo" class="form-control" rows="5" placeholder="Hola {contacto}, te escribo de parte de MazeLab. Quedé a cargo de la coordinación de {servicio} para el evento {evento} el {fecha}.\n\nMe pongo en contacto para coordinar los detalles y asegurarnos de que todo esté perfecto para el día del evento.\n\n¿Cuándo tienes disponibilidad para conversar?">${escapeHtml(s.template_saludo || '')}</textarea>
-                </div>
-                <div class="form-group">
-                    <label for="svc-template-diseno">Template: Solicitud de diseño/branding <span style="font-weight:400;color:var(--text-muted)">(cuando el cliente debe enviarnos archivos)</span></label>
-                    <textarea id="svc-template-diseno" class="form-control" rows="5" placeholder="Hola {contacto}, para poder preparar el {servicio} necesitamos los siguientes archivos de diseño:\n\n- Formato: JPG o PNG\n- Medidas: [completar]\n- Plazo máximo: 5 días antes del evento\n\nCualquier consulta estamos disponibles.">${escapeHtml(s.template_diseno || '')}</textarea>
-                </div>
-                <div class="form-group">
-                    <label for="svc-equipos-checklist">Checklist de equipos del servicio <span style="font-weight:400;color:var(--text-muted)">(uno por línea — el operador puede agregar extras por evento)</span></label>
-                    <textarea id="svc-equipos-checklist" class="form-control" rows="5" placeholder="Ej:\nAro de luz portátil\niPhone XR para impresión\nImpresora DNP DS820\nRoll de papel fotográfico">${escapeHtml(s.equipos_checklist || '')}</textarea>
-                </div>
-            </div>`;
+                    '<div class="accordion-section open">' +
+                        '<div class="accordion-header">' +
+                            '<span class="acc-title">Tarifario</span>' +
+                            '<span class="acc-arrow">&#9660;</span>' +
+                        '</div>' +
+                        '<div class="accordion-body">' +
+                            '<div style="font-size:13px;font-weight:600;color:var(--text-secondary);margin-bottom:var(--space-sm)">Base (siempre 1 unidad)</div>' +
+                            '<div style="display:flex;gap:8px;align-items:flex-start;flex-wrap:wrap">' +
+                                '<div class="form-group tarif-label"><input type="text" id="tarif-base-label" class="form-control" value="' + escapeHtml(tarifario.base.label || '') + '" placeholder="Nombre"></div>' +
+                                '<div class="form-group tarif-desc"><textarea id="tarif-base-desc" class="form-control" rows="1" placeholder="Descripcion breve">' + escapeHtml(tarifario.base.descripcion || '') + '</textarea></div>' +
+                                '<div class="form-group tarif-price"><input type="number" id="tarif-base-unit" class="form-control" value="' + (tarifario.base.unitario || '') + '" min="0" placeholder="Precio"></div>' +
+                            '</div>' +
+                            '<div style="font-size:13px;font-weight:600;color:var(--text-secondary);margin-top:var(--space-md);margin-bottom:var(--space-sm)">Adicionales</div>' +
+                            '<div id="tarif-adicionales-list">' + adicionalesHTML + '</div>' +
+                            '<button type="button" class="btn btn-secondary" id="btn-add-tarif-adicional" style="margin-top:6px">+ Agregar adicional</button>' +
+                            '<div style="font-size:13px;font-weight:600;color:var(--text-secondary);margin-top:var(--space-md);margin-bottom:var(--space-sm)">Packs</div>' +
+                            '<div id="tarif-packs-list">' + packsHTML + '</div>' +
+                            '<button type="button" class="btn btn-secondary" id="btn-add-tarif-pack" style="margin-top:6px">+ Agregar pack</button>' +
+                        '</div>' +
+                    '</div>' +
+
+                    '<div class="accordion-section">' +
+                        '<div class="accordion-header">' +
+                            '<span class="acc-title">Costos Internos</span>' +
+                            '<span class="acc-arrow">&#9660;</span>' +
+                        '</div>' +
+                        '<div class="accordion-body">' +
+                            '<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:var(--space-md)">' +
+                                '<label style="margin:0;font-weight:600">Plantilla de Costos</label>' +
+                                '<button type="button" class="btn btn-secondary" id="btn-add-ct-row">+ Agregar costo</button>' +
+                            '</div>' +
+                            '<div id="svc-cost-template-rows">' +
+                                renderCostTemplateRows(s.cost_template || []) +
+                            '</div>' +
+                            '<div style="text-align:right;margin-top:var(--space-sm);font-size:13px;color:var(--text-secondary)">' +
+                                'Total plantilla: <strong id="svc-ct-total">' + formatCLP((s.cost_template || []).reduce(function(acc, i){ return acc + (i.cantidad || 1) * (i.monto_unitario || 0); }, 0)) + '</strong>' +
+                            '</div>' +
+                        '</div>' +
+                    '</div>' +
+
+                    '<div class="accordion-section">' +
+                        '<div class="accordion-header">' +
+                            '<span class="acc-title">Equipos</span>' +
+                            '<span class="acc-arrow">&#9660;</span>' +
+                        '</div>' +
+                        '<div class="accordion-body">' +
+                            eqSectionHTML +
+                        '</div>' +
+                    '</div>' +
+
+                    '<div class="accordion-section open">' +
+                        '<div class="accordion-header">' +
+                            '<span class="acc-title">Comunicacion (Links, Templates)</span>' +
+                            '<span class="acc-arrow">&#9660;</span>' +
+                        '</div>' +
+                        '<div class="accordion-body">' +
+                            '<div class="form-group">' +
+                                '<label for="svc-template-saludo">Template: Saludo inicial al cliente <span style="font-weight:400;color:var(--text-muted)">(usa {cliente}, {evento}, {fecha}, {encargado})</span></label>' +
+                                '<textarea id="svc-template-saludo" class="form-control" rows="5" placeholder="Hola {contacto}, te escribo de parte de MazeLab...">' + escapeHtml(s.template_saludo || '') + '</textarea>' +
+                            '</div>' +
+                            '<div class="form-group">' +
+                                '<label for="svc-template-diseno">Template: Solicitud de diseño/branding <span style="font-weight:400;color:var(--text-muted)">(cuando el cliente debe enviarnos archivos)</span></label>' +
+                                '<textarea id="svc-template-diseno" class="form-control" rows="5" placeholder="Hola {contacto}, para poder preparar el {servicio} necesitamos los siguientes archivos...">' + escapeHtml(s.template_diseno || '') + '</textarea>' +
+                            '</div>' +
+                            '<div class="form-group">' +
+                                '<label for="svc-faq">Preguntas frecuentes del cliente <span style="font-weight:400;color:var(--text-muted)">(una por línea: P: … / R: …)</span></label>' +
+                                '<textarea id="svc-faq" class="form-control" rows="5" placeholder="P: ¿Se puede agregar una base de datos?...">' + escapeHtml(s.faq || '') + '</textarea>' +
+                            '</div>' +
+                            '<div class="form-group">' +
+                                '<label for="svc-link-fotos">Link fotos/galería <span style="font-weight:400;color:var(--text-muted)">(Google Drive, Dropbox, etc.)</span></label>' +
+                                '<input type="url" id="svc-link-fotos" class="form-control" placeholder="https://drive.google.com/..." value="' + escapeHtml(s.link_fotos || '') + '">' +
+                            '</div>' +
+                            '<div class="form-group">' +
+                                '<label for="svc-link-landing">Link ficha técnica / landing <span style="font-weight:400;color:var(--text-muted)">(página web del servicio)</span></label>' +
+                                '<input type="url" id="svc-link-landing" class="form-control" placeholder="https://mazelab.cl/glambot" value="' + escapeHtml(s.link_landing || '') + '">' +
+                            '</div>' +
+                            '<div class="form-group">' +
+                                '<label for="svc-specs">Especificaciones técnicas <span style="font-weight:400;color:var(--text-muted)">(medidas, espacio mínimo, consumo eléctrico, conexiones)</span></label>' +
+                                '<textarea id="svc-specs" class="form-control" rows="3" placeholder="Ej: Espacio mínimo 2x2m. Consumo 300W...">' + escapeHtml(s.specs || '') + '</textarea>' +
+                            '</div>' +
+                            '<div class="form-group">' +
+                                '<label for="svc-notas-ops">Notas operacionales <span style="font-weight:400;color:var(--text-muted)">(qué debe saber el equipo antes de llegar)</span></label>' +
+                                '<textarea id="svc-notas-ops" class="form-control" rows="3" placeholder="Ej: Verificar que el exterior del Holobox esté impecable...">' + escapeHtml(s.notas_ops || '') + '</textarea>' +
+                            '</div>' +
+                        '</div>' +
+                    '</div>' +
+
+                '</div>';
+            })()}`;
     }
 
     function getServiceFormData() {
@@ -435,7 +762,11 @@ window.Mazelab.Modules.SettingsModule = (function () {
             nombre: document.getElementById('svc-nombre').value.trim(),
             categoria: document.getElementById('svc-categoria').value,
             descripcion: document.getElementById('svc-descripcion').value.trim(),
-            precio_base: document.getElementById('svc-precio-base').value ? Number(document.getElementById('svc-precio-base').value) : null,
+            precio_base: (() => {
+                const tarifUnit = Number((document.getElementById('tarif-base-unit') || {}).value) || 0;
+                const legacyVal = document.getElementById('svc-precio-base').value ? Number(document.getElementById('svc-precio-base').value) : null;
+                return tarifUnit > 0 ? tarifUnit : legacyVal;
+            })(),
             costo_base_estimado: costoBase,
             duracion_tipo: document.getElementById('svc-duracion-tipo').value || null,
             duracion_default: document.getElementById('svc-duracion-default').value ? Number(document.getElementById('svc-duracion-default').value) : null,
@@ -447,7 +778,38 @@ window.Mazelab.Modules.SettingsModule = (function () {
             faq:              (document.getElementById('svc-faq')               || {}).value || null,
             template_saludo:  (document.getElementById('svc-template-saludo')  || {}).value || null,
             template_diseno:  (document.getElementById('svc-template-diseno')  || {}).value || null,
-            equipos_checklist: (document.getElementById('svc-equipos-checklist') || {}).value || null,
+            link_fotos:       (document.getElementById('svc-link-fotos')       || {}).value || null,
+            link_landing:     (document.getElementById('svc-link-landing')     || {}).value || null,
+            equipos_checklist: (() => {
+                const items = [];
+                document.querySelectorAll('#svc-eq-items-list .svc-eq-item').forEach(el => {
+                    const label = el.dataset.label || '';
+                    if (label) items.push({ categoria: el.dataset.categoria || '', label });
+                });
+                return items.length ? JSON.stringify(items) : null;
+            })(),
+            tarifario: (() => {
+                const base = {
+                    label: (document.getElementById('tarif-base-label') || {}).value || '',
+                    descripcion: (document.getElementById('tarif-base-desc') || {}).value || '',
+                    unitario: Number((document.getElementById('tarif-base-unit') || {}).value) || 0
+                };
+                const adicionales = [];
+                document.querySelectorAll('.tarif-adicional').forEach(el => {
+                    const label = (el.querySelector('.tarif-item-label') || {}).value || '';
+                    const desc = (el.querySelector('.tarif-item-desc') || {}).value || '';
+                    const unit = Number((el.querySelector('.tarif-item-unit') || {}).value) || 0;
+                    if (label || unit) adicionales.push({ label, descripcion: desc, unitario: unit });
+                });
+                const packs = [];
+                document.querySelectorAll('.tarif-pack').forEach(el => {
+                    const label = (el.querySelector('.tarif-item-label') || {}).value || '';
+                    const desc = (el.querySelector('.tarif-item-desc') || {}).value || '';
+                    const unit = Number((el.querySelector('.tarif-item-unit') || {}).value) || 0;
+                    if (label || unit) packs.push({ label, descripcion: desc, unitario: unit });
+                });
+                return JSON.stringify({ base, adicionales, packs });
+            })(),
         };
     }
 
@@ -750,6 +1112,9 @@ window.Mazelab.Modules.SettingsModule = (function () {
                 body.innerHTML = renderServiceForm(item);
                 if (modalEl) modalEl.classList.add('modal-wide');
                 bindCostTemplateEvents();
+                bindEquiposChecklistEvents();
+                bindTarifarioEvents();
+                bindAccordionEvents();
                 break;
             case 'staff':
                 body.innerHTML = renderStaffForm(item);
@@ -907,6 +1272,136 @@ window.Mazelab.Modules.SettingsModule = (function () {
             });
         }
 
+        // IA tab events
+        var iaSaveBtn = document.getElementById('ia-save-btn');
+        if (iaSaveBtn) {
+            iaSaveBtn.addEventListener('click', function () {
+                var AI = window.Mazelab.AIService;
+                if (!AI) return;
+                AI.saveConfig({
+                    apiKey: (document.getElementById('ia-apikey').value || '').trim(),
+                    model: document.getElementById('ia-model').value,
+                    prompts: {
+                        cobranza: (document.getElementById('ia-prompt-cobranza').value || '').trim(),
+                        cotizador: (document.getElementById('ia-prompt-cotizador').value || '').trim()
+                    }
+                });
+                var msg = document.getElementById('ia-save-msg');
+                if (msg) { msg.style.display = 'inline'; setTimeout(function () { msg.style.display = 'none'; }, 2000); }
+            });
+        }
+
+        var iaTestBtn = document.getElementById('ia-test-btn');
+        if (iaTestBtn) {
+            iaTestBtn.addEventListener('click', async function () {
+                var AI = window.Mazelab.AIService;
+                var testMsg = document.getElementById('ia-test-msg');
+                if (!AI || !testMsg) return;
+
+                // Save first so test uses current values
+                AI.saveConfig({
+                    apiKey: (document.getElementById('ia-apikey').value || '').trim(),
+                    model: document.getElementById('ia-model').value,
+                    prompts: {
+                        cobranza: (document.getElementById('ia-prompt-cobranza').value || '').trim(),
+                        cotizador: (document.getElementById('ia-prompt-cotizador').value || '').trim()
+                    }
+                });
+
+                testMsg.style.color = 'var(--text-secondary)';
+                testMsg.textContent = 'Conectando...';
+
+                try {
+                    var result = await AI.testConnection();
+                    testMsg.style.color = 'var(--success)';
+                    testMsg.textContent = '\u2713 Conectado — ' + result.model;
+                } catch (err) {
+                    testMsg.style.color = 'var(--danger)';
+                    testMsg.textContent = '\u2717 ' + (err.message || 'Error de conexión');
+                }
+            });
+        }
+
+        var iaToggleKey = document.getElementById('ia-toggle-key');
+        if (iaToggleKey) {
+            iaToggleKey.addEventListener('click', function () {
+                var input = document.getElementById('ia-apikey');
+                if (input) input.type = input.type === 'password' ? 'text' : 'password';
+            });
+        }
+
+        var iaResetCobranza = document.getElementById('ia-reset-cobranza');
+        if (iaResetCobranza) {
+            iaResetCobranza.addEventListener('click', function () {
+                var AI = window.Mazelab.AIService;
+                if (!AI) return;
+                var ta = document.getElementById('ia-prompt-cobranza');
+                if (ta) ta.value = AI.getDefaultPrompts().cobranza;
+            });
+        }
+
+        var iaResetCotizador = document.getElementById('ia-reset-cotizador');
+        if (iaResetCotizador) {
+            iaResetCotizador.addEventListener('click', function () {
+                var AI = window.Mazelab.AIService;
+                if (!AI) return;
+                var ta = document.getElementById('ia-prompt-cotizador');
+                if (ta) ta.value = AI.getDefaultPrompts().cotizador;
+            });
+        }
+
+        // Users tab events (superadmin)
+        var usersBody = document.getElementById('users-table-body');
+        if (usersBody) {
+            // Role change
+            usersBody.querySelectorAll('.users-role-select').forEach(function (sel) {
+                sel.addEventListener('change', async function () {
+                    var userId = this.getAttribute('data-id');
+                    try {
+                        await window.Mazelab.Auth.updateUserRole(userId, this.value);
+                        usersData = await window.Mazelab.Auth.getAllUsers();
+                        refreshTabContent();
+                    } catch (err) { alert(err.message); }
+                });
+            });
+            // Toggle active, delete, reset password
+            usersBody.addEventListener('click', async function (e) {
+                var toggleBtn = e.target.closest('.users-toggle-btn');
+                if (toggleBtn) {
+                    var userId = toggleBtn.getAttribute('data-id');
+                    var isActive = toggleBtn.getAttribute('data-active') === 'true';
+                    try {
+                        await window.Mazelab.Auth.toggleUserActive(userId, !isActive);
+                        usersData = await window.Mazelab.Auth.getAllUsers();
+                        refreshTabContent();
+                    } catch (err) { alert(err.message); }
+                }
+                // Delete
+                var deleteBtn = e.target.closest('.users-delete-btn');
+                if (deleteBtn) {
+                    var userId2 = deleteBtn.getAttribute('data-id');
+                    if (!confirm('Eliminar este usuario permanentemente?')) return;
+                    try {
+                        await window.Mazelab.Auth.deleteUser(userId2);
+                        usersData = await window.Mazelab.Auth.getAllUsers();
+                        refreshTabContent();
+                    } catch (err) { alert(err.message); }
+                }
+                // Reset password
+                var resetBtn = e.target.closest('.users-reset-pwd-btn');
+                if (resetBtn) {
+                    var resetUserId = resetBtn.getAttribute('data-id');
+                    var userName = resetBtn.getAttribute('data-name');
+                    var newPwd = prompt('Nueva contraseña para ' + userName + ' (min 6 caracteres):');
+                    if (!newPwd) return;
+                    try {
+                        await window.Mazelab.Auth.resetPassword(resetUserId, newPwd);
+                        alert('Contraseña actualizada para ' + userName);
+                    } catch (err) { alert(err.message); }
+                }
+            });
+        }
+
         // Table edit/delete delegation
         const tbody = document.getElementById('settings-table-body');
         if (tbody) {
@@ -962,6 +1457,14 @@ window.Mazelab.Modules.SettingsModule = (function () {
                 this.classList.add('active');
                 activeTab = this.getAttribute('data-tab');
                 searchQuery = '';
+                // Load users when switching to usuarios tab
+                if (activeTab === 'usuarios' && window.Mazelab.Auth && window.Mazelab.Auth.canManageUsers()) {
+                    window.Mazelab.Auth.getAllUsers().then(function (data) {
+                        usersData = data || [];
+                        refreshTabContent();
+                    }).catch(function () { refreshTabContent(); });
+                    return;
+                }
                 refreshTabContent();
             });
         });
