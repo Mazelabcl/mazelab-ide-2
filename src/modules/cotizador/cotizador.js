@@ -184,6 +184,7 @@ window.Mazelab.Modules.CotizadorModule = (function () {
         html += '  .preview-actions { display: none !important; }';
         html += '  .sidebar, .top-bar, .toolbar, .module-header, .content-header, .sidebar-footer { display: none !important; }';
         html += '}';
+        html += '.cotizador-preview.ops-mode .cot-price { display: none !important; }';
         html += '</style>';
         html += '<div class="content-header"><h1>Cotizador</h1></div>';
         html += '<div class="content-body" id="cotizador-content"></div>';
@@ -578,6 +579,7 @@ window.Mazelab.Modules.CotizadorModule = (function () {
         html += '<div class="toolbar preview-actions">';
         html += '  <button class="btn btn-secondary" id="cot-btn-back-form">Volver al formulario</button>';
         html += '  <button class="btn btn-primary" id="cot-btn-print">Imprimir / PDF</button>';
+        html += '  <button class="btn btn-secondary" id="cot-btn-ops-view">Vista Operario (sin precios)</button>';
         html += '  <button class="btn btn-primary" id="cot-btn-save-final">Guardar</button>';
         if (cotEstado !== 'aprobada') {
             html += '  <button class="btn btn-primary" id="cot-btn-convert" style="background:var(--success);border-color:var(--success);">Convertir a Venta</button>';
@@ -645,7 +647,7 @@ window.Mazelab.Modules.CotizadorModule = (function () {
                     if (itemDias2 > 1) html += ' <span style="color:#666;">x' + itemDias2 + ' dias</span>';
                     if (item.descripcion) html += '<br><span style="font-size:0.8rem;color:#888;font-style:italic;white-space:pre-line;">' + escapeHtml(item.descripcion) + '</span>';
                     html += '</td>';
-                    html += '<td style="padding:0.5rem 0;text-align:right;color:#333;font-weight:600;white-space:nowrap;">' + formatCLP(rowTotal) + '</td>';
+                    html += '<td class="cot-price" style="padding:0.5rem 0;text-align:right;color:#333;font-weight:600;white-space:nowrap;">' + formatCLP(rowTotal) + '</td>';
                     html += '</tr>';
                 }
                 html += '</table>';
@@ -654,13 +656,13 @@ window.Mazelab.Modules.CotizadorModule = (function () {
             // Bloque subtotal
             calcBloqueSubtotal(bloque);
             if (formState.bloques.length > 1) {
-                html += '<div style="text-align:right;margin-top:0.3rem;padding-top:0.3rem;font-size:0.85rem;color:#666;">Subtotal ' + escapeHtml(bloque.serviceName) + ': <strong style="color:#333;">' + formatCLP(bloque.subtotalBloque) + '</strong></div>';
+                html += '<div class="cot-price" style="text-align:right;margin-top:0.3rem;padding-top:0.3rem;font-size:0.85rem;color:#666;">Subtotal ' + escapeHtml(bloque.serviceName) + ': <strong style="color:#333;">' + formatCLP(bloque.subtotalBloque) + '</strong></div>';
             }
             html += '</div>';
         }
 
         // Grand totals
-        html += '<div style="margin-top:1.5rem;border-top:2px solid #e5e7eb;padding-top:1rem;">';
+        html += '<div class="cot-price" style="margin-top:1.5rem;border-top:2px solid #e5e7eb;padding-top:1rem;">';
         html += '<table style="width:300px;margin-left:auto;border-collapse:collapse;">';
         html += '<tr><td style="padding:0.3rem 0;color:#555;">Subtotal</td><td style="padding:0.3rem 0;text-align:right;color:#333;">' + formatCLP(t.subtotal) + '</td></tr>';
         if (t.descuento > 0) {
@@ -1491,6 +1493,17 @@ window.Mazelab.Modules.CotizadorModule = (function () {
                 window.print();
                 // Restore after a tick (print dialog is sync-blocking on most browsers)
                 setTimeout(function () { document.title = origTitle; }, 500);
+            });
+        }
+
+        // Ops view toggle — hide/show prices for screenshot
+        var btnOpsView = document.getElementById('cot-btn-ops-view');
+        if (btnOpsView) {
+            btnOpsView.addEventListener('click', function () {
+                var preview = document.querySelector('.cotizador-preview');
+                if (!preview) return;
+                var isOps = preview.classList.toggle('ops-mode');
+                btnOpsView.textContent = isOps ? 'Vista Completa (con precios)' : 'Vista Operario (sin precios)';
             });
         }
 

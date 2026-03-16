@@ -207,8 +207,24 @@ window.Mazelab.Modules.DashboardModule = (function () {
     //  COMERCIAL DASHBOARD
     // ================================================================
     function buildComercialDashboard(sales, receivables, services) {
-        var totalVentas = 0;
-        sales.forEach(function (s) { totalVentas += Number(s.amount || s.monto_venta || 0); });
+        var now = new Date();
+        var thisYear = now.getFullYear();
+        var lastYear = thisYear - 1;
+        var twoYearsAgo = thisYear - 2;
+
+        // ---- Yearly totals ----
+        var totalThisYear = 0, totalLastYear = 0, totalTwoYearsAgo = 0, totalAll = 0;
+        var countThisYear = 0;
+        sales.forEach(function (s) {
+            var amt = Number(s.amount || s.monto_venta || 0);
+            var ed = s.eventDate || s.event_date || s.fecha_evento;
+            if (!ed) { totalAll += amt; return; }
+            var y = new Date(ed).getFullYear();
+            totalAll += amt;
+            if (y === thisYear) { totalThisYear += amt; countThisYear++; }
+            else if (y === lastYear) totalLastYear += amt;
+            else if (y === twoYearsAgo) totalTwoYearsAgo += amt;
+        });
 
         // CXC
         var totalCXC = 0, countCXC = 0;
@@ -220,23 +236,31 @@ window.Mazelab.Modules.DashboardModule = (function () {
             var totalOwed = (tipo === 'E') ? neto : neto * 1.19;
             var paid = 0;
             if (r.payments && Array.isArray(r.payments)) {
-                paid = r.payments.reduce(function (s, p) { return s + (Number(p.amount) || 0); }, 0);
+                paid = r.payments.reduce(function (s2, p) { return s2 + (Number(p.amount) || 0); }, 0);
             }
             var pending = Math.max(0, totalOwed - paid);
             if (pending > 0) { totalCXC += pending; countCXC++; }
         });
 
-        // Cobrado ratio
         var cobradoCount = receivables.filter(function (r) { return (r.status || '').toLowerCase() === 'pagada'; }).length;
         var totalDocs = receivables.length;
         var cobradoPct = totalDocs > 0 ? Math.round((cobradoCount / totalDocs) * 100) : 0;
 
+        // Ticket promedio
+        var avgTicket = countThisYear > 0 ? Math.round(totalThisYear / countThisYear) : 0;
+
+        // ---- KPIs ----
         var kpiHTML = '' +
             '<div class="kpi-grid">' +
                 '<div class="kpi-card accent">' +
-                    '<div class="kpi-label">Ventas Totales</div>' +
-                    '<div class="kpi-value">' + formatCLP(totalVentas) + '</div>' +
-                    '<div class="kpi-sub">' + sales.length + ' ventas</div>' +
+                    '<div class="kpi-label">Ventas ' + thisYear + '</div>' +
+                    '<div class="kpi-value">' + formatCLP(totalThisYear) + '</div>' +
+                    '<div class="kpi-sub">' + countThisYear + ' ventas</div>' +
+                '</div>' +
+                '<div class="kpi-card">' +
+                    '<div class="kpi-label">Meta: ' + lastYear + '</div>' +
+                    '<div class="kpi-value">' + formatCLP(totalLastYear) + '</div>' +
+                    '<div class="kpi-sub">' + (totalLastYear > 0 ? Math.round(totalThisYear / totalLastYear * 100) + '% alcanzado' : '-') + '</div>' +
                 '</div>' +
                 '<div class="kpi-card warning">' +
                     '<div class="kpi-label">Por Cobrar</div>' +
@@ -246,14 +270,180 @@ window.Mazelab.Modules.DashboardModule = (function () {
                 '<div class="kpi-card ' + (cobradoPct >= 80 ? 'success' : 'warning') + '">' +
                     '<div class="kpi-label">Ratio Cobrado</div>' +
                     '<div class="kpi-value">' + cobradoPct + '%</div>' +
-                    '<div class="kpi-sub">' + cobradoCount + ' de ' + totalDocs + ' documentos</div>' +
+                    '<div class="kpi-sub">' + cobradoCount + ' de ' + totalDocs + '</div>' +
+                '</div>' +
+                '<div class="kpi-card">' +
+                    '<div class="kpi-label">Ticket Promedio</div>' +
+                    '<div class="kpi-value">' + formatCLP(avgTicket) + '</div>' +
+                    '<div class="kpi-sub">' + thisYear + '</div>' +
                 '</div>' +
             '</div>';
 
-        var upcomingHTML = buildUpcomingEvents(sales, services);
-        var rankingsHTML = buildRankings(sales, services);
+        // ---- YoY Chart (12 months, 3 years) ----
+        var months = ['Ene','Feb','Mar','Abr','May','Jun','Jul','Ago','Sep','Oct','Nov','Dic'];
+        var yoyData = {};
+        [thisYear, lastYear, twoYearsAgo].forEach(function (y) { yoyData[y] = new Array(12).fill(0); });
+        sales.forEach(function (s) {
+            var ed = s.eventDate || s.event_date || s.fecha_evento;
+            if (!ed) return;
+            var d = new Date(ed);
+            var y = d.getFullYear();
+            var m = d.getMonth();
+            if (yoyData[y]) yoyData[y][m] += Number(s.amount || s.monto_venta || 0);
+        });
 
-        return kpiHTML + upcomingHTML + rankingsHTML;
+        var maxYoY = 1;
+        [thisYear, lastYear, twoYearsAgo].forEach(function (y) {
+            yoyData[y].forEach(function (v) { if (v > maxYoY) maxYoY = v; });
+        });
+
+        var yoyBars = '';
+        var colors = {};
+        colors[thisYear] = 'var(--accent-primary)';
+        colors[lastYear] = 'rgba(167,139,250,0.4)';
+        colors[twoYearsAgo] = 'rgba(167,139,250,0.15)';
+
+        for (var mi = 0; mi < 12; mi++) {
+            var bars = '';
+            [twoYearsAgo, lastYear, thisYear].forEach(function (y) {
+                var val = yoyData[y][mi];
+                var pct = Math.round((val / maxYoY) * 100);
+                bars += '<div style="flex:1;background:' + colors[y] + ';height:' + Math.max(pct, 2) + '%;border-radius:2px 2px 0 0;" title="' + y + ': ' + formatCLP(val) + '"></div>';
+            });
+            var isCurrentMonth = mi === now.getMonth();
+            yoyBars += '<div style="display:flex;flex-direction:column;align-items:center;flex:1;gap:4px;">' +
+                '<div style="font-size:11px;font-weight:600;color:var(--text-primary);">' + formatCLPShort(yoyData[thisYear][mi]) + '</div>' +
+                '<div style="width:100%;height:140px;display:flex;align-items:flex-end;gap:2px;">' + bars + '</div>' +
+                '<span style="font-size:10px;color:' + (isCurrentMonth ? 'var(--accent-primary)' : 'var(--text-secondary)') + ';font-weight:' + (isCurrentMonth ? '700' : '400') + ';">' + months[mi] + '</span>' +
+            '</div>';
+        }
+
+        var yoyLegend = '<div style="display:flex;gap:16px;justify-content:center;margin-top:8px;font-size:11px;">';
+        [thisYear, lastYear, twoYearsAgo].forEach(function (y) {
+            yoyLegend += '<span><span style="display:inline-block;width:12px;height:12px;border-radius:2px;background:' + colors[y] + ';vertical-align:middle;margin-right:4px;"></span>' + y + ' (' + formatCLPShort(yoyData[y].reduce(function (a, b) { return a + b; }, 0)) + ')</span>';
+        });
+        yoyLegend += '</div>';
+
+        var yoyHTML = '<div class="card" style="margin-bottom:var(--space-md);">' +
+            '<div class="card-header"><span class="card-title">Ventas por Mes — Comparativa Anual</span></div>' +
+            '<div style="display:flex;gap:4px;align-items:flex-end;padding:var(--space-md) var(--space-sm);">' + yoyBars + '</div>' +
+            yoyLegend +
+            '</div>';
+
+        // ---- Service popularity + avg price ----
+        var svcStats = {};
+        var svcMap = {};
+        if (services && services.length) {
+            services.forEach(function (sv) { svcMap[sv.id] = sv.name || sv.nombre || sv.id; });
+        }
+        sales.forEach(function (s) {
+            var ed = s.eventDate || s.event_date || '';
+            var y = ed ? new Date(ed).getFullYear() : 0;
+            if (y !== thisYear && y !== lastYear) return;
+            var amt = Number(s.amount || s.monto_venta || 0);
+            var ids = s.serviceIds || s.service_ids || [];
+            if (Array.isArray(ids) && ids.length > 0) {
+                ids.forEach(function (sid) {
+                    if (!svcStats[sid]) svcStats[sid] = { name: svcMap[sid] || sid, count: 0, totalAmt: 0 };
+                    svcStats[sid].count++;
+                    svcStats[sid].totalAmt += amt / ids.length;
+                });
+            } else {
+                var raw = s.serviceNames || s.servicenames || s.servicios || '';
+                if (raw) {
+                    var names = raw.split(/[,;\/+]/).map(function (n) { return n.trim(); }).filter(Boolean);
+                    names.forEach(function (n) {
+                        if (!svcStats[n]) svcStats[n] = { name: n, count: 0, totalAmt: 0 };
+                        svcStats[n].count++;
+                        svcStats[n].totalAmt += amt / names.length;
+                    });
+                }
+            }
+        });
+        var topSvcs = Object.values(svcStats).sort(function (a, b) { return b.count - a.count; }).slice(0, 8);
+        var svcRows = topSvcs.length === 0 ? '<tr><td colspan="3" style="text-align:center;padding:16px;color:var(--text-muted)">Sin datos</td></tr>'
+            : topSvcs.map(function (sv, i) {
+                var avg = sv.count > 0 ? Math.round(sv.totalAmt / sv.count) : 0;
+                return '<tr><td>' + (i + 1) + '. ' + escapeHtml(sv.name) + '</td><td class="text-right"><span class="badge badge-success">' + sv.count + '</span></td><td class="text-right">' + formatCLP(avg) + '</td></tr>';
+            }).join('');
+
+        var svcCardHTML = '<div class="card">' +
+            '<div class="card-header"><span class="card-title">Servicios M\u00e1s Vendidos</span><span class="badge badge-info">' + thisYear + '-' + lastYear + '</span></div>' +
+            '<table class="data-table"><thead><tr><th>Servicio</th><th class="text-right">Eventos</th><th class="text-right">Ticket Prom.</th></tr></thead><tbody>' + svcRows + '</tbody></table></div>';
+
+        // ---- Ejecutivos de ventas ----
+        var execData = {};
+        sales.forEach(function (s) {
+            var ed = s.eventDate || s.event_date || '';
+            var y = ed ? new Date(ed).getFullYear() : 0;
+            if (y !== thisYear) return;
+            var exec = s.ejecutivo || s.vendedor || s.salesperson || 'Sin asignar';
+            if (!execData[exec]) execData[exec] = { name: exec, count: 0, total: 0, cobrado: 0, pendiente: 0 };
+            execData[exec].count++;
+            execData[exec].total += Number(s.amount || s.monto_venta || 0);
+        });
+        // Enrich with payment status from receivables
+        receivables.forEach(function (r) {
+            var exec = r.ejecutivo || r.vendedor || r.salesperson || 'Sin asignar';
+            if (!execData[exec]) return;
+            var st = (r.status || '').toLowerCase();
+            var neto = Number(r.montoNeto || r.monto_neto || r.invoicedAmount || 0);
+            if (st === 'pagada') execData[exec].cobrado += neto;
+            else if (st !== 'anulada' && (r.tipoDoc || '') !== 'NC') execData[exec].pendiente += neto;
+        });
+
+        var execList = Object.values(execData).sort(function (a, b) { return b.total - a.total; });
+        var execRows = execList.length === 0 ? '<tr><td colspan="5" style="text-align:center;padding:16px;color:var(--text-muted)">Sin datos</td></tr>'
+            : execList.map(function (ex) {
+                var pct = ex.total > 0 ? Math.round(ex.cobrado / ex.total * 100) : 0;
+                var pctColor = pct >= 80 ? 'var(--success)' : pct >= 50 ? 'var(--warning)' : 'var(--danger)';
+                return '<tr>' +
+                    '<td><strong>' + escapeHtml(ex.name) + '</strong></td>' +
+                    '<td class="text-right">' + ex.count + '</td>' +
+                    '<td class="text-right">' + formatCLP(ex.total) + '</td>' +
+                    '<td class="text-right" style="color:var(--success)">' + formatCLP(ex.cobrado) + '</td>' +
+                    '<td class="text-right"><span style="color:' + pctColor + ';font-weight:600">' + pct + '%</span></td>' +
+                '</tr>';
+            }).join('');
+
+        var execCardHTML = '<div class="card">' +
+            '<div class="card-header"><span class="card-title">Ejecutivos de Ventas</span><span class="badge badge-info">' + thisYear + '</span></div>' +
+            '<table class="data-table"><thead><tr><th>Ejecutivo</th><th class="text-right">Ventas</th><th class="text-right">Monto</th><th class="text-right">Cobrado</th><th class="text-right">% Cobro</th></tr></thead><tbody>' + execRows + '</tbody></table></div>';
+
+        // ---- Top clientes ----
+        var clientStats = {};
+        sales.forEach(function (s) {
+            var ed = s.eventDate || s.event_date || '';
+            var y = ed ? new Date(ed).getFullYear() : 0;
+            if (y !== thisYear && y !== lastYear) return;
+            var name = s.clientName || s.client_name || 'Sin cliente';
+            if (!clientStats[name]) clientStats[name] = { name: name, count: 0, total: 0 };
+            clientStats[name].count++;
+            clientStats[name].total += Number(s.amount || s.monto_venta || 0);
+        });
+        var topClients = Object.values(clientStats).sort(function (a, b) { return b.total - a.total; }).slice(0, 8);
+        var clientRows = topClients.length === 0 ? '<tr><td colspan="3" style="text-align:center;padding:16px;color:var(--text-muted)">Sin datos</td></tr>'
+            : topClients.map(function (c, i) {
+                return '<tr><td>' + (i + 1) + '. ' + escapeHtml(c.name) + '</td><td class="text-right">' + c.count + ' eventos</td><td class="text-right">' + formatCLP(c.total) + '</td></tr>';
+            }).join('');
+
+        var clientCardHTML = '<div class="card">' +
+            '<div class="card-header"><span class="card-title">Mejores Clientes</span><span class="badge badge-info">' + thisYear + '-' + lastYear + '</span></div>' +
+            '<table class="data-table"><thead><tr><th>Cliente</th><th class="text-right">Eventos</th><th class="text-right">Monto</th></tr></thead><tbody>' + clientRows + '</tbody></table></div>';
+
+        var upcomingHTML = buildUpcomingEvents(sales, services);
+
+        return kpiHTML + yoyHTML + upcomingHTML +
+            '<div class="kpi-grid-2">' + svcCardHTML + clientCardHTML + '</div>' +
+            execCardHTML;
+    }
+
+    function formatCLPShort(n) {
+        if (n == null || isNaN(n) || n === 0) return '$0';
+        var abs = Math.abs(n);
+        if (abs >= 1000000) return (n < 0 ? '-' : '') + '$' + (abs / 1000000).toFixed(1) + 'M';
+        if (abs >= 1000) return (n < 0 ? '-' : '') + '$' + Math.round(abs / 1000) + 'K';
+        return formatCLP(n);
     }
 
     // ================================================================
