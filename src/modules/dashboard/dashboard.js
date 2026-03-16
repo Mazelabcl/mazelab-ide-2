@@ -399,7 +399,7 @@ window.Mazelab.Modules.DashboardModule = (function () {
             var ed = s.eventDate || s.event_date || '';
             var y = ed ? new Date(ed).getFullYear() : 0;
             if (y !== thisYear) return;
-            var exec = s.ejecutivo || s.vendedor || s.salesperson || s.createdBy || 'Sin asignar';
+            var exec = s.staffName || s.ejecutivo || s.vendedor || s.salesperson || s.createdBy || 'Sin asignar';
             if (!execData[exec]) execData[exec] = { name: exec, count: 0, total: 0, cobrado: 0 };
             execData[exec].count++;
             var amt = Number(s.amount || s.monto_venta || 0);
@@ -903,6 +903,17 @@ window.Mazelab.Modules.DashboardModule = (function () {
             var payables = await window.Mazelab.DataService.getAll('payables') || [];
             var services = [];
             try { services = await window.Mazelab.DataService.getAll('services') || []; } catch (e) {}
+            var staffList = [];
+            try { staffList = await window.Mazelab.DataService.getAll('staff') || []; } catch (e) {}
+
+            // Resolve staffId → staffName on sales for ejecutivos display
+            var staffMap = {};
+            staffList.forEach(function (st) { staffMap[st.id] = st.name || st.nombre || st.id; });
+            sales.forEach(function (s) {
+                if (!s.staffName && s.staffId && staffMap[s.staffId]) {
+                    s.staffName = staffMap[s.staffId];
+                }
+            });
 
             var body = document.getElementById('dashboard-body');
             if (body) {
