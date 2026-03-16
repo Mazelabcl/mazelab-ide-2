@@ -83,7 +83,7 @@ window.Mazelab.Modules.NominasModule = (function () {
             var d = new Date(p.nominaDate);
             if (!isNaN(d.getTime())) return d;
         }
-        return getEffectiveDueDate(p);
+        return calcDueDate(p.eventDate);
     }
 
     // ── Filtros de elegibilidad ────────────────────────────────────────
