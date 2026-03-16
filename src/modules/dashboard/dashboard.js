@@ -199,8 +199,10 @@ window.Mazelab.Modules.DashboardModule = (function () {
         var ivaHTML = buildIVACard(receivables, payables);
         var rankingsHTML = buildRankings(sales, services);
         var upcomingHTML = buildUpcomingEvents(sales, services);
+        var yoyHTML = buildYoYChart(sales);
+        var comercialCards = buildComercialCards(sales, receivables, services);
 
-        return kpiHTML + upcomingHTML + chartHTML + ivaHTML + rankingsHTML;
+        return kpiHTML + upcomingHTML + yoyHTML + chartHTML + ivaHTML + rankingsHTML + comercialCards;
     }
 
     // ================================================================
@@ -279,7 +281,27 @@ window.Mazelab.Modules.DashboardModule = (function () {
                 '</div>' +
             '</div>';
 
-        // ---- YoY Chart (12 months, 3 years) ----
+        var yoyHTML = buildYoYChart(sales);
+        var upcomingHTML = buildUpcomingEvents(sales, services);
+        var comercialCards = buildComercialCards(sales, receivables, services);
+
+        return kpiHTML + yoyHTML + upcomingHTML + comercialCards;
+    }
+
+    function formatCLPShort(n) {
+        if (n == null || isNaN(n) || n === 0) return '$0';
+        var abs = Math.abs(n);
+        if (abs >= 1000000) return (n < 0 ? '-' : '') + '$' + (abs / 1000000).toFixed(1) + 'M';
+        if (abs >= 1000) return (n < 0 ? '-' : '') + '$' + Math.round(abs / 1000) + 'K';
+        return formatCLP(n);
+    }
+
+    // --- Reusable: YoY Chart ---
+    function buildYoYChart(sales) {
+        var now = new Date();
+        var thisYear = now.getFullYear();
+        var lastYear = thisYear - 1;
+        var twoYearsAgo = thisYear - 2;
         var months = ['Ene','Feb','Mar','Abr','May','Jun','Jul','Ago','Sep','Oct','Nov','Dic'];
         var yoyData = {};
         [thisYear, lastYear, twoYearsAgo].forEach(function (y) { yoyData[y] = new Array(12).fill(0); });
@@ -291,18 +313,15 @@ window.Mazelab.Modules.DashboardModule = (function () {
             var m = d.getMonth();
             if (yoyData[y]) yoyData[y][m] += Number(s.amount || s.monto_venta || 0);
         });
-
         var maxYoY = 1;
         [thisYear, lastYear, twoYearsAgo].forEach(function (y) {
             yoyData[y].forEach(function (v) { if (v > maxYoY) maxYoY = v; });
         });
-
-        var yoyBars = '';
         var colors = {};
         colors[thisYear] = 'var(--accent-primary)';
         colors[lastYear] = 'rgba(167,139,250,0.4)';
         colors[twoYearsAgo] = 'rgba(167,139,250,0.15)';
-
+        var yoyBars = '';
         for (var mi = 0; mi < 12; mi++) {
             var bars = '';
             [twoYearsAgo, lastYear, thisYear].forEach(function (y) {
@@ -317,25 +336,28 @@ window.Mazelab.Modules.DashboardModule = (function () {
                 '<span style="font-size:10px;color:' + (isCurrentMonth ? 'var(--accent-primary)' : 'var(--text-secondary)') + ';font-weight:' + (isCurrentMonth ? '700' : '400') + ';">' + months[mi] + '</span>' +
             '</div>';
         }
-
         var yoyLegend = '<div style="display:flex;gap:16px;justify-content:center;margin-top:8px;font-size:11px;">';
         [thisYear, lastYear, twoYearsAgo].forEach(function (y) {
             yoyLegend += '<span><span style="display:inline-block;width:12px;height:12px;border-radius:2px;background:' + colors[y] + ';vertical-align:middle;margin-right:4px;"></span>' + y + ' (' + formatCLPShort(yoyData[y].reduce(function (a, b) { return a + b; }, 0)) + ')</span>';
         });
         yoyLegend += '</div>';
-
-        var yoyHTML = '<div class="card" style="margin-bottom:var(--space-md);">' +
+        return '<div class="card" style="margin-bottom:var(--space-md);">' +
             '<div class="card-header"><span class="card-title">Ventas por Mes — Comparativa Anual</span></div>' +
             '<div style="display:flex;gap:4px;align-items:flex-end;padding:var(--space-md) var(--space-sm);">' + yoyBars + '</div>' +
-            yoyLegend +
-            '</div>';
+            yoyLegend + '</div>';
+    }
 
-        // ---- Service popularity + avg price ----
-        var svcStats = {};
+    // --- Reusable: Commercial cards (servicios top, clientes, ejecutivos) ---
+    function buildComercialCards(sales, receivables, services) {
+        var now = new Date();
+        var thisYear = now.getFullYear();
+        var lastYear = thisYear - 1;
         var svcMap = {};
         if (services && services.length) {
             services.forEach(function (sv) { svcMap[sv.id] = sv.name || sv.nombre || sv.id; });
         }
+        // Service stats
+        var svcStats = {};
         sales.forEach(function (s) {
             var ed = s.eventDate || s.event_date || '';
             var y = ed ? new Date(ed).getFullYear() : 0;
@@ -366,51 +388,40 @@ window.Mazelab.Modules.DashboardModule = (function () {
                 var avg = sv.count > 0 ? Math.round(sv.totalAmt / sv.count) : 0;
                 return '<tr><td>' + (i + 1) + '. ' + escapeHtml(sv.name) + '</td><td class="text-right"><span class="badge badge-success">' + sv.count + '</span></td><td class="text-right">' + formatCLP(avg) + '</td></tr>';
             }).join('');
-
         var svcCardHTML = '<div class="card">' +
             '<div class="card-header"><span class="card-title">Servicios M\u00e1s Vendidos</span><span class="badge badge-info">' + thisYear + '-' + lastYear + '</span></div>' +
             '<table class="data-table"><thead><tr><th>Servicio</th><th class="text-right">Eventos</th><th class="text-right">Ticket Prom.</th></tr></thead><tbody>' + svcRows + '</tbody></table></div>';
 
-        // ---- Ejecutivos de ventas ----
+        // Ejecutivos
         var execData = {};
         sales.forEach(function (s) {
             var ed = s.eventDate || s.event_date || '';
             var y = ed ? new Date(ed).getFullYear() : 0;
             if (y !== thisYear) return;
             var exec = s.ejecutivo || s.vendedor || s.salesperson || 'Sin asignar';
-            if (!execData[exec]) execData[exec] = { name: exec, count: 0, total: 0, cobrado: 0, pendiente: 0 };
+            if (!execData[exec]) execData[exec] = { name: exec, count: 0, total: 0, cobrado: 0 };
             execData[exec].count++;
             execData[exec].total += Number(s.amount || s.monto_venta || 0);
         });
-        // Enrich with payment status from receivables
         receivables.forEach(function (r) {
             var exec = r.ejecutivo || r.vendedor || r.salesperson || 'Sin asignar';
             if (!execData[exec]) return;
             var st = (r.status || '').toLowerCase();
             var neto = Number(r.montoNeto || r.monto_neto || r.invoicedAmount || 0);
             if (st === 'pagada') execData[exec].cobrado += neto;
-            else if (st !== 'anulada' && (r.tipoDoc || '') !== 'NC') execData[exec].pendiente += neto;
         });
-
         var execList = Object.values(execData).sort(function (a, b) { return b.total - a.total; });
         var execRows = execList.length === 0 ? '<tr><td colspan="5" style="text-align:center;padding:16px;color:var(--text-muted)">Sin datos</td></tr>'
             : execList.map(function (ex) {
                 var pct = ex.total > 0 ? Math.round(ex.cobrado / ex.total * 100) : 0;
                 var pctColor = pct >= 80 ? 'var(--success)' : pct >= 50 ? 'var(--warning)' : 'var(--danger)';
-                return '<tr>' +
-                    '<td><strong>' + escapeHtml(ex.name) + '</strong></td>' +
-                    '<td class="text-right">' + ex.count + '</td>' +
-                    '<td class="text-right">' + formatCLP(ex.total) + '</td>' +
-                    '<td class="text-right" style="color:var(--success)">' + formatCLP(ex.cobrado) + '</td>' +
-                    '<td class="text-right"><span style="color:' + pctColor + ';font-weight:600">' + pct + '%</span></td>' +
-                '</tr>';
+                return '<tr><td><strong>' + escapeHtml(ex.name) + '</strong></td><td class="text-right">' + ex.count + '</td><td class="text-right">' + formatCLP(ex.total) + '</td><td class="text-right" style="color:var(--success)">' + formatCLP(ex.cobrado) + '</td><td class="text-right"><span style="color:' + pctColor + ';font-weight:600">' + pct + '%</span></td></tr>';
             }).join('');
-
-        var execCardHTML = '<div class="card">' +
+        var execCardHTML = '<div class="card" style="margin-bottom:var(--space-md);">' +
             '<div class="card-header"><span class="card-title">Ejecutivos de Ventas</span><span class="badge badge-info">' + thisYear + '</span></div>' +
             '<table class="data-table"><thead><tr><th>Ejecutivo</th><th class="text-right">Ventas</th><th class="text-right">Monto</th><th class="text-right">Cobrado</th><th class="text-right">% Cobro</th></tr></thead><tbody>' + execRows + '</tbody></table></div>';
 
-        // ---- Top clientes ----
+        // Top clientes
         var clientStats = {};
         sales.forEach(function (s) {
             var ed = s.eventDate || s.event_date || '';
@@ -426,24 +437,11 @@ window.Mazelab.Modules.DashboardModule = (function () {
             : topClients.map(function (c, i) {
                 return '<tr><td>' + (i + 1) + '. ' + escapeHtml(c.name) + '</td><td class="text-right">' + c.count + ' eventos</td><td class="text-right">' + formatCLP(c.total) + '</td></tr>';
             }).join('');
-
         var clientCardHTML = '<div class="card">' +
             '<div class="card-header"><span class="card-title">Mejores Clientes</span><span class="badge badge-info">' + thisYear + '-' + lastYear + '</span></div>' +
             '<table class="data-table"><thead><tr><th>Cliente</th><th class="text-right">Eventos</th><th class="text-right">Monto</th></tr></thead><tbody>' + clientRows + '</tbody></table></div>';
 
-        var upcomingHTML = buildUpcomingEvents(sales, services);
-
-        return kpiHTML + yoyHTML + upcomingHTML +
-            '<div class="kpi-grid-2">' + svcCardHTML + clientCardHTML + '</div>' +
-            execCardHTML;
-    }
-
-    function formatCLPShort(n) {
-        if (n == null || isNaN(n) || n === 0) return '$0';
-        var abs = Math.abs(n);
-        if (abs >= 1000000) return (n < 0 ? '-' : '') + '$' + (abs / 1000000).toFixed(1) + 'M';
-        if (abs >= 1000) return (n < 0 ? '-' : '') + '$' + Math.round(abs / 1000) + 'K';
-        return formatCLP(n);
+        return '<div class="kpi-grid-2">' + svcCardHTML + clientCardHTML + '</div>' + execCardHTML;
     }
 
     // ================================================================
