@@ -473,8 +473,8 @@ window.Mazelab.Modules.CotizadorModule = (function () {
                 html += ' <span style="color:var(--text-muted);font-size:0.65rem;">(' + escapeHtml(item.tipo) + ')</span>';
             }
             html += '</td>';
-            html += '<td style="padding:0.4rem;text-align:center;"><input type="number" class="form-control cot-item-cantidad" data-bidx="' + bIdx + '" data-iidx="' + ii + '" value="' + (item.cantidad || 1) + '" min="0" style="width:55px;text-align:center;' + inputStyle + '"></td>';
-            if (showDiasCol) html += '<td style="padding:0.4rem;text-align:center;"><input type="number" class="form-control cot-item-dias" data-bidx="' + bIdx + '" data-iidx="' + ii + '" value="' + itemDias + '" min="1" style="width:55px;text-align:center;' + inputStyle + '"></td>';
+            html += '<td style="padding:0.4rem;text-align:center;"><input type="number" class="form-control cot-item-cantidad" data-bidx="' + bIdx + '" data-iidx="' + ii + '" value="' + (item.cantidad || 1) + '" min="0" style="width:65px;text-align:center;' + inputStyle + '"></td>';
+            if (showDiasCol) html += '<td style="padding:0.4rem;text-align:center;"><input type="number" class="form-control cot-item-dias" data-bidx="' + bIdx + '" data-iidx="' + ii + '" value="' + itemDias + '" min="1" style="width:65px;text-align:center;' + inputStyle + '"></td>';
             html += '<td style="padding:0.4rem;text-align:right;"><input type="number" class="form-control cot-item-unitario" data-bidx="' + bIdx + '" data-iidx="' + ii + '" value="' + (item.unitario || 0) + '" min="0" style="width:100px;text-align:right;' + inputStyle + '"></td>';
             html += '<td style="padding:0.4rem;text-align:right;color:var(--text-primary);font-weight:600;font-size:0.9rem;" class="cot-item-total">' + formatCLP(itemTotal) + '</td>';
             html += '<td style="padding:0.4rem;text-align:center;">';
@@ -1114,13 +1114,33 @@ window.Mazelab.Modules.CotizadorModule = (function () {
                         var cant = Number(aiItem.cantidad) || 1;
                         var dias = Number(aiItem.dias) || 1;
                         var unit = Number(aiItem.unitario) || 0;
-                        // Fallback: if AI provided a total that doesn't match unit*cant*dias, infer dias
+                        // Fallback 1: if AI provided a total that doesn't match unit*cant*dias, infer dias
                         if (aiItem.total && unit > 0 && cant > 0 && dias === 1) {
                             var expectedTotal = unit * cant;
                             var aiTotal = Number(aiItem.total) || 0;
                             if (aiTotal > expectedTotal && expectedTotal > 0) {
                                 var inferredDias = Math.round(aiTotal / expectedTotal);
                                 if (inferredDias > 1) dias = inferredDias;
+                            }
+                        }
+                        // Fallback 2: if unitario is much higher than catalog price, AI likely baked dias into unitario
+                        if (dias === 1 && svc && unit > 0) {
+                            var catTarif = parseTarifario(svc);
+                            if (catTarif) {
+                                var catUnit = 0;
+                                if (aiItem.tipo === 'pack' && catTarif.packs) {
+                                    for (var pi = 0; pi < catTarif.packs.length; pi++) {
+                                        if (catTarif.packs[pi].unitario > catUnit) catUnit = catTarif.packs[pi].unitario;
+                                    }
+                                }
+                                if (!catUnit && catTarif.base) catUnit = Number(catTarif.base.unitario) || 0;
+                                if (catUnit > 0 && unit > catUnit * 1.5) {
+                                    var inferDias2 = Math.round(unit / catUnit);
+                                    if (inferDias2 > 1 && inferDias2 <= 365) {
+                                        dias = inferDias2;
+                                        unit = catUnit;
+                                    }
+                                }
                             }
                         }
                         bloque.items.push({
