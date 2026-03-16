@@ -9,6 +9,7 @@ window.Mazelab.Modules.CotizadorModule = (function () {
     var formState = null;
     var _delegationBound = false; // prevent stacking event listeners
     var aiChatHistory = []; // [{role:'user',content:''},{role:'assistant',content:''}]
+    var lastParsedCot = null; // last parsed AI cotización JSON
 
     // ── Helpers ────────────────────────────────────────────────────────
 
@@ -124,7 +125,7 @@ window.Mazelab.Modules.CotizadorModule = (function () {
         var sub = 0;
         for (var i = 0; i < bloque.items.length; i++) {
             var item = bloque.items[i];
-            item.total = (Number(item.unitario) || 0) * (Number(item.cantidad) || 0);
+            item.total = (Number(item.unitario) || 0) * (Number(item.cantidad) || 0) * (Number(item.dias) || 1);
             sub += item.total;
         }
         bloque.subtotalBloque = sub;
@@ -446,29 +447,29 @@ window.Mazelab.Modules.CotizadorModule = (function () {
         html += '<table style="width:100%;border-collapse:collapse;">';
         html += '<thead><tr>';
         html += '<th style="text-align:left;padding:0.4rem;color:var(--text-secondary);font-size:0.8rem;border-bottom:1px solid var(--bg-secondary);">Item</th>';
-        html += '<th style="text-align:center;padding:0.4rem;color:var(--text-secondary);font-size:0.8rem;border-bottom:1px solid var(--bg-secondary);width:70px;">Cant.</th>';
-        html += '<th style="text-align:right;padding:0.4rem;color:var(--text-secondary);font-size:0.8rem;border-bottom:1px solid var(--bg-secondary);width:120px;">Unitario</th>';
-        html += '<th style="text-align:right;padding:0.4rem;color:var(--text-secondary);font-size:0.8rem;border-bottom:1px solid var(--bg-secondary);width:120px;">Total</th>';
+        html += '<th style="text-align:center;padding:0.4rem;color:var(--text-secondary);font-size:0.8rem;border-bottom:1px solid var(--bg-secondary);width:60px;">Cant.</th>';
+        html += '<th style="text-align:center;padding:0.4rem;color:var(--text-secondary);font-size:0.8rem;border-bottom:1px solid var(--bg-secondary);width:60px;">Dias</th>';
+        html += '<th style="text-align:right;padding:0.4rem;color:var(--text-secondary);font-size:0.8rem;border-bottom:1px solid var(--bg-secondary);width:110px;">Unitario</th>';
+        html += '<th style="text-align:right;padding:0.4rem;color:var(--text-secondary);font-size:0.8rem;border-bottom:1px solid var(--bg-secondary);width:110px;">Total</th>';
         html += '<th style="width:40px;border-bottom:1px solid var(--bg-secondary);"></th>';
         html += '</tr></thead><tbody>';
 
         for (var ii = 0; ii < bloque.items.length; ii++) {
             var item = bloque.items[ii];
-            var itemTotal = (Number(item.unitario) || 0) * (Number(item.cantidad) || 0);
+            var itemDias = Number(item.dias) || 1;
+            var itemTotal = (Number(item.unitario) || 0) * (Number(item.cantidad) || 0) * itemDias;
             var isBase = item.tipo === 'base';
 
             html += '<tr class="cot-item-row" data-bidx="' + bIdx + '" data-iidx="' + ii + '">';
             html += '<td style="padding:0.4rem;">';
-            html += '  <div style="color:var(--text-primary);font-size:0.85rem;">' + escapeHtml(item.label) + '</div>';
-            if (item.descripcion) {
-                html += '  <div style="color:var(--text-secondary);font-size:0.75rem;font-style:italic;white-space:pre-line;">' + escapeHtml(item.descripcion) + '</div>';
-            }
+            html += '  <input type="text" class="form-control cot-item-label" data-bidx="' + bIdx + '" data-iidx="' + ii + '" value="' + escapeHtml(item.label) + '" style="border:none;background:transparent;color:var(--text-primary);font-size:0.85rem;padding:2px 4px;width:100%;">';
             if (item.tipo !== 'base') {
                 html += ' <span style="color:var(--text-muted);font-size:0.65rem;">(' + escapeHtml(item.tipo) + ')</span>';
             }
             html += '</td>';
-            html += '<td style="padding:0.4rem;text-align:center;"><input type="number" class="form-control cot-item-cantidad" data-bidx="' + bIdx + '" data-iidx="' + ii + '" value="' + (item.cantidad || 1) + '" min="0" style="width:60px;text-align:center;' + inputStyle + '"></td>';
-            html += '<td style="padding:0.4rem;text-align:right;"><input type="number" class="form-control cot-item-unitario" data-bidx="' + bIdx + '" data-iidx="' + ii + '" value="' + (item.unitario || 0) + '" min="0" style="width:110px;text-align:right;' + inputStyle + '"></td>';
+            html += '<td style="padding:0.4rem;text-align:center;"><input type="number" class="form-control cot-item-cantidad" data-bidx="' + bIdx + '" data-iidx="' + ii + '" value="' + (item.cantidad || 1) + '" min="0" style="width:55px;text-align:center;' + inputStyle + '"></td>';
+            html += '<td style="padding:0.4rem;text-align:center;"><input type="number" class="form-control cot-item-dias" data-bidx="' + bIdx + '" data-iidx="' + ii + '" value="' + itemDias + '" min="1" style="width:55px;text-align:center;' + inputStyle + '"></td>';
+            html += '<td style="padding:0.4rem;text-align:right;"><input type="number" class="form-control cot-item-unitario" data-bidx="' + bIdx + '" data-iidx="' + ii + '" value="' + (item.unitario || 0) + '" min="0" style="width:100px;text-align:right;' + inputStyle + '"></td>';
             html += '<td style="padding:0.4rem;text-align:right;color:var(--text-primary);font-weight:600;font-size:0.9rem;" class="cot-item-total">' + formatCLP(itemTotal) + '</td>';
             html += '<td style="padding:0.4rem;text-align:center;">';
             if (!isBase) {
@@ -629,11 +630,13 @@ window.Mazelab.Modules.CotizadorModule = (function () {
                 for (var ii = 0; ii < bloque.items.length; ii++) {
                     var item = bloque.items[ii];
                     if ((item.cantidad || 0) <= 0) continue;
-                    var rowTotal = (Number(item.unitario) || 0) * (Number(item.cantidad) || 0);
+                    var itemDias2 = Number(item.dias) || 1;
+                    var rowTotal = (Number(item.unitario) || 0) * (Number(item.cantidad) || 0) * itemDias2;
                     html += '<tr style="border-bottom:1px solid #e5e7eb;">';
                     html += '<td style="padding:0.5rem 0.5rem 0.5rem 0;color:#333;">';
                     html += '<strong>' + escapeHtml(item.label) + '</strong>';
                     if (item.cantidad > 1) html += ' <span style="color:#666;">x' + item.cantidad + '</span>';
+                    if (itemDias2 > 1) html += ' <span style="color:#666;">x' + itemDias2 + ' dias</span>';
                     if (item.descripcion) html += '<br><span style="font-size:0.8rem;color:#888;font-style:italic;white-space:pre-line;">' + escapeHtml(item.descripcion) + '</span>';
                     html += '</td>';
                     html += '<td style="padding:0.5rem 0;text-align:right;color:#333;font-weight:600;white-space:nowrap;">' + formatCLP(rowTotal) + '</td>';
@@ -746,6 +749,22 @@ window.Mazelab.Modules.CotizadorModule = (function () {
             var iIdx3 = parseInt(unitInputs[ui].getAttribute('data-iidx'), 10);
             if (formState.bloques[bIdx3] && formState.bloques[bIdx3].items[iIdx3]) {
                 formState.bloques[bIdx3].items[iIdx3].unitario = parseFloat(unitInputs[ui].value) || 0;
+            }
+        }
+        var diasInputs = document.querySelectorAll('.cot-item-dias');
+        for (var di = 0; di < diasInputs.length; di++) {
+            var bIdx4 = parseInt(diasInputs[di].getAttribute('data-bidx'), 10);
+            var iIdx4 = parseInt(diasInputs[di].getAttribute('data-iidx'), 10);
+            if (formState.bloques[bIdx4] && formState.bloques[bIdx4].items[iIdx4]) {
+                formState.bloques[bIdx4].items[iIdx4].dias = parseInt(diasInputs[di].value, 10) || 1;
+            }
+        }
+        var labelInputs = document.querySelectorAll('.cot-item-label');
+        for (var li = 0; li < labelInputs.length; li++) {
+            var bIdx5 = parseInt(labelInputs[li].getAttribute('data-bidx'), 10);
+            var iIdx5 = parseInt(labelInputs[li].getAttribute('data-iidx'), 10);
+            if (formState.bloques[bIdx5] && formState.bloques[bIdx5].items[iIdx5]) {
+                formState.bloques[bIdx5].items[iIdx5].label = labelInputs[li].value;
             }
         }
     }
@@ -1156,6 +1175,26 @@ window.Mazelab.Modules.CotizadorModule = (function () {
         }
 
         // AI send message (with conversation history)
+        // Delegated click handler for AI buttons (class-based, survives innerHTML +=)
+        var messagesElForDelegation = document.getElementById('cot-ai-messages');
+        if (messagesElForDelegation && !_delegationBound) {
+            _delegationBound = true;
+            messagesElForDelegation.addEventListener('click', function (e) {
+                if (e.target.classList.contains('cot-ai-apply-btn') && lastParsedCot) {
+                    applyAICotizacion(lastParsedCot);
+                    aiChatHistory = [];
+                    lastParsedCot = null;
+                } else if (e.target.classList.contains('cot-ai-generate-btn')) {
+                    var inp = document.getElementById('cot-ai-input');
+                    if (inp) {
+                        inp.value = 'Genera la cotizacion con lo que hablamos.';
+                        var sendBtn = document.getElementById('cot-ai-send');
+                        if (sendBtn) sendBtn.click();
+                    }
+                }
+            });
+        }
+
         var aiSendBtn = document.getElementById('cot-ai-send');
         var aiInput = document.getElementById('cot-ai-input');
         if (aiSendBtn && aiInput) {
@@ -1207,29 +1246,17 @@ window.Mazelab.Modules.CotizadorModule = (function () {
                         if (parsedCot && !parsedCot.bloques) parsedCot = null;
                     }
 
-                    // Always show "Generar cotización" button — if JSON detected, apply directly; otherwise ask AI to generate
+                    // Always show "Generar cotización" button — uses class-based delegation (no ID conflicts)
                     var buttonsHTML = '<div style="margin-bottom:8px;margin-top:4px;display:flex;gap:8px;">';
                     if (parsedCot) {
-                        buttonsHTML += '<button class="btn btn-primary btn-sm" id="cot-ai-apply">Crear cotizacion</button>';
+                        lastParsedCot = parsedCot;
+                        buttonsHTML += '<button class="btn btn-primary btn-sm cot-ai-apply-btn">Crear cotizacion</button>';
                     } else {
-                        buttonsHTML += '<button class="btn btn-secondary btn-sm" id="cot-ai-generate">Generar cotizacion</button>';
+                        buttonsHTML += '<button class="btn btn-secondary btn-sm cot-ai-generate-btn">Generar cotizacion</button>';
                     }
                     buttonsHTML += '</div>';
                     messagesEl.innerHTML += buttonsHTML;
                     messagesEl.scrollTop = messagesEl.scrollHeight;
-
-                    if (parsedCot) {
-                        document.getElementById('cot-ai-apply').addEventListener('click', function () {
-                            applyAICotizacion(parsedCot);
-                            aiChatHistory = [];
-                        });
-                    } else {
-                        document.getElementById('cot-ai-generate').addEventListener('click', function () {
-                            // Auto-send "Genera la cotización" to trigger JSON
-                            aiInput.value = 'Genera la cotización con lo que hablamos.';
-                            sendAIMessage();
-                        });
-                    }
 
                     if (statusEl) statusEl.textContent = '';
                 } catch (err) {
@@ -1371,14 +1398,18 @@ window.Mazelab.Modules.CotizadorModule = (function () {
         if (bloquesContainer) {
             bloquesContainer.addEventListener('input', function (e) {
                 var target = e.target;
-                if (target.classList.contains('cot-item-cantidad') || target.classList.contains('cot-item-unitario')) {
+                if (target.classList.contains('cot-item-cantidad') || target.classList.contains('cot-item-unitario') || target.classList.contains('cot-item-dias') || target.classList.contains('cot-item-label')) {
                     var bIdx = parseInt(target.getAttribute('data-bidx'), 10);
                     var iIdx = parseInt(target.getAttribute('data-iidx'), 10);
                     if (formState.bloques[bIdx] && formState.bloques[bIdx].items[iIdx]) {
                         if (target.classList.contains('cot-item-cantidad')) {
                             formState.bloques[bIdx].items[iIdx].cantidad = parseInt(target.value, 10) || 0;
-                        } else {
+                        } else if (target.classList.contains('cot-item-dias')) {
+                            formState.bloques[bIdx].items[iIdx].dias = parseInt(target.value, 10) || 1;
+                        } else if (target.classList.contains('cot-item-unitario')) {
                             formState.bloques[bIdx].items[iIdx].unitario = parseFloat(target.value) || 0;
+                        } else if (target.classList.contains('cot-item-label')) {
+                            formState.bloques[bIdx].items[iIdx].label = target.value;
                         }
                         updateLiveTotals();
                     }
