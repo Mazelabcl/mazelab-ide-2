@@ -1108,6 +1108,15 @@ window.Mazelab.Modules.CotizadorModule = (function () {
                         var cant = Number(aiItem.cantidad) || 1;
                         var dias = Number(aiItem.dias) || 1;
                         var unit = Number(aiItem.unitario) || 0;
+                        // Fallback: if AI provided a total that doesn't match unit*cant*dias, infer dias
+                        if (aiItem.total && unit > 0 && cant > 0 && dias === 1) {
+                            var expectedTotal = unit * cant;
+                            var aiTotal = Number(aiItem.total) || 0;
+                            if (aiTotal > expectedTotal && expectedTotal > 0) {
+                                var inferredDias = Math.round(aiTotal / expectedTotal);
+                                if (inferredDias > 1) dias = inferredDias;
+                            }
+                        }
                         bloque.items.push({
                             tipo: aiItem.tipo || 'base',
                             label: aiItem.label || svcName,

@@ -645,13 +645,13 @@ window.Mazelab.Modules.PayablesModule = (function () {
         var dateStr = (document.getElementById('pay-eventDate') || {}).value;
         var dueDate = calcDueDate(dateStr);
 
-        // Auto-fill the nómina date input if requested or if empty
-        if (nominaInput && dueDate && (autoFill || !nominaInput.value)) {
-            nominaInput.value = dueDate.toISOString().split('T')[0];
+        // Auto mode: clear the override so nóminas uses auto-calc
+        if (autoFill && nominaInput) {
+            nominaInput.value = '';
         }
 
-        // Show info based on whatever date is in the input
-        var selectedDate = nominaInput ? new Date(nominaInput.value) : dueDate;
+        // Show info based on override date or calculated date
+        var selectedDate = (nominaInput && nominaInput.value) ? new Date(nominaInput.value) : dueDate;
         if (!selectedDate || isNaN(selectedDate.getTime())) { display.textContent = ''; return; }
         var today = new Date(); today.setHours(0, 0, 0, 0);
         var diff = Math.floor((selectedDate - today) / 86400000);
@@ -837,6 +837,9 @@ window.Mazelab.Modules.PayablesModule = (function () {
         var autoBtn = document.getElementById('pay-nomina-auto');
         if (autoBtn) {
             autoBtn.addEventListener('click', function () {
+                // Clear override so nóminas falls back to auto-calc
+                var ni = document.getElementById('pay-nomina-date');
+                if (ni) ni.value = '';
                 updateDueDateDisplay(true);
             });
         }
