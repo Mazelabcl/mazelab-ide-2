@@ -77,6 +77,15 @@ window.Mazelab.Modules.NominasModule = (function () {
         return false;
     }
 
+    // Use nominaDate override if set, otherwise calculate from eventDate
+    function getEffectiveDueDate(p) {
+        if (p.nominaDate) {
+            var d = new Date(p.nominaDate);
+            if (!isNaN(d.getTime())) return d;
+        }
+        return getEffectiveDueDate(p);
+    }
+
     // ── Filtros de elegibilidad ────────────────────────────────────────
 
     function getCutoff() {
@@ -90,7 +99,7 @@ window.Mazelab.Modules.NominasModule = (function () {
         return payables.filter(function (p) {
             if (!isBH(p)) return false;
             if (getStatusDerived(p) === 'pagada') return false;
-            var dd = calcDueDate(p.eventDate);
+            var dd = getEffectiveDueDate(p);
             if (!dd) return false;
             return dd <= cutoff;
         });
@@ -102,7 +111,7 @@ window.Mazelab.Modules.NominasModule = (function () {
         return payables.filter(function (p) {
             if (!isBH(p)) return false;
             if (getStatusDerived(p) === 'pagada') return false;
-            var dd = calcDueDate(p.eventDate);
+            var dd = getEffectiveDueDate(p);
             if (!dd) return false;
             return dd > cutoff && dd <= horizon;
         });
@@ -313,7 +322,7 @@ window.Mazelab.Modules.NominasModule = (function () {
         if (!eligible.length && pendientesBH.length > 0) {
             var nearestDD = null;
             pendientesBH.forEach(function (p) {
-                var dd = calcDueDate(p.eventDate);
+                var dd = getEffectiveDueDate(p);
                 if (dd && (!nearestDD || dd < nearestDD)) nearestDD = dd;
             });
             html += [
@@ -451,7 +460,7 @@ window.Mazelab.Modules.NominasModule = (function () {
         var amount = Number(p.amount) || 0;
         var pagado = getTotalPagado(p);
         var pend = getPendiente(p);
-        var dd = calcDueDate(p.eventDate);
+        var dd = getEffectiveDueDate(p);
         var isParcial = getStatusDerived(p) === 'parcial';
         var rowDim = s.selected ? '' : 'opacity:.45';
 
@@ -492,7 +501,7 @@ window.Mazelab.Modules.NominasModule = (function () {
             '      <th>ID</th><th>Beneficiario</th><th>Cliente</th><th>Evento</th><th>Fecha evento</th><th>Vence</th><th style="text-align:right">Pendiente</th>',
             '    </tr></thead><tbody>',
             upcoming.map(function (p) {
-                var dd = calcDueDate(p.eventDate);
+                var dd = getEffectiveDueDate(p);
                 var diff = Math.round((dd - today) / 86400000);
                 var urg = diff <= 3 ? 'color:var(--danger);font-weight:700' : 'color:var(--warning);font-weight:600';
                 return [

@@ -543,8 +543,12 @@ window.Mazelab.Modules.PayablesModule = (function () {
             '      <textarea class="form-control" id="pay-comments" rows="2" style="resize:vertical"></textarea>',
             '    </div>',
             '    <div class="form-group">',
-            '      <label>Fecha de Pago Estimada <span style="font-weight:400;color:var(--text-muted)">(primer viernes \u226530d desde evento)</span></label>',
-            '      <div id="pay-due-date-display" style="padding:var(--space-sm) 0;font-weight:600;font-size:15px">-</div>',
+            '      <label>Fecha de Pago / N\u00f3mina <span style="font-weight:400;color:var(--text-muted)">(auto = viernes \u226530d. Edita para adelantar/atrasar)</span></label>',
+            '      <div style="display:flex;gap:8px;align-items:center">',
+            '        <input type="date" class="form-control" id="pay-nomina-date" style="max-width:200px">',
+            '        <button type="button" class="btn btn-secondary btn-sm" id="pay-nomina-auto" style="white-space:nowrap;font-size:11px">Auto (30d)</button>',
+            '        <span id="pay-due-date-display" style="font-size:13px;color:var(--text-secondary)"></span>',
+            '      </div>',
             '    </div>',
             '    <div class="form-actions">',
             '      <button type="button" class="btn btn-secondary" id="payable-cancel">Cancelar</button>',
@@ -634,18 +638,27 @@ window.Mazelab.Modules.PayablesModule = (function () {
 
     // ── Edit Modal helpers ─────────────────────────────────────────────
 
-    function updateDueDateDisplay() {
+    function updateDueDateDisplay(autoFill) {
         var display = document.getElementById('pay-due-date-display');
+        var nominaInput = document.getElementById('pay-nomina-date');
         if (!display) return;
         var dateStr = (document.getElementById('pay-eventDate') || {}).value;
         var dueDate = calcDueDate(dateStr);
-        if (!dueDate) { display.textContent = '-'; display.style.color = ''; return; }
+
+        // Auto-fill the nómina date input if requested or if empty
+        if (nominaInput && dueDate && (autoFill || !nominaInput.value)) {
+            nominaInput.value = dueDate.toISOString().split('T')[0];
+        }
+
+        // Show info based on whatever date is in the input
+        var selectedDate = nominaInput ? new Date(nominaInput.value) : dueDate;
+        if (!selectedDate || isNaN(selectedDate.getTime())) { display.textContent = ''; return; }
         var today = new Date(); today.setHours(0, 0, 0, 0);
-        var diff = Math.floor((dueDate - today) / 86400000);
-        var label = 'Viernes ' + formatDateShort(dueDate) + ' (en ' + diff + 'd)';
-        if (diff < 0)  { label = 'Viernes ' + formatDateShort(dueDate) + ' (vencido hace ' + Math.abs(diff) + 'd)'; display.style.color = 'var(--danger)'; }
-        else if (diff === 0) { label = 'Viernes ' + formatDateShort(dueDate) + ' (\u00a1HOY!)'; display.style.color = 'var(--danger)'; }
-        else { display.style.color = diff <= 7 ? 'var(--warning)' : 'var(--text-primary)'; }
+        var diff = Math.floor((selectedDate - today) / 86400000);
+        var label = '';
+        if (diff < 0) { label = 'vencido hace ' + Math.abs(diff) + 'd'; display.style.color = 'var(--danger)'; }
+        else if (diff === 0) { label = '\u00a1HOY!'; display.style.color = 'var(--danger)'; }
+        else { label = 'en ' + diff + ' d\u00edas'; display.style.color = diff <= 7 ? 'var(--warning)' : 'var(--text-secondary)'; }
         display.textContent = label;
     }
 
@@ -813,7 +826,27 @@ window.Mazelab.Modules.PayablesModule = (function () {
         var idSearch = document.getElementById('pay-id-search');
         if (idSearch) idSearch.value = '';
 
-        updateDueDateDisplay();
+        // Load nominaDate if exists, otherwise auto-calc
+        var nominaInput = document.getElementById('pay-nomina-date');
+        if (nominaInput && payable && payable.nominaDate) {
+            nominaInput.value = payable.nominaDate;
+        }
+        updateDueDateDisplay(!payable || !payable.nominaDate); // auto-fill only if no override
+
+        // "Auto" button resets to calculated date
+        var autoBtn = document.getElementById('pay-nomina-auto');
+        if (autoBtn) {
+            autoBtn.addEventListener('click', function () {
+                updateDueDateDisplay(true);
+            });
+        }
+        // Update display when nomina date changes manually
+        if (nominaInput) {
+            nominaInput.addEventListener('change', function () {
+                updateDueDateDisplay(false);
+            });
+        }
+
         updateDocPreview();
 
         ['pay-eventDate', 'pay-billingDate'].forEach(function (id) {
@@ -979,6 +1012,7 @@ window.Mazelab.Modules.PayablesModule = (function () {
             docNumber:   document.getElementById('pay-docNumber').value.trim(),
             amount:      rawAmount,
             comments:    document.getElementById('pay-comments').value.trim(),
+            nominaDate:  (document.getElementById('pay-nomina-date') || {}).value || null,
             status:      'pendiente'
         };
         try {
