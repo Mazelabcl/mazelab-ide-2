@@ -143,10 +143,14 @@ window.Mazelab.Modules.FinanceModule = (function () {
         if (r.status === 'anulada') return 'anulada';
         // 3. Pagada
         if (r.status === 'pagado' || r.status === 'pagada') return 'pagada';
-        // 4. Pendiente factura by status
-        if (r.status === 'pendiente_factura' || r.status === 'sin_factura') return 'pendiente_factura';
-        // 5. montoFacturado <= 0
-        if (getMontoFacturado(r) <= 0) return 'pendiente_factura';
+        // 4. Pendiente factura by status — differentiate pre/post evento
+        if (r.status === 'pendiente_factura' || r.status === 'sin_factura' || getMontoFacturado(r) <= 0) {
+            var evDate = getEffectiveEventDate(r);
+            if (evDate && new Date(evDate) < new Date()) {
+                return 'post_evento_sin_factura';
+            }
+            return 'pendiente_factura';
+        }
         // 6. Pending / overdue states — recalculate dynamically from billingMonth
         if (r.status === 'pendiente' || r.status === 'pendiente_pago' ||
             r.status === 'vencida_30' || r.status === 'vencida_60' || r.status === 'vencida_90' ||
@@ -248,7 +252,8 @@ window.Mazelab.Modules.FinanceModule = (function () {
             'pagada': '<span class="badge badge-success">Pagada</span>',
             'pendiente': '<span class="badge badge-warning">Pendiente</span>',
             'pendiente_pago': '<span class="badge badge-warning">Pendiente</span>',
-            'pendiente_factura': '<span class="badge badge-info">Sin Factura</span>',
+            'pendiente_factura': '<span class="badge badge-info">Pre-evento</span>',
+            'post_evento_sin_factura': '<span class="badge badge-warning">Facturar</span>',
             'vencida_30': '<span class="badge badge-warning">Vencida 30+</span>',
             'vencida_60': '<span class="badge badge-danger">Vencida 60+</span>',
             'vencida_90': '<span class="badge badge-danger">Vencida 90+</span>',
@@ -287,14 +292,15 @@ window.Mazelab.Modules.FinanceModule = (function () {
                 notasCredito.push(r);
             }
 
-            // sinFactura
-            if (realStatus === 'pendiente_factura' && r.tipoDoc !== 'NC') {
+            // sinFactura (includes both pre-event and post-event without invoice)
+            if ((realStatus === 'pendiente_factura' || realStatus === 'post_evento_sin_factura') && r.tipoDoc !== 'NC') {
                 sinFactura.push(r);
             }
 
             // facturadoPendientes
             if (
                 realStatus !== 'pendiente_factura' &&
+                realStatus !== 'post_evento_sin_factura' &&
                 realStatus !== 'anulada' &&
                 realStatus !== 'pagada' &&
                 realStatus !== 'nc' &&
@@ -588,11 +594,11 @@ window.Mazelab.Modules.FinanceModule = (function () {
                 html += '<td>' + formatDate(getEffectiveEventDate(r)) + '</td>';
                 html += '<td>' + getStatusBadge(realStatus) + '</td>';
                 html += '<td>';
-                if (realStatus === 'pendiente_factura') {
+                if (realStatus === 'pendiente_factura' || realStatus === 'post_evento_sin_factura') {
                     html += '<button class="btn btn-secondary btn-sm btn-facturar" data-id="' + r.id + '" style="margin-right:4px">Facturar</button>';
                 }
-                // Abono/Pagado Total solo para facturas emitidas (no para filas residuales sin_factura)
-                if (realStatus !== 'pagada' && realStatus !== 'anulada' && realStatus !== 'nc' && realStatus !== 'pendiente_factura') {
+                // Abono/Pagado Total solo para facturas emitidas
+                if (realStatus !== 'pagada' && realStatus !== 'anulada' && realStatus !== 'nc' && realStatus !== 'pendiente_factura' && realStatus !== 'post_evento_sin_factura') {
                     html += '<button class="btn-primary btn-sm btn-icon btn-abono" data-id="' + r.id + '" title="Agregar abono">+Abono</button> ';
                     html += '<button class="btn-secondary btn-sm btn-icon btn-pagado-total" data-id="' + r.id + '" title="Marcar pagado total">Pagado Total</button> ';
                     var cobrosArr = Array.isArray(r.cobros) ? r.cobros : [];
@@ -646,10 +652,10 @@ window.Mazelab.Modules.FinanceModule = (function () {
                 row += '<td>' + formatDate(r.eventDate) + '</td>';
                 row += '<td>' + getStatusBadge(realStatus) + '</td>';
                 row += '<td>';
-                if (realStatus === 'pendiente_factura') {
+                if (realStatus === 'pendiente_factura' || realStatus === 'post_evento_sin_factura') {
                     row += '<button class="btn btn-secondary btn-sm btn-facturar" data-id="' + r.id + '" style="margin-right:4px">Facturar</button>';
                 }
-                if (realStatus !== 'pagada' && realStatus !== 'anulada' && realStatus !== 'nc' && realStatus !== 'pendiente_factura') {
+                if (realStatus !== 'pagada' && realStatus !== 'anulada' && realStatus !== 'nc' && realStatus !== 'pendiente_factura' && realStatus !== 'post_evento_sin_factura') {
                     row += '<button class="btn-primary btn-sm btn-icon btn-abono" data-id="' + r.id + '">+Abono</button> ';
                     row += '<button class="btn-secondary btn-sm btn-icon btn-pagado-total" data-id="' + r.id + '">Pagado Total</button> ';
                     var cobrosArr2 = Array.isArray(r.cobros) ? r.cobros : [];
@@ -714,8 +720,9 @@ window.Mazelab.Modules.FinanceModule = (function () {
                 'vencida_30': 2,
                 'pendiente': 3,
                 'pendiente_pago': 3,
-                'pendiente_factura': 4,
-                'por_vencer': 5,
+                'post_evento_sin_factura': 4,
+                'pendiente_factura': 5,
+                'por_vencer': 6,
                 'pagada': 6,
                 'anulada': 7,
                 'nc': 8
@@ -1075,6 +1082,22 @@ window.Mazelab.Modules.FinanceModule = (function () {
         if (!AI || !AI.getConfig().apiKey) {
             throw new Error('API Key no configurada. Ve a Configurar > Inteligencia Artificial.');
         }
+
+        // Build history context from notas + cobros for AI
+        var historyContext = '';
+        var notas = Array.isArray(rec.notas_cobranza) ? rec.notas_cobranza : [];
+        var cobros = Array.isArray(rec.cobros) ? rec.cobros : [];
+        if (notas.length > 0 || cobros.length > 0) {
+            historyContext += '\n\nHISTORIAL DE GESTIONES PREVIAS:';
+            cobros.forEach(function (c) {
+                historyContext += '\n- ' + (c.date || '') + ': Aviso #' + (c.num || '') + ' enviado' + (c.context ? ' (' + c.context + ')' : '');
+            });
+            notas.forEach(function (n) {
+                historyContext += '\n- ' + (n.date || '') + ': ' + (n.text || '');
+            });
+            historyContext += '\n\nUsa este historial para dar continuidad al mensaje. Si hay compromisos de pago previos, haz seguimiento.';
+        }
+
         return await AI.generateCobranza({
             clientName:    rec.clientName || '',
             eventName:     rec.eventName  || '',
@@ -1083,7 +1106,7 @@ window.Mazelab.Modules.FinanceModule = (function () {
             eventDate:     getEffectiveEventDate(rec),
             cobrosCount:   cobrosCount,
             overdueDays:   overdueDays,
-            userContext:   userContext || '',
+            userContext:   (userContext || '') + historyContext,
             companyInfo:   companyInfo || {}
         });
     }
@@ -1136,13 +1159,43 @@ window.Mazelab.Modules.FinanceModule = (function () {
         }
         html += '  </div>';
 
+        // Copy event info button
+        var evDate = getEffectiveEventDate(rec);
+        var svcNames = rec.serviceNames || rec.servicios || '';
+        html += '  <div style="margin-bottom:12px">';
+        html += '    <button class="btn btn-secondary btn-sm" id="cobrar-copy-info" style="font-size:11px">Copiar info evento</button>';
+        html += '  </div>';
+
         // History
         html += renderCobrarHistory(cobros);
 
-        // Context
+        // Notas de seguimiento
+        var notas = Array.isArray(rec.notas_cobranza) ? rec.notas_cobranza : [];
+        if (notas.length > 0) {
+            html += '<div style="margin-bottom:12px">';
+            html += '<p style="font-size:11px;font-weight:600;color:var(--text-secondary);margin-bottom:4px;text-transform:uppercase;letter-spacing:.05em">Notas de seguimiento</p>';
+            notas.forEach(function (n) {
+                html += '<div style="padding:6px 10px;background:var(--bg-tertiary);border-radius:6px;margin-bottom:4px;font-size:12px;">';
+                html += '<span style="color:var(--text-secondary)">' + (n.date || '') + '</span> — ';
+                html += '<span style="color:var(--text-primary)">' + (n.text || '') + '</span>';
+                html += '</div>';
+            });
+            html += '</div>';
+        }
+
+        // Add note
+        html += '  <div class="form-group" style="margin-bottom:8px">';
+        html += '    <label style="font-size:13px">Agregar nota de seguimiento</label>';
+        html += '    <div style="display:flex;gap:8px">';
+        html += '      <input type="text" id="cobrar-nota-text" class="form-control" placeholder="Ej: Quedaron en pagar a fin de mes, contactar el martes" style="flex:1">';
+        html += '      <button class="btn btn-secondary" id="cobrar-nota-save" style="white-space:nowrap">Guardar nota</button>';
+        html += '    </div>';
+        html += '  </div>';
+
+        // Context for AI
         html += '  <div class="form-group" style="margin-bottom:12px">';
-        html += '    <label style="font-size:13px">Contexto adicional <span style="font-weight:400;color:var(--text-secondary)">(opcional — se incluye en el mensaje)</span></label>';
-        html += '    <textarea id="cobrar-context" class="form-control" rows="2" placeholder="Ej: La OC fue enviada tarde, acord\u00f3 pagar el viernes pasado..."></textarea>';
+        html += '    <label style="font-size:13px">Contexto adicional para IA <span style="font-weight:400;color:var(--text-secondary)">(opcional)</span></label>';
+        html += '    <textarea id="cobrar-context" class="form-control" rows="2" placeholder="Ej: La OC fue enviada tarde, pegar aqui emails de respuesta del cliente..."></textarea>';
         html += '  </div>';
 
         // Generate buttons
@@ -1179,6 +1232,44 @@ window.Mazelab.Modules.FinanceModule = (function () {
         document.getElementById('cobrar-cancel-btn').addEventListener('click', closeModal);
         document.getElementById('cobrar-modal-overlay').addEventListener('click', function (e) {
             if (e.target === this) closeModal();
+        });
+
+        // Copy event info
+        document.getElementById('cobrar-copy-info').addEventListener('click', function () {
+            var evDate2 = getEffectiveEventDate(rec);
+            var info = 'Evento: ' + (rec.eventName || '-') + '\n' +
+                'Cliente: ' + (rec.clientName || '-') + '\n' +
+                'Factura: ' + (rec.invoiceNumber || '-') + '\n' +
+                'Fecha evento: ' + (evDate2 || '-') + '\n' +
+                'Servicios: ' + (rec.serviceNames || rec.servicios || '-') + '\n' +
+                'Pendiente: ' + formatCLP(Math.round(getPendienteFacturado(rec)));
+            if (navigator.clipboard) {
+                navigator.clipboard.writeText(info).then(function () {
+                    var btn = document.getElementById('cobrar-copy-info');
+                    if (btn) { btn.textContent = 'Copiado!'; setTimeout(function () { btn.textContent = 'Copiar info evento'; }, 2000); }
+                });
+            }
+        });
+
+        // Save nota
+        document.getElementById('cobrar-nota-save').addEventListener('click', async function () {
+            var textInput = document.getElementById('cobrar-nota-text');
+            var text = textInput ? textInput.value.trim() : '';
+            if (!text) return;
+            var today = new Date().toISOString().split('T')[0];
+            var existingNotas = Array.isArray(rec.notas_cobranza) ? rec.notas_cobranza : [];
+            var updatedNotas = existingNotas.concat([{ date: today, text: text }]);
+            try {
+                await window.Mazelab.DataService.update('receivables', rec.id, { notas_cobranza: updatedNotas });
+                var idx2 = allReceivables.findIndex(function (r2) { return r2.id === rec.id; });
+                if (idx2 !== -1) allReceivables[idx2].notas_cobranza = updatedNotas;
+                rec.notas_cobranza = updatedNotas;
+                // Re-render the modal to show new note
+                closeModal();
+                openCobrarModal(rec.id);
+            } catch (err) {
+                alert('Error al guardar nota: ' + err.message);
+            }
         });
 
         function showEmailArea(text, method) {
