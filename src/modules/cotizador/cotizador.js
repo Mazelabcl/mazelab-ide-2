@@ -443,12 +443,18 @@ window.Mazelab.Modules.CotizadorModule = (function () {
             html += '</div>';
         }
 
+        // Check if any item in this bloque has dias > 1
+        var showDiasCol = false;
+        for (var dc = 0; dc < bloque.items.length; dc++) {
+            if ((Number(bloque.items[dc].dias) || 1) > 1) { showDiasCol = true; break; }
+        }
+
         // Items table
         html += '<table style="width:100%;border-collapse:collapse;">';
         html += '<thead><tr>';
         html += '<th style="text-align:left;padding:0.4rem;color:var(--text-secondary);font-size:0.8rem;border-bottom:1px solid var(--bg-secondary);">Item</th>';
         html += '<th style="text-align:center;padding:0.4rem;color:var(--text-secondary);font-size:0.8rem;border-bottom:1px solid var(--bg-secondary);width:60px;">Cant.</th>';
-        html += '<th style="text-align:center;padding:0.4rem;color:var(--text-secondary);font-size:0.8rem;border-bottom:1px solid var(--bg-secondary);width:60px;">Dias</th>';
+        if (showDiasCol) html += '<th style="text-align:center;padding:0.4rem;color:var(--text-secondary);font-size:0.8rem;border-bottom:1px solid var(--bg-secondary);width:60px;">Dias</th>';
         html += '<th style="text-align:right;padding:0.4rem;color:var(--text-secondary);font-size:0.8rem;border-bottom:1px solid var(--bg-secondary);width:110px;">Unitario</th>';
         html += '<th style="text-align:right;padding:0.4rem;color:var(--text-secondary);font-size:0.8rem;border-bottom:1px solid var(--bg-secondary);width:110px;">Total</th>';
         html += '<th style="width:40px;border-bottom:1px solid var(--bg-secondary);"></th>';
@@ -468,7 +474,7 @@ window.Mazelab.Modules.CotizadorModule = (function () {
             }
             html += '</td>';
             html += '<td style="padding:0.4rem;text-align:center;"><input type="number" class="form-control cot-item-cantidad" data-bidx="' + bIdx + '" data-iidx="' + ii + '" value="' + (item.cantidad || 1) + '" min="0" style="width:55px;text-align:center;' + inputStyle + '"></td>';
-            html += '<td style="padding:0.4rem;text-align:center;"><input type="number" class="form-control cot-item-dias" data-bidx="' + bIdx + '" data-iidx="' + ii + '" value="' + itemDias + '" min="1" style="width:55px;text-align:center;' + inputStyle + '"></td>';
+            if (showDiasCol) html += '<td style="padding:0.4rem;text-align:center;"><input type="number" class="form-control cot-item-dias" data-bidx="' + bIdx + '" data-iidx="' + ii + '" value="' + itemDias + '" min="1" style="width:55px;text-align:center;' + inputStyle + '"></td>';
             html += '<td style="padding:0.4rem;text-align:right;"><input type="number" class="form-control cot-item-unitario" data-bidx="' + bIdx + '" data-iidx="' + ii + '" value="' + (item.unitario || 0) + '" min="0" style="width:100px;text-align:right;' + inputStyle + '"></td>';
             html += '<td style="padding:0.4rem;text-align:right;color:var(--text-primary);font-weight:600;font-size:0.9rem;" class="cot-item-total">' + formatCLP(itemTotal) + '</td>';
             html += '<td style="padding:0.4rem;text-align:center;">';
