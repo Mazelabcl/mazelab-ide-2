@@ -319,8 +319,8 @@ window.Mazelab.Modules.DashboardModule = (function () {
         });
         var colors = {};
         colors[thisYear] = 'var(--accent-primary)';
-        colors[lastYear] = 'rgba(167,139,250,0.4)';
-        colors[twoYearsAgo] = 'rgba(167,139,250,0.15)';
+        colors[lastYear] = '#f59e0b';
+        colors[twoYearsAgo] = 'rgba(255,255,255,0.1)';
         var yoyBars = '';
         for (var mi = 0; mi < 12; mi++) {
             var bars = '';
@@ -392,23 +392,31 @@ window.Mazelab.Modules.DashboardModule = (function () {
             '<div class="card-header"><span class="card-title">Servicios M\u00e1s Vendidos</span><span class="badge badge-info">' + thisYear + '-' + lastYear + '</span></div>' +
             '<table class="data-table"><thead><tr><th>Servicio</th><th class="text-right">Eventos</th><th class="text-right">Ticket Prom.</th></tr></thead><tbody>' + svcRows + '</tbody></table></div>';
 
-        // Ejecutivos
+        // Ejecutivos — build from sales, enrich with receivables for same saleId
         var execData = {};
+        var salesById = {};
         sales.forEach(function (s) {
             var ed = s.eventDate || s.event_date || '';
             var y = ed ? new Date(ed).getFullYear() : 0;
             if (y !== thisYear) return;
-            var exec = s.ejecutivo || s.vendedor || s.salesperson || 'Sin asignar';
+            var exec = s.ejecutivo || s.vendedor || s.salesperson || s.createdBy || 'Sin asignar';
             if (!execData[exec]) execData[exec] = { name: exec, count: 0, total: 0, cobrado: 0 };
             execData[exec].count++;
-            execData[exec].total += Number(s.amount || s.monto_venta || 0);
+            var amt = Number(s.amount || s.monto_venta || 0);
+            execData[exec].total += amt;
+            salesById[String(s.id)] = exec;
+            salesById[String(s.sourceId || '')] = exec;
         });
+        // Only count cobrado for receivables linked to this year's sales
         receivables.forEach(function (r) {
-            var exec = r.ejecutivo || r.vendedor || r.salesperson || 'Sin asignar';
-            if (!execData[exec]) return;
+            var saleId = String(r.saleId || r.eventId || '');
+            var exec = salesById[saleId];
+            if (!exec || !execData[exec]) return;
             var st = (r.status || '').toLowerCase();
-            var neto = Number(r.montoNeto || r.monto_neto || r.invoicedAmount || 0);
-            if (st === 'pagada') execData[exec].cobrado += neto;
+            if (st === 'pagada') {
+                var neto = Number(r.montoNeto || r.monto_neto || r.invoicedAmount || 0);
+                execData[exec].cobrado += neto;
+            }
         });
         var execList = Object.values(execData).sort(function (a, b) { return b.total - a.total; });
         var execRows = execList.length === 0 ? '<tr><td colspan="5" style="text-align:center;padding:16px;color:var(--text-muted)">Sin datos</td></tr>'
