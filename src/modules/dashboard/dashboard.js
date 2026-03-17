@@ -200,9 +200,10 @@ window.Mazelab.Modules.DashboardModule = (function () {
         var rankingsHTML = buildRankings(sales, services);
         var upcomingHTML = buildUpcomingEvents(sales, services);
         var yoyHTML = buildYoYChart(sales);
+        var quarterlyHTML = buildQuarterlyView(sales);
         var comercialCards = buildComercialCards(sales, receivables, services);
 
-        return kpiHTML + upcomingHTML + yoyHTML + chartHTML + ivaHTML + rankingsHTML + comercialCards;
+        return kpiHTML + upcomingHTML + yoyHTML + quarterlyHTML + chartHTML + ivaHTML + rankingsHTML + comercialCards;
     }
 
     // ================================================================
@@ -219,7 +220,7 @@ window.Mazelab.Modules.DashboardModule = (function () {
         var countThisYear = 0;
         sales.forEach(function (s) {
             var amt = Number(s.amount || s.monto_venta || 0);
-            var ed = s.eventDate || s.event_date || s.fecha_evento;
+            var ed = getSaleDate(s);
             if (!ed) { totalAll += amt; return; }
             var y = new Date(ed).getFullYear();
             totalAll += amt;
@@ -282,10 +283,11 @@ window.Mazelab.Modules.DashboardModule = (function () {
             '</div>';
 
         var yoyHTML = buildYoYChart(sales);
+        var quarterlyHTML = buildQuarterlyView(sales);
         var upcomingHTML = buildUpcomingEvents(sales, services);
         var comercialCards = buildComercialCards(sales, receivables, services);
 
-        return kpiHTML + yoyHTML + upcomingHTML + comercialCards;
+        return kpiHTML + yoyHTML + quarterlyHTML + upcomingHTML + comercialCards;
     }
 
     function formatCLPShort(n) {
@@ -294,6 +296,11 @@ window.Mazelab.Modules.DashboardModule = (function () {
         if (abs >= 1000000) return (n < 0 ? '-' : '') + '$' + (abs / 1000000).toFixed(1) + 'M';
         if (abs >= 1000) return (n < 0 ? '-' : '') + '$' + Math.round(abs / 1000) + 'K';
         return formatCLP(n);
+    }
+
+    // Helper: get closing date (date sale was closed, not event date)
+    function getSaleDate(s) {
+        return s.closingDate || s.closing_date || s.eventDate || s.event_date || s.fecha_evento || '';
     }
 
     // --- Reusable: YoY Chart ---
@@ -306,21 +313,27 @@ window.Mazelab.Modules.DashboardModule = (function () {
         var yoyData = {};
         [thisYear, lastYear, twoYearsAgo].forEach(function (y) { yoyData[y] = new Array(12).fill(0); });
         sales.forEach(function (s) {
-            var ed = s.eventDate || s.event_date || s.fecha_evento;
+            var ed = getSaleDate(s);
             if (!ed) return;
             var d = new Date(ed);
             var y = d.getFullYear();
             var m = d.getMonth();
             if (yoyData[y]) yoyData[y][m] += Number(s.amount || s.monto_venta || 0);
         });
+
+        // Debug: log 2026 Q1 for verification
+        console.log('[Dashboard YoY] Ventas por closingDate:');
+        [thisYear, lastYear, twoYearsAgo].forEach(function (y) {
+            console.log('  ' + y + ':', months.map(function (m, i) { return m + ': ' + formatCLPShort(yoyData[y][i]); }).join(' | '));
+        });
         var maxYoY = 1;
         [thisYear, lastYear, twoYearsAgo].forEach(function (y) {
             yoyData[y].forEach(function (v) { if (v > maxYoY) maxYoY = v; });
         });
         var colors = {};
-        colors[thisYear] = 'var(--accent-primary)';
-        colors[lastYear] = '#f59e0b';
-        colors[twoYearsAgo] = 'rgba(255,255,255,0.1)';
+        colors[thisYear] = '#00e676';
+        colors[lastYear] = '#c6ff00';
+        colors[twoYearsAgo] = 'rgba(255,255,255,0.12)';
         var yoyBars = '';
         for (var mi = 0; mi < 12; mi++) {
             var bars = '';
@@ -360,6 +373,83 @@ window.Mazelab.Modules.DashboardModule = (function () {
             '<div class="card-header"><span class="card-title">Ventas por Mes — Comparativa Anual</span></div>' +
             '<div style="display:flex;gap:4px;align-items:flex-end;padding:var(--space-md) var(--space-sm);">' + yoyBars + '</div>' +
             yoyLegend + yoyTable + '</div>';
+    }
+
+    // --- Quarterly comparison with top events ---
+    function buildQuarterlyView(sales) {
+        var now = new Date();
+        var thisYear = now.getFullYear();
+        var lastYear = thisYear - 1;
+        var qLabels = ['Q1 (Ene-Mar)', 'Q2 (Abr-Jun)', 'Q3 (Jul-Sep)', 'Q4 (Oct-Dic)'];
+
+        // Build quarterly data
+        var qData = {};
+        [thisYear, lastYear].forEach(function (y) {
+            qData[y] = [
+                { total: 0, count: 0, topEvents: [] },
+                { total: 0, count: 0, topEvents: [] },
+                { total: 0, count: 0, topEvents: [] },
+                { total: 0, count: 0, topEvents: [] }
+            ];
+        });
+
+        sales.forEach(function (s) {
+            var ed = getSaleDate(s);
+            if (!ed) return;
+            var d = new Date(ed);
+            var y = d.getFullYear();
+            if (!qData[y]) return;
+            var q = Math.floor(d.getMonth() / 3);
+            var amt = Number(s.amount || s.monto_venta || 0);
+            qData[y][q].total += amt;
+            qData[y][q].count++;
+            qData[y][q].topEvents.push({
+                name: (s.clientName || s.client_name || '') + ' — ' + (s.eventName || s.event_name || ''),
+                amount: amt
+            });
+        });
+
+        // Sort top events
+        [thisYear, lastYear].forEach(function (y) {
+            for (var q = 0; q < 4; q++) {
+                qData[y][q].topEvents.sort(function (a, b) { return b.amount - a.amount; });
+            }
+        });
+
+        var html = '';
+        for (var q = 0; q < 4; q++) {
+            var curr = qData[thisYear][q];
+            var prev = qData[lastYear][q];
+            var diff = prev.total > 0 ? Math.round((curr.total - prev.total) / prev.total * 100) : 0;
+            var diffColor = diff >= 0 ? 'var(--success)' : 'var(--danger)';
+            var diffLabel = diff >= 0 ? '+' + diff + '%' : diff + '%';
+
+            html += '<div class="card" style="flex:1;min-width:220px;">';
+            html += '<div class="card-header" style="padding:10px 14px;">';
+            html += '<span class="card-title" style="font-size:13px;">' + qLabels[q] + '</span>';
+            if (prev.total > 0) html += '<span style="color:' + diffColor + ';font-size:12px;font-weight:700;">' + diffLabel + '</span>';
+            html += '</div>';
+            html += '<div style="padding:8px 14px;">';
+            html += '<div style="display:flex;justify-content:space-between;margin-bottom:6px;">';
+            html += '<div><div style="font-size:11px;color:var(--text-secondary);">' + thisYear + '</div><div style="font-size:18px;font-weight:700;color:var(--text-primary);">' + formatCLPShort(curr.total) + '</div><div style="font-size:11px;color:var(--text-secondary);">' + curr.count + ' ventas</div></div>';
+            html += '<div style="text-align:right;"><div style="font-size:11px;color:var(--text-secondary);">' + lastYear + '</div><div style="font-size:14px;font-weight:600;color:var(--text-secondary);">' + formatCLPShort(prev.total) + '</div><div style="font-size:11px;color:var(--text-secondary);">' + prev.count + ' ventas</div></div>';
+            html += '</div>';
+
+            // Top 3 events of current year quarter
+            var top = curr.topEvents.slice(0, 3);
+            if (top.length > 0) {
+                html += '<div style="border-top:1px solid var(--border-color);padding-top:6px;margin-top:4px;">';
+                top.forEach(function (ev) {
+                    html += '<div style="font-size:11px;display:flex;justify-content:space-between;padding:2px 0;"><span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:65%;">' + escapeHtml(ev.name) + '</span><span style="font-weight:600;font-variant-numeric:tabular-nums;">' + formatCLPShort(ev.amount) + '</span></div>';
+                });
+                html += '</div>';
+            }
+            html += '</div></div>';
+        }
+
+        return '<div style="margin-bottom:var(--space-md);">' +
+            '<div style="font-size:13px;font-weight:600;color:var(--text-secondary);margin-bottom:var(--space-sm);">Comparativa Trimestral ' + thisYear + ' vs ' + lastYear + '</div>' +
+            '<div style="display:flex;gap:var(--space-md);flex-wrap:wrap;">' + html + '</div></div>';
     }
 
     // --- Reusable: Commercial cards (servicios top, clientes, ejecutivos) ---
@@ -1027,13 +1117,15 @@ window.Mazelab.Modules.DashboardModule = (function () {
                         });
                         var mKeys = Object.keys(byMonth).sort().reverse();
                         var html = '<div style="padding:12px;border-top:1px solid var(--border-color);">';
-                        html += '<h4 style="color:var(--accent-primary);margin:0 0 8px;">Detalle: ' + escapeHtml(execName) + '</h4>';
+                        html += '<h4 style="color:var(--accent-primary);margin:0 0 12px;font-size:16px;border-bottom:2px solid var(--accent-primary);padding-bottom:8px;">Detalle: ' + escapeHtml(execName) + '</h4>';
                         mKeys.forEach(function (mk) {
                             var items = byMonth[mk];
                             var mTotal = items.reduce(function (a, b) { return a + b.amount; }, 0);
                             var mLabel = mk === 'sin-fecha' ? 'Sin fecha' : getMonthLabel(mk + '-01');
                             html += '<div style="margin-bottom:8px;">';
-                            html += '<div style="font-size:12px;font-weight:600;color:var(--text-secondary);margin-bottom:4px;">' + mLabel + ' — ' + formatCLP(mTotal) + ' (' + items.length + ' ventas)</div>';
+                            html += '<div style="font-size:14px;font-weight:700;color:var(--text-primary);margin-bottom:6px;padding:6px 10px;background:var(--bg-tertiary);border-radius:6px;display:flex;justify-content:space-between;">' +
+                                '<span>' + mLabel + ' (' + items.length + ' ventas)</span>' +
+                                '<span style="color:var(--accent-primary);">' + formatCLP(mTotal) + '</span></div>';
                             items.forEach(function (sl) {
                                 var paidBadge = sl.paid ? '<span class="badge badge-success" style="font-size:9px;margin-left:6px;">Pagada</span>' : '';
                                 html += '<div style="padding:3px 0;font-size:12px;display:flex;justify-content:space-between;border-bottom:1px solid rgba(255,255,255,0.03);">';

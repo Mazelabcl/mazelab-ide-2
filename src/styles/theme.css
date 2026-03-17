@@ -17,12 +17,12 @@
     --text-muted: #64748b;
     --text-accent: #69f0ae;
 
-    /* Accent & Neons — MazeLab brand: fluor yellow/green/blue */
+    /* Accent & Neons — MazeLab brand: yellow + green only */
     --accent-primary: #00e676;
     --accent-primary-hover: #69f0ae;
-    --accent-secondary: #2979ff;
+    --accent-secondary: #c6ff00;
     --accent-gradient: linear-gradient(135deg, #00e676, #c6ff00);
-    --accent-gradient-alt: linear-gradient(135deg, #2979ff, #00e5ff);
+    --accent-gradient-alt: linear-gradient(135deg, #c6ff00, #00e676);
 
     /* Status Colors */
     --success: #10b981;
