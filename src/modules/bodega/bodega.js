@@ -100,7 +100,7 @@ window.Mazelab.Modules.BodegaModule = (function () {
             var badge = '<span style="background:' + est.color + '22;color:' + est.color + ';border:1px solid ' + est.color + '44;padding:2px 10px;border-radius:20px;font-size:0.75rem;font-weight:600">' + escapeHtml(est.label) + '</span>';
             var occupiedCount = (window.Mazelab && window.Mazelab.BodegaOccupied && window.Mazelab.BodegaOccupied[String(e.id)]) || 0;
             var enUsoBadge = occupiedCount > 0
-                ? '<span style="background:rgba(167,139,250,0.15);color:#a78bfa;border:1px solid rgba(167,139,250,0.4);padding:2px 10px;border-radius:20px;font-size:0.75rem;font-weight:600;margin-left:6px">Asignado a ' + occupiedCount + ' evento' + (occupiedCount > 1 ? 's' : '') + '</span>'
+                ? '<span style="background:rgba(0,200,83,0.12);color:#00e676;border:1px solid rgba(0,200,83,0.3);padding:2px 10px;border-radius:20px;font-size:0.75rem;font-weight:600;margin-left:6px">Asignado a ' + occupiedCount + ' evento' + (occupiedCount > 1 ? 's' : '') + '</span>'
                 : '';
             return '<tr>' +
                 '<td><code style="font-size:0.8rem;color:var(--text-secondary)">' + escapeHtml(e.equipo_id || '—') + '</code></td>' +

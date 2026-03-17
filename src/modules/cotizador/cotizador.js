@@ -590,9 +590,9 @@ window.Mazelab.Modules.CotizadorModule = (function () {
         html += '<div class="cotizador-preview" style="background:#fff;color:#222;padding:3rem;border-radius:12px;max-width:800px;margin:1rem auto;font-family:Arial,Helvetica,sans-serif;">';
 
         // Header
-        html += '<div style="display:flex;justify-content:space-between;align-items:flex-start;border-bottom:3px solid #7c3aed;padding-bottom:1.5rem;margin-bottom:1.5rem;">';
+        html += '<div style="display:flex;justify-content:space-between;align-items:flex-start;border-bottom:3px solid #00c853;padding-bottom:1.5rem;margin-bottom:1.5rem;">';
         html += '  <div>';
-        html += '    <h1 style="margin:0;font-size:2rem;color:#7c3aed;font-weight:800;letter-spacing:2px;">MAZELAB</h1>';
+        html += '    <h1 style="margin:0;font-size:2rem;color:#00c853;font-weight:800;letter-spacing:2px;">MAZELAB</h1>';
         html += '    <p style="margin:0.25rem 0 0;font-size:0.85rem;color:#666;">Produccion Audiovisual &amp; Tecnologia</p>';
         html += '  </div>';
         html += '  <div style="text-align:right;">';
@@ -616,15 +616,15 @@ window.Mazelab.Modules.CotizadorModule = (function () {
         for (var bi = 0; bi < formState.bloques.length; bi++) {
             var bloque = formState.bloques[bi];
             html += '<div style="margin-bottom:1.5rem;">';
-            html += '<h3 style="margin:0 0 0.5rem;font-size:1.1rem;color:#7c3aed;text-transform:uppercase;">' + escapeHtml(bloque.serviceName) + '</h3>';
+            html += '<h3 style="margin:0 0 0.5rem;font-size:1.1rem;color:#00c853;text-transform:uppercase;">' + escapeHtml(bloque.serviceName) + '</h3>';
             if (bloque.descripcion) {
                 html += '<p style="margin:0 0 0.5rem;font-size:0.85rem;color:#666;white-space:pre-line;">' + escapeHtml(bloque.descripcion) + '</p>';
             }
             if (bloque.linkFotos || bloque.linkLanding) {
                 html += '<p style="margin:0 0 0.5rem;font-size:0.8rem;">';
-                if (bloque.linkFotos) html += '<a href="' + escapeHtml(bloque.linkFotos) + '" style="color:#7c3aed;">Ver fotos</a>';
+                if (bloque.linkFotos) html += '<a href="' + escapeHtml(bloque.linkFotos) + '" style="color:#00c853;">Ver fotos</a>';
                 if (bloque.linkFotos && bloque.linkLanding) html += ' &middot; ';
-                if (bloque.linkLanding) html += '<a href="' + escapeHtml(bloque.linkLanding) + '" style="color:#7c3aed;">Ver ficha del producto</a>';
+                if (bloque.linkLanding) html += '<a href="' + escapeHtml(bloque.linkLanding) + '" style="color:#00c853;">Ver ficha del producto</a>';
                 html += '</p>';
             }
 
@@ -670,7 +670,7 @@ window.Mazelab.Modules.CotizadorModule = (function () {
             if (formState.descuentoNota) html += ' <span style="font-size:0.8rem;font-style:italic;">(' + escapeHtml(formState.descuentoNota) + ')</span>';
             html += '</td><td style="padding:0.3rem 0;text-align:right;color:#c00;">-' + formatCLP(t.descuento) + '</td></tr>';
         }
-        html += '<tr style="border-top:2px solid #7c3aed;"><td style="padding:0.6rem 0;font-weight:800;font-size:1.1rem;color:#7c3aed;">TOTAL</td><td style="padding:0.6rem 0;text-align:right;font-weight:800;font-size:1.1rem;color:#7c3aed;">' + formatCLP(t.totalNeto) + '</td></tr>';
+        html += '<tr style="border-top:2px solid #00c853;"><td style="padding:0.6rem 0;font-weight:800;font-size:1.1rem;color:#00c853;">TOTAL</td><td style="padding:0.6rem 0;text-align:right;font-weight:800;font-size:1.1rem;color:#00c853;">' + formatCLP(t.totalNeto) + '</td></tr>';
         html += '</table>';
         html += '<p style="text-align:right;font-size:0.8rem;color:#999;margin-top:0.3rem;">*Valores no incluyen IVA</p>';
         html += '</div>';

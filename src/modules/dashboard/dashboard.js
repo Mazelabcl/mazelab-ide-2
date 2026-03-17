@@ -371,28 +371,32 @@ window.Mazelab.Modules.DashboardModule = (function () {
         if (services && services.length) {
             services.forEach(function (sv) { svcMap[sv.id] = sv.name || sv.nombre || sv.id; });
         }
-        // Service stats
+        // Service stats — ticket promedio por jornada (no por venta total)
         var svcStats = {};
         sales.forEach(function (s) {
             var ed = s.eventDate || s.event_date || '';
             var y = ed ? new Date(ed).getFullYear() : 0;
             if (y !== thisYear && y !== lastYear) return;
             var amt = Number(s.amount || s.monto_venta || 0);
+            var jornadas = Math.max(Number(s.jornadas) || 1, 1);
+            var amtPerJornada = amt / jornadas;
             var ids = s.serviceIds || s.service_ids || [];
             if (Array.isArray(ids) && ids.length > 0) {
                 ids.forEach(function (sid) {
-                    if (!svcStats[sid]) svcStats[sid] = { name: svcMap[sid] || sid, count: 0, totalAmt: 0 };
+                    if (!svcStats[sid]) svcStats[sid] = { name: svcMap[sid] || sid, count: 0, totalAmt: 0, totalJornadas: 0 };
                     svcStats[sid].count++;
-                    svcStats[sid].totalAmt += amt / ids.length;
+                    svcStats[sid].totalAmt += amtPerJornada / ids.length;
+                    svcStats[sid].totalJornadas += jornadas;
                 });
             } else {
                 var raw = s.serviceNames || s.servicenames || s.servicios || '';
                 if (raw) {
                     var names = raw.split(/[,;\/+]/).map(function (n) { return n.trim(); }).filter(Boolean);
                     names.forEach(function (n) {
-                        if (!svcStats[n]) svcStats[n] = { name: n, count: 0, totalAmt: 0 };
+                        if (!svcStats[n]) svcStats[n] = { name: n, count: 0, totalAmt: 0, totalJornadas: 0 };
                         svcStats[n].count++;
-                        svcStats[n].totalAmt += amt / names.length;
+                        svcStats[n].totalAmt += amtPerJornada / names.length;
+                        svcStats[n].totalJornadas += jornadas;
                     });
                 }
             }
@@ -411,7 +415,7 @@ window.Mazelab.Modules.DashboardModule = (function () {
         }).join('');
         var svcCardHTML = '<div class="card">' +
             '<div class="card-header"><span class="card-title">Servicios M\u00e1s Vendidos</span><span class="badge badge-info">' + thisYear + '-' + lastYear + '</span></div>' +
-            '<table class="data-table"><thead><tr><th>Servicio</th><th class="text-right">Eventos</th><th class="text-right">Ticket Prom.</th></tr></thead><tbody>' + svcRows + '</tbody>' +
+            '<table class="data-table"><thead><tr><th>Servicio</th><th class="text-right">Eventos</th><th class="text-right">Prom./Jornada</th></tr></thead><tbody>' + svcRows + '</tbody>' +
             '<tbody id="dash-svc-full" style="display:none;">' + svcFullRows + '</tbody></table>' + svcVerMas + '</div>';
 
         // Ejecutivos — build from sales, enrich with receivables for same saleId
