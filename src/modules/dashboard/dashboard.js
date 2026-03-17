@@ -397,15 +397,22 @@ window.Mazelab.Modules.DashboardModule = (function () {
                 }
             }
         });
-        var topSvcs = Object.values(svcStats).sort(function (a, b) { return b.count - a.count; }).slice(0, 8);
+        var allSvcs = Object.values(svcStats).sort(function (a, b) { return b.count - a.count; });
+        var topSvcs = allSvcs.slice(0, 8);
         var svcRows = topSvcs.length === 0 ? '<tr><td colspan="3" style="text-align:center;padding:16px;color:var(--text-muted)">Sin datos</td></tr>'
             : topSvcs.map(function (sv, i) {
                 var avg = sv.count > 0 ? Math.round(sv.totalAmt / sv.count) : 0;
                 return '<tr><td>' + (i + 1) + '. ' + escapeHtml(sv.name) + '</td><td class="text-right"><span class="badge badge-success">' + sv.count + '</span></td><td class="text-right">' + formatCLP(avg) + '</td></tr>';
             }).join('');
+        var svcVerMas = allSvcs.length > 8 ? '<div style="text-align:center;padding:8px;"><button class="btn btn-secondary btn-sm dash-ver-mas" data-target="dash-svc-full" style="font-size:11px;">Ver todos (' + allSvcs.length + ')</button></div>' : '';
+        var svcFullRows = allSvcs.slice(8).map(function (sv, i) {
+            var avg = sv.count > 0 ? Math.round(sv.totalAmt / sv.count) : 0;
+            return '<tr><td>' + (i + 9) + '. ' + escapeHtml(sv.name) + '</td><td class="text-right"><span class="badge badge-success">' + sv.count + '</span></td><td class="text-right">' + formatCLP(avg) + '</td></tr>';
+        }).join('');
         var svcCardHTML = '<div class="card">' +
             '<div class="card-header"><span class="card-title">Servicios M\u00e1s Vendidos</span><span class="badge badge-info">' + thisYear + '-' + lastYear + '</span></div>' +
-            '<table class="data-table"><thead><tr><th>Servicio</th><th class="text-right">Eventos</th><th class="text-right">Ticket Prom.</th></tr></thead><tbody>' + svcRows + '</tbody></table></div>';
+            '<table class="data-table"><thead><tr><th>Servicio</th><th class="text-right">Eventos</th><th class="text-right">Ticket Prom.</th></tr></thead><tbody>' + svcRows + '</tbody>' +
+            '<tbody id="dash-svc-full" style="display:none;">' + svcFullRows + '</tbody></table>' + svcVerMas + '</div>';
 
         // Ejecutivos — build from sales, enrich with receivables for same saleId
         var execData = {};
@@ -493,14 +500,20 @@ window.Mazelab.Modules.DashboardModule = (function () {
             clientStats[name].count++;
             clientStats[name].total += Number(s.amount || s.monto_venta || 0);
         });
-        var topClients = Object.values(clientStats).sort(function (a, b) { return b.total - a.total; }).slice(0, 8);
+        var allClients = Object.values(clientStats).sort(function (a, b) { return b.total - a.total; });
+        var topClients = allClients.slice(0, 8);
         var clientRows = topClients.length === 0 ? '<tr><td colspan="3" style="text-align:center;padding:16px;color:var(--text-muted)">Sin datos</td></tr>'
             : topClients.map(function (c, i) {
                 return '<tr><td>' + (i + 1) + '. ' + escapeHtml(c.name) + '</td><td class="text-right">' + c.count + ' eventos</td><td class="text-right">' + formatCLP(c.total) + '</td></tr>';
             }).join('');
+        var clientVerMas = allClients.length > 8 ? '<div style="text-align:center;padding:8px;"><button class="btn btn-secondary btn-sm dash-ver-mas" data-target="dash-cli-full" style="font-size:11px;">Ver todos (' + allClients.length + ')</button></div>' : '';
+        var clientFullRows = allClients.slice(8).map(function (c, i) {
+            return '<tr><td>' + (i + 9) + '. ' + escapeHtml(c.name) + '</td><td class="text-right">' + c.count + ' eventos</td><td class="text-right">' + formatCLP(c.total) + '</td></tr>';
+        }).join('');
         var clientCardHTML = '<div class="card">' +
             '<div class="card-header"><span class="card-title">Mejores Clientes</span><span class="badge badge-info">' + thisYear + '-' + lastYear + '</span></div>' +
-            '<table class="data-table"><thead><tr><th>Cliente</th><th class="text-right">Eventos</th><th class="text-right">Monto</th></tr></thead><tbody>' + clientRows + '</tbody></table></div>';
+            '<table class="data-table"><thead><tr><th>Cliente</th><th class="text-right">Eventos</th><th class="text-right">Monto</th></tr></thead><tbody>' + clientRows + '</tbody>' +
+            '<tbody id="dash-cli-full" style="display:none;">' + clientFullRows + '</tbody></table>' + clientVerMas + '</div>';
 
         return '<div class="kpi-grid-2">' + svcCardHTML + clientCardHTML + '</div>' + execCardHTML;
     }
@@ -976,6 +989,17 @@ window.Mazelab.Modules.DashboardModule = (function () {
                     if (btn && btn.dataset.scope && btn.dataset.scope !== rankingsScope) {
                         rankingsScope = btn.dataset.scope;
                         body.innerHTML = buildDashboard(sales, receivables, payables, services);
+                    }
+                    // Ver más toggle
+                    var verMasBtn = e.target.closest('.dash-ver-mas');
+                    if (verMasBtn) {
+                        var targetId = verMasBtn.dataset.target;
+                        var targetEl = document.getElementById(targetId);
+                        if (targetEl) {
+                            var isHidden = targetEl.style.display === 'none';
+                            targetEl.style.display = isHidden ? '' : 'none';
+                            verMasBtn.textContent = isHidden ? 'Ver menos' : verMasBtn.textContent;
+                        }
                     }
                     // Ejecutivo drill-down
                     var execRow = e.target.closest('.dash-exec-row');

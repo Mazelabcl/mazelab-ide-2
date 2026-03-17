@@ -267,6 +267,10 @@ window.Mazelab.Modules.SalesModule = (function () {
 
                     <div class="form-group">
                         <label>Servicios</label>
+                        <div style="position:relative;margin-bottom:8px;">
+                            <input type="text" id="sale-svc-search" class="form-control" placeholder="Buscar servicio..." style="padding-right:30px;">
+                            <span id="sale-svc-search-clear" style="position:absolute;right:10px;top:50%;transform:translateY(-50%);cursor:pointer;color:var(--text-secondary);font-size:16px;display:none;">&times;</span>
+                        </div>
                         <div id="sale-services-accordion" class="services-accordion">
                         </div>
                     </div>
@@ -569,6 +573,45 @@ window.Mazelab.Modules.SalesModule = (function () {
         }
 
         overlay.classList.add('active');
+
+        // Service search filter
+        var svcSearch = document.getElementById('sale-svc-search');
+        var svcClear = document.getElementById('sale-svc-search-clear');
+        if (svcSearch) {
+            svcSearch.value = '';
+            if (svcClear) svcClear.style.display = 'none';
+            svcSearch.addEventListener('input', function () {
+                var q = this.value.trim().toLowerCase();
+                if (svcClear) svcClear.style.display = q ? 'inline' : 'none';
+                // Show/hide checkboxes and categories
+                document.querySelectorAll('.sale-service-cb').forEach(function (cb) {
+                    var label = cb.closest('.checkbox-label');
+                    if (!label) return;
+                    var name = (label.textContent || '').toLowerCase();
+                    label.style.display = (!q || name.indexOf(q) !== -1) ? '' : 'none';
+                });
+                // Auto-expand categories that have visible items, collapse empty ones
+                document.querySelectorAll('#sale-services-accordion .accordion-item').forEach(function (acc) {
+                    var content = acc.querySelector('.accordion-content');
+                    if (!content) return;
+                    var visible = content.querySelectorAll('.checkbox-label[style=""], .checkbox-label:not([style])');
+                    if (q) {
+                        content.style.display = visible.length > 0 ? 'grid' : 'none';
+                        acc.style.display = visible.length > 0 ? '' : 'none';
+                    } else {
+                        content.style.display = 'none';
+                        acc.style.display = '';
+                    }
+                });
+            });
+            if (svcClear) {
+                svcClear.addEventListener('click', function () {
+                    svcSearch.value = '';
+                    svcSearch.dispatchEvent(new Event('input'));
+                    svcSearch.focus();
+                });
+            }
+        }
     }
 
     function closeModal() {
