@@ -341,10 +341,25 @@ window.Mazelab.Modules.DashboardModule = (function () {
             yoyLegend += '<span><span style="display:inline-block;width:12px;height:12px;border-radius:2px;background:' + colors[y] + ';vertical-align:middle;margin-right:4px;"></span>' + y + ' (' + formatCLPShort(yoyData[y].reduce(function (a, b) { return a + b; }, 0)) + ')</span>';
         });
         yoyLegend += '</div>';
+        // YoY summary table
+        var yoyTable = '<table style="width:100%;border-collapse:collapse;font-size:12px;margin-top:8px;">';
+        yoyTable += '<thead><tr><th style="text-align:left;padding:3px 6px;color:var(--text-secondary);font-size:11px;">Año</th>';
+        months.forEach(function (m) { yoyTable += '<th style="text-align:right;padding:3px 4px;color:var(--text-secondary);font-size:11px;">' + m + '</th>'; });
+        yoyTable += '<th style="text-align:right;padding:3px 6px;color:var(--text-secondary);font-size:11px;font-weight:700;">Total</th></tr></thead><tbody>';
+        [thisYear, lastYear, twoYearsAgo].forEach(function (y) {
+            var yearTotal = yoyData[y].reduce(function (a, b) { return a + b; }, 0);
+            yoyTable += '<tr><td style="padding:3px 6px;font-weight:600;color:var(--text-primary);">' + y + '</td>';
+            yoyData[y].forEach(function (v) {
+                yoyTable += '<td style="text-align:right;padding:3px 4px;font-variant-numeric:tabular-nums;color:var(--text-primary);">' + formatCLPShort(v) + '</td>';
+            });
+            yoyTable += '<td style="text-align:right;padding:3px 6px;font-weight:700;color:var(--text-primary);">' + formatCLPShort(yearTotal) + '</td></tr>';
+        });
+        yoyTable += '</tbody></table>';
+
         return '<div class="card" style="margin-bottom:var(--space-md);">' +
             '<div class="card-header"><span class="card-title">Ventas por Mes — Comparativa Anual</span></div>' +
             '<div style="display:flex;gap:4px;align-items:flex-end;padding:var(--space-md) var(--space-sm);">' + yoyBars + '</div>' +
-            yoyLegend + '</div>';
+            yoyLegend + yoyTable + '</div>';
     }
 
     // --- Reusable: Commercial cards (servicios top, clientes, ejecutivos) ---
@@ -418,16 +433,54 @@ window.Mazelab.Modules.DashboardModule = (function () {
                 execData[exec].cobrado += neto;
             }
         });
+        // Also build per-exec monthly sales for drill-down
+        var execSales = {};
+        var recStatusByEvent = {};
+        receivables.forEach(function (r) {
+            var sid = String(r.saleId || r.eventId || '');
+            if (!sid) return;
+            var st = (r.status || '').toLowerCase();
+            if (st === 'pagada') recStatusByEvent[sid] = 'pagada';
+            else if (!recStatusByEvent[sid]) recStatusByEvent[sid] = st;
+        });
+        sales.forEach(function (s) {
+            var ed = s.eventDate || s.event_date || '';
+            var y = ed ? new Date(ed).getFullYear() : 0;
+            if (y !== thisYear) return;
+            var exec = s.staffName || s.ejecutivo || s.vendedor || s.salesperson || s.createdBy || 'Sin asignar';
+            if (!execSales[exec]) execSales[exec] = [];
+            var sid = String(s.id || '');
+            var recSt = recStatusByEvent[sid] || recStatusByEvent[String(s.sourceId || '')] || '';
+            execSales[exec].push({
+                client: s.clientName || s.client_name || '',
+                event: s.eventName || s.event_name || '',
+                date: ed,
+                amount: Number(s.amount || s.monto_venta || 0),
+                paid: recSt === 'pagada'
+            });
+        });
+
         var execList = Object.values(execData).sort(function (a, b) { return b.total - a.total; });
+        var thStyle = 'text-align:right;padding:6px 8px;font-variant-numeric:tabular-nums;';
         var execRows = execList.length === 0 ? '<tr><td colspan="5" style="text-align:center;padding:16px;color:var(--text-muted)">Sin datos</td></tr>'
             : execList.map(function (ex) {
                 var pct = ex.total > 0 ? Math.round(ex.cobrado / ex.total * 100) : 0;
                 var pctColor = pct >= 80 ? 'var(--success)' : pct >= 50 ? 'var(--warning)' : 'var(--danger)';
-                return '<tr><td><strong>' + escapeHtml(ex.name) + '</strong></td><td class="text-right">' + ex.count + '</td><td class="text-right">' + formatCLP(ex.total) + '</td><td class="text-right" style="color:var(--success)">' + formatCLP(ex.cobrado) + '</td><td class="text-right"><span style="color:' + pctColor + ';font-weight:600">' + pct + '%</span></td></tr>';
+                return '<tr class="dash-exec-row" data-exec="' + escapeHtml(ex.name) + '" style="cursor:pointer;">' +
+                    '<td style="padding:6px 8px;"><strong>' + escapeHtml(ex.name) + '</strong></td>' +
+                    '<td style="' + thStyle + '">' + ex.count + '</td>' +
+                    '<td style="' + thStyle + '">' + formatCLP(ex.total) + '</td>' +
+                    '<td style="' + thStyle + 'color:var(--success)">' + formatCLP(ex.cobrado) + '</td>' +
+                    '<td style="' + thStyle + '"><span style="color:' + pctColor + ';font-weight:600">' + pct + '%</span></td>' +
+                '</tr>';
             }).join('');
         var execCardHTML = '<div class="card" style="margin-bottom:var(--space-md);">' +
             '<div class="card-header"><span class="card-title">Ejecutivos de Ventas</span><span class="badge badge-info">' + thisYear + '</span></div>' +
-            '<table class="data-table"><thead><tr><th>Ejecutivo</th><th class="text-right">Ventas</th><th class="text-right">Monto</th><th class="text-right">Cobrado</th><th class="text-right">% Cobro</th></tr></thead><tbody>' + execRows + '</tbody></table></div>';
+            '<table class="data-table"><thead><tr><th style="padding:6px 8px;">Ejecutivo</th><th style="' + thStyle + '">Ventas</th><th style="' + thStyle + '">Monto</th><th style="' + thStyle + '">Cobrado</th><th style="' + thStyle + '">% Cobro</th></tr></thead><tbody>' + execRows + '</tbody></table>' +
+            '<div id="dash-exec-detail"></div></div>';
+
+        // Store execSales on window for click handler
+        window._dashExecSales = execSales;
 
         // Top clientes
         var clientStats = {};
@@ -923,6 +976,47 @@ window.Mazelab.Modules.DashboardModule = (function () {
                     if (btn && btn.dataset.scope && btn.dataset.scope !== rankingsScope) {
                         rankingsScope = btn.dataset.scope;
                         body.innerHTML = buildDashboard(sales, receivables, payables, services);
+                    }
+                    // Ejecutivo drill-down
+                    var execRow = e.target.closest('.dash-exec-row');
+                    if (execRow) {
+                        var execName = execRow.dataset.exec;
+                        var detailEl = document.getElementById('dash-exec-detail');
+                        if (!detailEl || !window._dashExecSales) return;
+                        var salesList = window._dashExecSales[execName] || [];
+                        if (detailEl.dataset.open === execName) {
+                            detailEl.innerHTML = '';
+                            detailEl.dataset.open = '';
+                            return;
+                        }
+                        detailEl.dataset.open = execName;
+                        // Group by month
+                        var byMonth = {};
+                        salesList.forEach(function (sl) {
+                            var mk = sl.date ? sl.date.substring(0, 7) : 'sin-fecha';
+                            if (!byMonth[mk]) byMonth[mk] = [];
+                            byMonth[mk].push(sl);
+                        });
+                        var mKeys = Object.keys(byMonth).sort().reverse();
+                        var html = '<div style="padding:12px;border-top:1px solid var(--border-color);">';
+                        html += '<h4 style="color:var(--accent-primary);margin:0 0 8px;">Detalle: ' + escapeHtml(execName) + '</h4>';
+                        mKeys.forEach(function (mk) {
+                            var items = byMonth[mk];
+                            var mTotal = items.reduce(function (a, b) { return a + b.amount; }, 0);
+                            var mLabel = mk === 'sin-fecha' ? 'Sin fecha' : getMonthLabel(mk + '-01');
+                            html += '<div style="margin-bottom:8px;">';
+                            html += '<div style="font-size:12px;font-weight:600;color:var(--text-secondary);margin-bottom:4px;">' + mLabel + ' — ' + formatCLP(mTotal) + ' (' + items.length + ' ventas)</div>';
+                            items.forEach(function (sl) {
+                                var paidBadge = sl.paid ? '<span class="badge badge-success" style="font-size:9px;margin-left:6px;">Pagada</span>' : '';
+                                html += '<div style="padding:3px 0;font-size:12px;display:flex;justify-content:space-between;border-bottom:1px solid rgba(255,255,255,0.03);">';
+                                html += '<span>' + escapeHtml(sl.client) + ' — ' + escapeHtml(sl.event) + paidBadge + '</span>';
+                                html += '<span style="font-variant-numeric:tabular-nums;font-weight:600;">' + formatCLP(sl.amount) + '</span>';
+                                html += '</div>';
+                            });
+                            html += '</div>';
+                        });
+                        html += '</div>';
+                        detailEl.innerHTML = html;
                     }
                 });
             }
