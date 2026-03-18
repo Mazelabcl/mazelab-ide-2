@@ -1212,26 +1212,6 @@ window.Mazelab.Modules.CotizadorModule = (function () {
         }
 
         // AI send message (with conversation history)
-        // Delegated click handler for AI buttons (class-based, survives innerHTML +=)
-        var messagesElForDelegation = document.getElementById('cot-ai-messages');
-        if (messagesElForDelegation && !_delegationBound) {
-            _delegationBound = true;
-            messagesElForDelegation.addEventListener('click', function (e) {
-                if (e.target.classList.contains('cot-ai-apply-btn') && lastParsedCot) {
-                    applyAICotizacion(lastParsedCot);
-                    aiChatHistory = [];
-                    lastParsedCot = null;
-                } else if (e.target.classList.contains('cot-ai-generate-btn')) {
-                    var inp = document.getElementById('cot-ai-input');
-                    if (inp) {
-                        inp.value = 'Genera la cotizacion con lo que hablamos.';
-                        var sendBtn = document.getElementById('cot-ai-send');
-                        if (sendBtn) sendBtn.click();
-                    }
-                }
-            });
-        }
-
         var aiSendBtn = document.getElementById('cot-ai-send');
         var aiInput = document.getElementById('cot-ai-input');
         if (aiSendBtn && aiInput) {
@@ -1312,6 +1292,21 @@ window.Mazelab.Modules.CotizadorModule = (function () {
                     sendAIMessage();
                 }
             });
+
+            // Delegated click handler for AI action buttons (class-based, survives innerHTML +=)
+            var messagesElForDelegation = document.getElementById('cot-ai-messages');
+            if (messagesElForDelegation) {
+                messagesElForDelegation.addEventListener('click', function (e) {
+                    if (e.target.classList.contains('cot-ai-apply-btn') && lastParsedCot) {
+                        applyAICotizacion(lastParsedCot);
+                        aiChatHistory = [];
+                        lastParsedCot = null;
+                    } else if (e.target.classList.contains('cot-ai-generate-btn')) {
+                        aiInput.value = 'Genera la cotizacion con lo que hablamos.';
+                        sendAIMessage();
+                    }
+                });
+            }
         }
 
         // Delegation for list buttons
