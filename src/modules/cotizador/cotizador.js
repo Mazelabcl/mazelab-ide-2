@@ -1490,12 +1490,9 @@ window.Mazelab.Modules.CotizadorModule = (function () {
 
         var btnPrint = document.getElementById('cot-btn-print');
         if (btnPrint) {
-            btnPrint.addEventListener('click', async function () {
+            btnPrint.addEventListener('click', function () {
                 var preview = document.querySelector('.cotizador-preview');
                 if (!preview) return;
-                var btn = this;
-                btn.disabled = true;
-                btn.textContent = 'Generando PDF...';
 
                 var clientName = (formState.clientName || '').replace(/[^a-zA-Z0-9\s\u00e0-\u00ff]/g, '').trim();
                 var eventName = (formState.eventName || '').replace(/[^a-zA-Z0-9\s\u00e0-\u00ff]/g, '').trim();
@@ -1503,41 +1500,25 @@ window.Mazelab.Modules.CotizadorModule = (function () {
                 if (clientName) pdfName += ' - ' + clientName;
                 if (eventName) pdfName += ' - ' + eventName;
 
-                try {
-                    // Capture preview as canvas
-                    var canvas = await html2canvas(preview, {
-                        scale: 2,
-                        useCORS: true,
-                        backgroundColor: '#ffffff',
-                        scrollY: 0,
-                        windowWidth: preview.scrollWidth
-                    });
+                // Calculate content height in mm for single-page PDF
+                var heightPx = preview.scrollHeight;
+                var widthPx = preview.scrollWidth || preview.offsetWidth || 700;
+                var heightMM = Math.ceil(heightPx * 0.264583) + 30; // px to mm + margin
 
-                    // Create PDF with exact content dimensions (single page)
-                    var imgWidth = 210; // A4 width in mm
-                    var pageMargin = 10;
-                    var contentWidth = imgWidth - (pageMargin * 2);
-                    var imgHeight = (canvas.height * contentWidth) / canvas.width;
-                    var pageHeight = imgHeight + (pageMargin * 2);
+                // Inject dynamic @page size to make it one long page
+                var dynStyle = document.createElement('style');
+                dynStyle.id = 'cot-print-dynamic';
+                dynStyle.textContent = '@media print { @page { size: 210mm ' + heightMM + 'mm !important; margin: 10mm !important; } }';
+                document.head.appendChild(dynStyle);
 
-                    var jsPDF = window.jspdf.jsPDF;
-                    var pdf = new jsPDF({
-                        orientation: imgHeight > imgWidth ? 'portrait' : 'landscape',
-                        unit: 'mm',
-                        format: [imgWidth, pageHeight]
-                    });
-
-                    var imgData = canvas.toDataURL('image/png');
-                    pdf.addImage(imgData, 'PNG', pageMargin, pageMargin, contentWidth, imgHeight);
-                    pdf.save(pdfName + '.pdf');
-                } catch (err) {
-                    console.error('PDF generation failed:', err);
-                    // Fallback to window.print
-                    window.print();
-                } finally {
-                    btn.disabled = false;
-                    btn.textContent = 'Imprimir / PDF';
-                }
+                var origTitle = document.title;
+                document.title = pdfName;
+                window.print();
+                setTimeout(function () {
+                    document.title = origTitle;
+                    var ds = document.getElementById('cot-print-dynamic');
+                    if (ds) ds.remove();
+                }, 500);
             });
         }
 
