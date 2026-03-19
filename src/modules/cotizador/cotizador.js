@@ -177,12 +177,21 @@ window.Mazelab.Modules.CotizadorModule = (function () {
         var html = '';
         html += '<style>';
         html += '@media print {';
-        html += '  @page { margin: 15mm 10mm; size: A4; }';
-        html += '  body * { visibility: hidden !important; }';
-        html += '  .cotizador-preview, .cotizador-preview * { visibility: visible !important; }';
-        html += '  .cotizador-preview { position: absolute; left: 0; top: 0; width: 100%; background: #fff !important; }';
+        html += '  @page { margin: 12mm 10mm; size: A4; }';
+        html += '  body, html { background: #fff !important; }';
+        html += '  body > * { display: none !important; }';
+        html += '  body > .app-container { display: block !important; }';
+        html += '  .app-container > * { display: none !important; }';
+        html += '  .app-container > .main-content { display: block !important; }';
+        html += '  .main-content > * { display: none !important; }';
+        html += '  .main-content > #app-content { display: block !important; }';
+        html += '  #app-content > * { display: none !important; }';
+        html += '  #app-content > .content-body { display: block !important; }';
+        html += '  .content-body > * { display: none !important; }';
+        html += '  .cotizador-preview { display: block !important; position: static !important; width: 100% !important; background: #fff !important; color: #000 !important; overflow: visible !important; }';
+        html += '  .cotizador-preview * { visibility: visible !important; color: inherit !important; }';
         html += '  .preview-actions { display: none !important; }';
-        html += '  .sidebar, .top-bar, .toolbar, .module-header, .content-header, .sidebar-footer { display: none !important; }';
+        html += '  .sidebar, .sidebar-footer, .content-header { display: none !important; }';
         html += '}';
         html += '.cotizador-preview.ops-mode .cot-price { display: none !important; }';
         html += '</style>';
@@ -1482,11 +1491,14 @@ window.Mazelab.Modules.CotizadorModule = (function () {
         var btnPrint = document.getElementById('cot-btn-print');
         if (btnPrint) {
             btnPrint.addEventListener('click', function () {
-                // Temporarily change title to hide URL in print footer
                 var origTitle = document.title;
-                document.title = 'Cotizacion - MazeLab Productions';
+                var clientName = (formState.clientName || '').replace(/[^a-zA-Z0-9\s]/g, '').trim();
+                var eventName = (formState.eventName || '').replace(/[^a-zA-Z0-9\s]/g, '').trim();
+                var pdfName = 'Cotizacion';
+                if (clientName) pdfName += ' - ' + clientName;
+                if (eventName) pdfName += ' - ' + eventName;
+                document.title = pdfName;
                 window.print();
-                // Restore after a tick (print dialog is sync-blocking on most browsers)
                 setTimeout(function () { document.title = origTitle; }, 500);
             });
         }
