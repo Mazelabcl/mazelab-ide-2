@@ -1500,7 +1500,13 @@ window.Mazelab.Modules.CotizadorModule = (function () {
 
                 var clientName = (formState.clientName || '').replace(/[^a-zA-Z0-9\s\u00e0-\u00ff]/g, '').trim();
                 var eventName = (formState.eventName || '').replace(/[^a-zA-Z0-9\s\u00e0-\u00ff]/g, '').trim();
-                var pdfName = 'Cotizacion';
+                var cotCode = '';
+                var cotEl = document.querySelector('.cotizador-preview h2');
+                if (cotEl) {
+                    var match = (cotEl.textContent || '').match(/COT-\d+/);
+                    if (match) cotCode = match[0];
+                }
+                var pdfName = cotCode || 'Cotizacion';
                 if (clientName) pdfName += ' - ' + clientName;
                 if (eventName) pdfName += ' - ' + eventName;
 
