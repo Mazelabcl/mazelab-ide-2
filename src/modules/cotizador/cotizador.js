@@ -1515,13 +1515,13 @@ window.Mazelab.Modules.CotizadorModule = (function () {
                         throw new Error('Librerías PDF no disponibles');
                     }
                     var canvas = await html2canvas(preview, {
-                        scale: 1.5,
+                        scale: 2,
                         useCORS: true,
                         backgroundColor: '#ffffff',
                         scrollX: 0,
                         scrollY: -window.scrollY
                     });
-                    var imgData = canvas.toDataURL('image/jpeg', 0.92);
+                    var imgData = canvas.toDataURL('image/jpeg', 0.95);
                     var pdfWidth = 210;
                     var margin = 10;
                     var contentW = pdfWidth - margin * 2;
