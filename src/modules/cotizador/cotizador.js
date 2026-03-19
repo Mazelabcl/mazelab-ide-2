@@ -587,7 +587,7 @@ window.Mazelab.Modules.CotizadorModule = (function () {
         // Action bar
         html += '<div class="toolbar preview-actions">';
         html += '  <button class="btn btn-secondary" id="cot-btn-back-form">Volver al formulario</button>';
-        html += '  <button class="btn btn-primary" id="cot-btn-print">Imprimir / PDF</button>';
+        html += '  <button class="btn btn-primary" id="cot-btn-print">Descargar PDF</button>';
         html += '  <button class="btn btn-secondary" id="cot-btn-ops-view">Vista Operario (sin precios)</button>';
         html += '  <button class="btn btn-primary" id="cot-btn-save-final">Guardar</button>';
         if (cotEstado !== 'aprobada') {
@@ -1490,9 +1490,13 @@ window.Mazelab.Modules.CotizadorModule = (function () {
 
         var btnPrint = document.getElementById('cot-btn-print');
         if (btnPrint) {
-            btnPrint.addEventListener('click', function () {
+            btnPrint.addEventListener('click', async function () {
                 var preview = document.querySelector('.cotizador-preview');
                 if (!preview) return;
+
+                var btn = this;
+                btn.disabled = true;
+                btn.textContent = 'Generando PDF...';
 
                 var clientName = (formState.clientName || '').replace(/[^a-zA-Z0-9\s\u00e0-\u00ff]/g, '').trim();
                 var eventName = (formState.eventName || '').replace(/[^a-zA-Z0-9\s\u00e0-\u00ff]/g, '').trim();
@@ -1500,25 +1504,39 @@ window.Mazelab.Modules.CotizadorModule = (function () {
                 if (clientName) pdfName += ' - ' + clientName;
                 if (eventName) pdfName += ' - ' + eventName;
 
-                // Calculate content height in mm for single-page PDF
-                var heightPx = preview.scrollHeight;
-                var widthPx = preview.scrollWidth || preview.offsetWidth || 700;
-                var heightMM = Math.ceil(heightPx * 0.264583) + 30; // px to mm + margin
+                try {
+                    if (typeof html2canvas === 'undefined' || typeof window.jspdf === 'undefined') {
+                        throw new Error('Librerías PDF no disponibles');
+                    }
+                    var canvas = await html2canvas(preview, {
+                        scale: 2,
+                        useCORS: true,
+                        backgroundColor: '#ffffff',
+                        scrollX: 0,
+                        scrollY: -window.scrollY
+                    });
+                    var imgData = canvas.toDataURL('image/png');
+                    var pdfWidth = 210;
+                    var margin = 10;
+                    var contentW = pdfWidth - margin * 2;
+                    var contentH = (canvas.height * contentW) / canvas.width;
+                    var pdfHeight = contentH + margin * 2;
 
-                // Inject dynamic @page size to make it one long page
-                var dynStyle = document.createElement('style');
-                dynStyle.id = 'cot-print-dynamic';
-                dynStyle.textContent = '@media print { @page { size: 210mm ' + heightMM + 'mm !important; margin: 10mm !important; } }';
-                document.head.appendChild(dynStyle);
-
-                var origTitle = document.title;
-                document.title = pdfName;
-                window.print();
-                setTimeout(function () {
-                    document.title = origTitle;
-                    var ds = document.getElementById('cot-print-dynamic');
-                    if (ds) ds.remove();
-                }, 500);
+                    var pdf = new window.jspdf.jsPDF({
+                        orientation: 'portrait',
+                        unit: 'mm',
+                        format: [pdfWidth, pdfHeight]
+                    });
+                    pdf.addImage(imgData, 'PNG', margin, margin, contentW, contentH);
+                    pdf.save(pdfName + '.pdf');
+                } catch (err) {
+                    console.error('PDF error:', err);
+                    alert('Error generando PDF: ' + err.message + '. Usando impresión del navegador.');
+                    window.print();
+                } finally {
+                    btn.disabled = false;
+                    btn.textContent = 'Descargar PDF';
+                }
             });
         }
 
