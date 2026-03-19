@@ -1490,16 +1490,54 @@ window.Mazelab.Modules.CotizadorModule = (function () {
 
         var btnPrint = document.getElementById('cot-btn-print');
         if (btnPrint) {
-            btnPrint.addEventListener('click', function () {
-                var origTitle = document.title;
-                var clientName = (formState.clientName || '').replace(/[^a-zA-Z0-9\s]/g, '').trim();
-                var eventName = (formState.eventName || '').replace(/[^a-zA-Z0-9\s]/g, '').trim();
+            btnPrint.addEventListener('click', async function () {
+                var preview = document.querySelector('.cotizador-preview');
+                if (!preview) return;
+                var btn = this;
+                btn.disabled = true;
+                btn.textContent = 'Generando PDF...';
+
+                var clientName = (formState.clientName || '').replace(/[^a-zA-Z0-9\s\u00e0-\u00ff]/g, '').trim();
+                var eventName = (formState.eventName || '').replace(/[^a-zA-Z0-9\s\u00e0-\u00ff]/g, '').trim();
                 var pdfName = 'Cotizacion';
                 if (clientName) pdfName += ' - ' + clientName;
                 if (eventName) pdfName += ' - ' + eventName;
-                document.title = pdfName;
-                window.print();
-                setTimeout(function () { document.title = origTitle; }, 500);
+
+                try {
+                    // Capture preview as canvas
+                    var canvas = await html2canvas(preview, {
+                        scale: 2,
+                        useCORS: true,
+                        backgroundColor: '#ffffff',
+                        scrollY: 0,
+                        windowWidth: preview.scrollWidth
+                    });
+
+                    // Create PDF with exact content dimensions (single page)
+                    var imgWidth = 210; // A4 width in mm
+                    var pageMargin = 10;
+                    var contentWidth = imgWidth - (pageMargin * 2);
+                    var imgHeight = (canvas.height * contentWidth) / canvas.width;
+                    var pageHeight = imgHeight + (pageMargin * 2);
+
+                    var jsPDF = window.jspdf.jsPDF;
+                    var pdf = new jsPDF({
+                        orientation: imgHeight > imgWidth ? 'portrait' : 'landscape',
+                        unit: 'mm',
+                        format: [imgWidth, pageHeight]
+                    });
+
+                    var imgData = canvas.toDataURL('image/png');
+                    pdf.addImage(imgData, 'PNG', pageMargin, pageMargin, contentWidth, imgHeight);
+                    pdf.save(pdfName + '.pdf');
+                } catch (err) {
+                    console.error('PDF generation failed:', err);
+                    // Fallback to window.print
+                    window.print();
+                } finally {
+                    btn.disabled = false;
+                    btn.textContent = 'Imprimir / PDF';
+                }
             });
         }
 
