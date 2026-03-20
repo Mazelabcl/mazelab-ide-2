@@ -669,6 +669,18 @@ window.Mazelab.Modules.SalesModule = (function () {
                         monto_venta: data.amount || 0
                     });
                 }
+                // Sincronizar CXP vinculados con datos actualizados
+                var allPayables = await DS.getAll('payables') || [];
+                var linkedCXPs = allPayables.filter(function (p) {
+                    return String(p.eventId) === String(editingId);
+                });
+                for (var pi = 0; pi < linkedCXPs.length; pi++) {
+                    await DS.update('payables', linkedCXPs[pi].id, {
+                        eventName: data.eventName,
+                        clientName: data.clientName,
+                        eventDate: data.eventDate
+                    });
+                }
             } else {
                 // Asignar ID numérico auto-incremental (max existente + 1)
                 var maxId = 0;

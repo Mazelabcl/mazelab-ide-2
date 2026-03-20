@@ -235,13 +235,28 @@
         grid-template-columns: repeat(1, 1fr);
     }
 
+    #mobile-menu-btn {
+        display: block !important;
+    }
+
     .sidebar {
-        position: absolute;
+        position: fixed;
+        left: 0;
+        top: 0;
+        bottom: 0;
+        z-index: 1000;
         transform: translateX(-100%);
-        transition: transform var(--transition-normal);
+        transition: transform 0.3s ease;
     }
 
     .sidebar.open {
         transform: translateX(0);
+    }
+
+    .mobile-overlay {
+        position: fixed;
+        inset: 0;
+        background: rgba(0,0,0,0.5);
+        z-index: 999;
     }
 }

@@ -74,10 +74,20 @@ window.Mazelab.Modules.CotizadorModule = (function () {
     }
 
     function findService(nameOrId) {
+        if (!nameOrId) return null;
+        var q = nameOrId.toLowerCase().trim();
+        // Exact match first
         for (var i = 0; i < services.length; i++) {
-            if (services[i].id === nameOrId || getServiceName(services[i]) === nameOrId) {
-                return services[i];
-            }
+            if (services[i].id === nameOrId || getServiceName(services[i]) === nameOrId) return services[i];
+        }
+        // Case-insensitive match
+        for (var j = 0; j < services.length; j++) {
+            if (getServiceName(services[j]).toLowerCase() === q) return services[j];
+        }
+        // Partial match (AI might say "Glambot" when service is "Glambot ")
+        for (var k = 0; k < services.length; k++) {
+            var sn = getServiceName(services[k]).toLowerCase();
+            if (sn.indexOf(q) !== -1 || q.indexOf(sn) !== -1) return services[k];
         }
         return null;
     }
@@ -241,7 +251,7 @@ window.Mazelab.Modules.CotizadorModule = (function () {
         html += '    <div style="padding:var(--space-md);">';
         html += '      <div id="cot-ai-messages" style="max-height:320px;overflow-y:auto;margin-bottom:12px;font-size:13px;"><div style="color:var(--text-secondary);font-size:12px;padding:8px;">Describe el evento y los servicios que necesitas. Ej: "Glambot 4 horas con pantalla para Banco Chile, 15 abril en CasaPiedra, que quede en 1.5M"</div></div>';
         html += '      <div style="display:flex;gap:8px;">';
-        html += '        <textarea id="cot-ai-input" class="form-control" rows="2" placeholder="Ej: Necesito cotizar un Glambot de 4 horas con pantalla para un evento en CasaPiedra el 15 de abril, cliente Banco Chile..." style="flex:1;resize:vertical;"></textarea>';
+        html += '        <textarea id="cot-ai-input" class="form-control" rows="4" placeholder="Ej: Necesito cotizar un Glambot de 4 horas con pantalla para un evento en CasaPiedra el 15 de abril, cliente Banco Chile..." style="flex:1;resize:vertical;min-height:80px;"></textarea>';
         html += '        <button class="btn btn-primary" id="cot-ai-send" style="align-self:flex-end;white-space:nowrap;">Enviar</button>';
         html += '      </div>';
         html += '      <div id="cot-ai-status" style="font-size:11px;color:var(--text-secondary);margin-top:4px;"></div>';
@@ -434,16 +444,18 @@ window.Mazelab.Modules.CotizadorModule = (function () {
 
         html += '<div class="cot-bloque" data-bidx="' + bIdx + '" style="border:1px solid var(--bg-secondary);border-radius:8px;padding:1rem;margin-bottom:1rem;background:rgba(255,255,255,0.03);">';
 
-        // Bloque header
+        // Bloque header with reorder arrows
         html += '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:0.75rem;">';
+        html += '  <div style="display:flex;align-items:center;gap:8px;">';
+        if (bIdx > 0) html += '<button class="btn btn-secondary btn-sm cot-btn-move-bloque" data-bidx="' + bIdx + '" data-dir="up" style="padding:2px 6px;font-size:14px;line-height:1;">&#9650;</button>';
+        if (bIdx < formState.bloques.length - 1) html += '<button class="btn btn-secondary btn-sm cot-btn-move-bloque" data-bidx="' + bIdx + '" data-dir="down" style="padding:2px 6px;font-size:14px;line-height:1;">&#9660;</button>';
         html += '  <h4 style="margin:0;color:var(--accent-primary);">' + escapeHtml(bloque.serviceName || 'Servicio ' + (bIdx + 1)) + '</h4>';
+        html += '  </div>';
         html += '  <button class="btn btn-secondary btn-sm cot-btn-remove-bloque" data-bidx="' + bIdx + '" style="color:var(--danger);">Quitar servicio</button>';
         html += '</div>';
 
-        // Description (preserve newlines)
-        if (bloque.descripcion) {
-            html += '<p style="color:var(--text-secondary);font-size:0.85rem;margin:0 0 0.75rem;white-space:pre-line;">' + escapeHtml(bloque.descripcion) + '</p>';
-        }
+        // Description (editable textarea)
+        html += '<textarea class="form-control cot-bloque-desc" data-bidx="' + bIdx + '" rows="2" style="color:var(--text-secondary);font-size:0.85rem;margin:0 0 0.75rem;resize:vertical;background:transparent;border:1px solid var(--border-color);" placeholder="Descripcion del servicio...">' + escapeHtml(bloque.descripcion || '') + '</textarea>';
 
         // Links (auto-filled from service config, shown read-only)
         if (bloque.linkFotos || bloque.linkLanding) {
@@ -784,6 +796,14 @@ window.Mazelab.Modules.CotizadorModule = (function () {
                 formState.bloques[bIdx5].items[iIdx5].label = labelInputs[li].value;
             }
         }
+        // Read bloque descriptions
+        var descInputs = document.querySelectorAll('.cot-bloque-desc');
+        for (var dci = 0; dci < descInputs.length; dci++) {
+            var bIdx6 = parseInt(descInputs[dci].getAttribute('data-bidx'), 10);
+            if (formState.bloques[bIdx6]) {
+                formState.bloques[bIdx6].descripcion = descInputs[dci].value;
+            }
+        }
     }
 
     function loadCotIntoForm(cot) {
@@ -1111,8 +1131,8 @@ window.Mazelab.Modules.CotizadorModule = (function () {
                 var svc = findService(svcName);
                 var bloque = {
                     serviceId: svc ? svc.id : null,
-                    serviceName: svcName,
-                    descripcion: svc ? (svc.descripcion || '') : '',
+                    serviceName: svc ? (svc.name || svc.nombre || svcName) : svcName,
+                    descripcion: aiBloque.descripcion || (svc ? (svc.descripcion || '') : ''),
                     linkFotos: svc ? (svc.link_fotos || '') : '',
                     linkLanding: svc ? (svc.link_landing || '') : '',
                     items: [],
@@ -1404,6 +1424,20 @@ window.Mazelab.Modules.CotizadorModule = (function () {
                     return;
                 }
 
+                if (target.classList.contains('cot-btn-move-bloque')) {
+                    readFormState();
+                    var mIdx = parseInt(target.getAttribute('data-bidx'), 10);
+                    var dir = target.getAttribute('data-dir');
+                    var swapIdx = dir === 'up' ? mIdx - 1 : mIdx + 1;
+                    if (swapIdx >= 0 && swapIdx < formState.bloques.length) {
+                        var tmp = formState.bloques[mIdx];
+                        formState.bloques[mIdx] = formState.bloques[swapIdx];
+                        formState.bloques[swapIdx] = tmp;
+                    }
+                    showView('form');
+                    return;
+                }
+
                 if (target.classList.contains('cot-btn-remove-item')) {
                     readFormState();
                     var bIdx2 = parseInt(target.getAttribute('data-bidx'), 10);
@@ -1439,6 +1473,11 @@ window.Mazelab.Modules.CotizadorModule = (function () {
         if (bloquesContainer) {
             bloquesContainer.addEventListener('input', function (e) {
                 var target = e.target;
+                if (target.classList.contains('cot-bloque-desc')) {
+                    var descBIdx = parseInt(target.getAttribute('data-bidx'), 10);
+                    if (formState.bloques[descBIdx]) formState.bloques[descBIdx].descripcion = target.value;
+                    return;
+                }
                 if (target.classList.contains('cot-item-cantidad') || target.classList.contains('cot-item-unitario') || target.classList.contains('cot-item-dias') || target.classList.contains('cot-item-label')) {
                     var bIdx = parseInt(target.getAttribute('data-bidx'), 10);
                     var iIdx = parseInt(target.getAttribute('data-iidx'), 10);

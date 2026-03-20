@@ -118,12 +118,37 @@ window.Mazelab.Modules = window.Mazelab.Modules || {};
             }
         }
 
-        // Set up nav clicks
+        // Set up nav clicks + mobile sidebar close
+        var sidebar = document.querySelector('.sidebar');
         document.querySelectorAll('.nav-item').forEach(item => {
             item.addEventListener('click', () => {
                 navigateTo(item.dataset.route);
+                // Close mobile sidebar on nav
+                if (sidebar) sidebar.classList.remove('open');
+                var overlay = document.querySelector('.mobile-overlay');
+                if (overlay) overlay.remove();
             });
         });
+
+        // Mobile hamburger menu
+        var mobileBtn = document.getElementById('mobile-menu-btn');
+        if (mobileBtn && sidebar) {
+            mobileBtn.addEventListener('click', function () {
+                var isOpen = sidebar.classList.toggle('open');
+                if (isOpen) {
+                    var ov = document.createElement('div');
+                    ov.className = 'mobile-overlay';
+                    ov.addEventListener('click', function () {
+                        sidebar.classList.remove('open');
+                        ov.remove();
+                    });
+                    document.body.appendChild(ov);
+                } else {
+                    var ov2 = document.querySelector('.mobile-overlay');
+                    if (ov2) ov2.remove();
+                }
+            });
+        }
 
         // Logout button
         var logoutBtn = document.getElementById('logout-btn');

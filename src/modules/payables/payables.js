@@ -1023,6 +1023,7 @@ window.Mazelab.Modules.PayablesModule = (function () {
             if (editingId) {
                 var existing = payables.find(function (p) { return p.id === editingId; });
                 record.payments = existing ? (existing.payments || []) : [];
+                if (existing && existing.nominaDate && !record.nominaDate) record.nominaDate = existing.nominaDate;
                 await window.Mazelab.DataService.update('payables', editingId, record);
             } else {
                 record.id = generateId();
