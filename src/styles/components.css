@@ -128,15 +128,17 @@
 }
 
 .btn-primary {
-    background: var(--accent-gradient);
-    color: #000;
-    font-weight: 700;
-    box-shadow: 0 4px 15px rgba(0, 230, 118, 0.3);
+    background: var(--accent-gradient-alt);
+    color: #f8fafc;
+    font-weight: 600;
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+    border: 1px solid rgba(255, 255, 255, 0.1);
 }
 
 .btn-primary:hover {
-    transform: translateY(-2px);
-    box-shadow: 0 6px 20px rgba(0, 230, 118, 0.5);
+    transform: translateY(-1px);
+    box-shadow: 0 6px 16px rgba(0, 0, 0, 0.4);
+    border-color: var(--accent-primary);
 }
 
 .btn-secondary {

@@ -1015,9 +1015,10 @@ window.Mazelab.Modules.PayablesModule = (function () {
             docNumber:   document.getElementById('pay-docNumber').value.trim(),
             amount:      rawAmount,
             comments:    document.getElementById('pay-comments').value.trim(),
-            nominaDate:  (document.getElementById('pay-nomina-date') || {}).value || null,
             status:      'pendiente'
         };
+        var nominaVal = (document.getElementById('pay-nomina-date') || {}).value || '';
+        if (nominaVal) record.nominaDate = nominaVal;
         try {
             if (editingId) {
                 var existing = payables.find(function (p) { return p.id === editingId; });

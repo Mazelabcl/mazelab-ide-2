@@ -340,8 +340,8 @@ window.Mazelab.Modules.DashboardModule = (function () {
         });
         var colors = {};
         colors[thisYear] = '#00e676';
-        colors[lastYear] = '#c6ff00';
-        colors[twoYearsAgo] = 'rgba(255,255,255,0.12)';
+        colors[lastYear] = '#475569';
+        colors[twoYearsAgo] = 'rgba(255,255,255,0.08)';
         var yoyBars = '';
         for (var mi = 0; mi < 12; mi++) {
             var bars = '';

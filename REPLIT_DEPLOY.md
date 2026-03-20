@@ -55,6 +55,16 @@ CREATE TABLE IF NOT EXISTS users (
 );
 ```
 
+## Paso 1b: SQL adicional (sprint 19-03)
+
+```sql
+-- Nómina override en costos
+ALTER TABLE costos ADD COLUMN IF NOT EXISTS "nominaDate" TEXT;
+
+-- Notas de cobranza en facturas
+ALTER TABLE facturas ADD COLUMN IF NOT EXISTS "notas_cobranza" JSONB;
+```
+
 ## Paso 2: Migrar tarifarios a servicios existentes
 
 Ejecutar el contenido del archivo `tarifario_migration.sql` que está en la raíz del repositorio.

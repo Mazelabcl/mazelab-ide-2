@@ -4,7 +4,7 @@
     --bg-secondary: rgba(18, 18, 26, 0.7);
     --bg-tertiary: rgba(30, 30, 42, 0.6);
     --bg-card: rgba(22, 22, 32, 0.65);
-    --bg-hover: rgba(0, 230, 118, 0.12);
+    --bg-hover: rgba(255, 255, 255, 0.06);
     --bg-input: rgba(10, 10, 15, 0.8);
 
     /* Glassmorphism effects */
@@ -15,14 +15,14 @@
     --text-primary: #f8fafc;
     --text-secondary: #cbd5e1;
     --text-muted: #64748b;
-    --text-accent: #69f0ae;
+    --text-accent: #94a3b8;
 
-    /* Accent & Neons — MazeLab brand: yellow + green only */
+    /* Accent — Neutral UI, MazeLab green only as subtle accent */
     --accent-primary: #00e676;
     --accent-primary-hover: #69f0ae;
-    --accent-secondary: #c6ff00;
-    --accent-gradient: linear-gradient(135deg, #00e676, #c6ff00);
-    --accent-gradient-alt: linear-gradient(135deg, #c6ff00, #00e676);
+    --accent-secondary: #94a3b8;
+    --accent-gradient: linear-gradient(135deg, #00e676, #00c853);
+    --accent-gradient-alt: linear-gradient(135deg, #334155, #475569);
 
     /* Status Colors */
     --success: #10b981;
@@ -56,7 +56,7 @@
     --shadow-sm: 0 2px 4px rgba(0,0,0,0.4);
     --shadow-md: 0 8px 16px rgba(0,0,0,0.4);
     --shadow-lg: 0 16px 32px rgba(0,0,0,0.5);
-    --shadow-glow: 0 0 20px rgba(0, 230, 118, 0.3);
+    --shadow-glow: 0 0 15px rgba(0, 230, 118, 0.15);
     --shadow-glow-success: 0 0 15px rgba(16, 185, 129, 0.3);
 
     /* Transitions */
