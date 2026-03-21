@@ -132,7 +132,7 @@ window.Mazelab.Modules.FinanceModule = (function () {
         }
         // Fallback: fecha del evento (uses linked sale date if available)
         var effDate = getEffectiveEventDate(r);
-        if (effDate) return new Date(effDate);
+        if (effDate) return parseLocalDate(effDate);
         return null;
     }
 
@@ -187,11 +187,19 @@ window.Mazelab.Modules.FinanceModule = (function () {
         return (negative ? '-$' : '$') + str;
     }
 
+    // Parse date string as LOCAL (not UTC)
+    function parseLocalDate(str) {
+        if (!str) return null;
+        var parts = String(str).match(/^(\d{4})-(\d{2})-(\d{2})/);
+        if (parts) return new Date(Number(parts[1]), Number(parts[2]) - 1, Number(parts[3]));
+        return new Date(str);
+    }
+
     function formatDate(dateStr) {
         if (!dateStr) return '-';
         try {
-            var d = new Date(dateStr);
-            if (isNaN(d.getTime())) return dateStr;
+            var d = parseLocalDate(dateStr);
+            if (!d || isNaN(d.getTime())) return dateStr;
             var dd = String(d.getDate()).padStart(2, '0');
             var mm = String(d.getMonth() + 1).padStart(2, '0');
             var yyyy = d.getFullYear();

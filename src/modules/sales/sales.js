@@ -657,11 +657,17 @@ window.Mazelab.Modules.SalesModule = (function () {
             if (editingId) {
                 await DS.update('sales', editingId, data);
                 // Sincronizar la CXC auto-generada con los datos actualizados de la venta
-                // Sync ALL linked CXC (by saleId or eventId, any sourceType)
+                // Sync ALL linked CXC — match by multiple IDs
+                var editedSale = sales.find(function (s) { return s.id === editingId; });
                 var sid = String(editingId);
+                var ssid = editedSale ? String(editedSale.sourceId || '') : '';
                 var allReceivables = await DS.getAll('receivables') || [];
                 var linkedCXCs = allReceivables.filter(function (r) {
-                    return String(r.saleId) === sid || String(r.eventId) === sid || String(r.sourceId) === sid;
+                    var rSaleId = String(r.saleId || '');
+                    var rEventId = String(r.eventId || '');
+                    var rSourceId = String(r.sourceId || '');
+                    return rSaleId === sid || rEventId === sid || rSourceId === sid ||
+                           (ssid && (rSaleId === ssid || rEventId === ssid || rSourceId === ssid));
                 });
                 for (var ri = 0; ri < linkedCXCs.length; ri++) {
                     await DS.update('receivables', linkedCXCs[ri].id, {
@@ -674,7 +680,8 @@ window.Mazelab.Modules.SalesModule = (function () {
                 // Sincronizar CXP vinculados con datos actualizados
                 var allPayables = await DS.getAll('payables') || [];
                 var linkedCXPs = allPayables.filter(function (p) {
-                    return String(p.eventId) === String(editingId);
+                    var pEid = String(p.eventId || '');
+                    return pEid === sid || (ssid && pEid === ssid);
                 });
                 for (var pi = 0; pi < linkedCXPs.length; pi++) {
                     await DS.update('payables', linkedCXPs[pi].id, {

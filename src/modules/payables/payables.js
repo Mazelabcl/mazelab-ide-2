@@ -46,11 +46,19 @@ window.Mazelab.Modules.PayablesModule = (function () {
     function isBH(p)      { return (p.docType || '').toLowerCase() === 'bh'; }
     function isFactura(p) { return (p.docType || '').toLowerCase() === 'factura'; }
 
+    // Parse as LOCAL date to avoid UTC timezone shift
+    function parseLocalDate(str) {
+        if (!str) return null;
+        var parts = String(str).match(/^(\d{4})-(\d{2})-(\d{2})/);
+        if (parts) return new Date(Number(parts[1]), Number(parts[2]) - 1, Number(parts[3]));
+        return new Date(str);
+    }
+
     // Primer viernes >= eventDate + 30 días
     function calcDueDate(dateStr) {
         if (!dateStr) return null;
-        var d = new Date(dateStr);
-        if (isNaN(d.getTime())) return null;
+        var d = parseLocalDate(dateStr);
+        if (!d || isNaN(d.getTime())) return null;
         d.setDate(d.getDate() + 30);
         var dow = d.getDay();
         if (dow !== 5) d.setDate(d.getDate() + ((5 - dow + 7) % 7));

@@ -89,16 +89,24 @@ window.Mazelab.Modules.KanbanModule = (function () {
         return (n < 0 ? '-$' : '$') + s;
     }
 
+    // Parse date string as LOCAL (not UTC)
+    function parseLocalDate(str) {
+        if (!str) return null;
+        var parts = String(str).match(/^(\d{4})-(\d{2})-(\d{2})/);
+        if (parts) return new Date(Number(parts[1]), Number(parts[2]) - 1, Number(parts[3]));
+        return new Date(str);
+    }
+
     function formatDate(d) {
         if (!d) return '-';
-        var dt = new Date(d);
-        if (isNaN(dt)) return String(d);
+        var dt = parseLocalDate(d);
+        if (!dt || isNaN(dt)) return String(d);
         return dt.toLocaleDateString('es-CL', { day: '2-digit', month: '2-digit', year: 'numeric' });
     }
 
     function formatShortDate(d) {
         if (!d) return '';
-        var dt = new Date(d);
+        var dt = parseLocalDate(d);
         if (isNaN(dt)) return '';
         return dt.toLocaleDateString('es-CL', { day: '2-digit', month: '2-digit' });
     }
@@ -470,7 +478,7 @@ window.Mazelab.Modules.KanbanModule = (function () {
             // Days until event (positive = future, negative = past)
             var daysToEvent = null;
             if (s.eventDate) {
-                daysToEvent = Math.ceil((new Date(s.eventDate) - today) / (1000 * 60 * 60 * 24));
+                daysToEvent = Math.ceil((parseLocalDate(s.eventDate) - today) / (1000 * 60 * 60 * 24));
             }
 
             // 1. sin_contacto (media): traspaso exists but pre_coordinacion not done, 3+ days since traspaso
@@ -2626,6 +2634,15 @@ window.Mazelab.Modules.KanbanModule = (function () {
             services       = results[4] || [];
             staff          = results[5] || [];
             bodegaEquipos  = results[6] || [];
+
+            // Resolve staffId → staffName on sales for filter/display
+            var staffMap = {};
+            staff.forEach(function (st) { staffMap[st.id] = st.name || st.nombre || st.id; });
+            sales.forEach(function (s) {
+                if (!s.staffName && s.staffId && staffMap[s.staffId]) {
+                    s.staffName = staffMap[s.staffId];
+                }
+            });
 
             // Populate global occupation map for bodega display
             // Stores count of upcoming events per equipment
