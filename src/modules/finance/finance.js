@@ -721,8 +721,14 @@ window.Mazelab.Modules.FinanceModule = (function () {
             });
         }
 
-        // Sort: pending/overdue first, then by eventDate descending
+        // Sort: when searching, by ID desc; otherwise by priority then date desc
         list.sort(function (a, b) {
+            if (searchQuery && searchQuery.trim()) {
+                // Search mode: most recent ID first
+                var idA = Number(a.sourceId || a.id || 0);
+                var idB = Number(b.sourceId || b.id || 0);
+                return idB - idA;
+            }
             var priorityMap = {
                 'vencida_90': 0,
                 'vencida_60': 1,
@@ -739,9 +745,8 @@ window.Mazelab.Modules.FinanceModule = (function () {
             var pa = priorityMap[a._realStatus] !== undefined ? priorityMap[a._realStatus] : 5;
             var pb = priorityMap[b._realStatus] !== undefined ? priorityMap[b._realStatus] : 5;
             if (pa !== pb) return pa - pb;
-            // Sort by eventDate descending
-            var da = a.eventDate ? new Date(a.eventDate).getTime() : 0;
-            var db = b.eventDate ? new Date(b.eventDate).getTime() : 0;
+            var da = a.eventDate ? parseLocalDate(a.eventDate).getTime() : 0;
+            var db = b.eventDate ? parseLocalDate(b.eventDate).getTime() : 0;
             return db - da;
         });
 

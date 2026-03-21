@@ -1048,6 +1048,14 @@ window.Mazelab.Modules.DashboardModule = (function () {
             var mk = toMonthKey(r.billingMonth);
             if (mk && recByMonth[mk]) recByMonth[mk].push(r);
         });
+        // Sort by invoice number ascending
+        months.forEach(function (m) {
+            recByMonth[m].sort(function (a, b) {
+                var na = Number(a.invoiceNumber) || 0;
+                var nb = Number(b.invoiceNumber) || 0;
+                return na - nb;
+            });
+        });
 
         var cards = months.map(function (m) {
             var d = data[m];

@@ -95,6 +95,12 @@ window.Mazelab.Modules.SalesModule = (function () {
             });
         }
 
+        if (!sortCol) {
+            // Default: most recent ID first
+            list.sort(function (a, b) {
+                return (Number(b.sourceId || b.id || 0)) - (Number(a.sourceId || a.id || 0));
+            });
+        }
         if (sortCol) {
             list = list.slice().sort((a, b) => {
                 let av = a[sortCol], bv = b[sortCol];

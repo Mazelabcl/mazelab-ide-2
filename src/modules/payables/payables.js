@@ -155,6 +155,13 @@ window.Mazelab.Modules.PayablesModule = (function () {
             });
         }
 
+        if (!sortCol) {
+            // Default: most recent first by eventDate desc
+            list.sort(function (a, b) {
+                var da = a.eventDate || ''; var db = b.eventDate || '';
+                return db.localeCompare(da);
+            });
+        }
         if (sortCol) {
             list = list.slice().sort(function (a, b) {
                 var av = sortCol === 'pending' ? getPendiente(a)
