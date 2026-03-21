@@ -222,6 +222,10 @@
     grid-template-columns: repeat(2, 1fr);
 }
 
+#mobile-menu-btn {
+    display: none;
+}
+
 @media (max-width: 1400px) {
     .kpi-grid-5 {
         grid-template-columns: repeat(3, 1fr);

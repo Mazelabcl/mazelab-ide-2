@@ -490,7 +490,7 @@ window.Mazelab.Modules.CotizadorModule = (function () {
 
             html += '<tr class="cot-item-row" data-bidx="' + bIdx + '" data-iidx="' + ii + '">';
             html += '<td style="padding:0.4rem;">';
-            html += '  <input type="text" class="form-control cot-item-label" data-bidx="' + bIdx + '" data-iidx="' + ii + '" value="' + escapeHtml(item.label) + '" style="border:none;background:transparent;color:var(--text-primary);font-size:0.85rem;padding:2px 4px;width:100%;">';
+            html += '  <textarea class="form-control cot-item-label" data-bidx="' + bIdx + '" data-iidx="' + ii + '" rows="2" style="border:none;background:transparent;color:var(--text-primary);font-size:0.85rem;padding:2px 4px;width:100%;resize:vertical;min-height:32px;">' + escapeHtml(item.label) + '</textarea>';
             if (item.tipo !== 'base') {
                 html += ' <span style="color:var(--text-muted);font-size:0.65rem;">(' + escapeHtml(item.tipo) + ')</span>';
             }
