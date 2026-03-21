@@ -12,10 +12,17 @@ window.Mazelab.Modules.CashflowModule = (function () {
         return (n < 0 ? '-$' : '$') + s;
     }
 
+    function parseLocalDate(str) {
+        if (!str) return null;
+        var parts = String(str).match(/^(\d{4})-(\d{2})-(\d{2})/);
+        if (parts) return new Date(Number(parts[1]), Number(parts[2]) - 1, Number(parts[3]));
+        return new Date(str);
+    }
+
     function addDays(dateStr, days) {
         if (!dateStr) return null;
-        var d = new Date(dateStr);
-        if (isNaN(d)) return null;
+        var d = parseLocalDate(dateStr);
+        if (!d || isNaN(d)) return null;
         d.setDate(d.getDate() + days);
         return d;
     }

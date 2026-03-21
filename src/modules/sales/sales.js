@@ -741,6 +741,8 @@ window.Mazelab.Modules.SalesModule = (function () {
                 // Auto-create CXC (receivable) for this sale
                 await DS.create('receivables', {
                     id: window.Mazelab.Storage.generateId(),
+                    sourceId: nextId,
+                    eventId: saleId,
                     eventName: data.eventName || '',
                     eventDate: data.eventDate || '',
                     clientName: data.clientName || '',
@@ -749,7 +751,8 @@ window.Mazelab.Modules.SalesModule = (function () {
                     amountPaid: 0,
                     status: 'sin_factura',
                     saleId: saleId,
-                    sourceType: 'auto'
+                    sourceType: 'auto',
+                    staffName: data.staffId ? (staff.find(function(st){ return st.id === data.staffId; }) || {}).name || '' : ''
                 });
 
                 // Auto-generate CXP draft entries from service cost templates
