@@ -670,12 +670,20 @@ window.Mazelab.Modules.SalesModule = (function () {
                            (ssid && (rSaleId === ssid || rEventId === ssid || rSourceId === ssid));
                 });
                 for (var ri = 0; ri < linkedCXCs.length; ri++) {
-                    await DS.update('receivables', linkedCXCs[ri].id, {
+                    var cxcUpdate = {
                         eventName: data.eventName,
                         eventDate: data.eventDate,
                         clientName: data.clientName,
                         monto_venta: data.amount || 0
-                    });
+                    };
+                    // Also update montoNeto/amount if CXC is not yet invoiced
+                    var cxcRec = linkedCXCs[ri];
+                    var isInvoiced = cxcRec.montoFacturado > 0 || cxcRec.invoicedAmount > 0;
+                    if (!isInvoiced) {
+                        cxcUpdate.montoNeto = data.amount || 0;
+                        cxcUpdate.amount = data.amount || 0;
+                    }
+                    await DS.update('receivables', cxcRec.id, cxcUpdate);
                 }
                 // Sincronizar CXP vinculados con datos actualizados
                 var allPayables = await DS.getAll('payables') || [];

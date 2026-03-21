@@ -1039,6 +1039,16 @@ window.Mazelab.Modules.DashboardModule = (function () {
             }
         });
 
+        // Group receivables by month for detail view
+        var recByMonth = {};
+        months.forEach(function (m) { recByMonth[m] = []; });
+        receivables.forEach(function (r) {
+            var tipo = (r.tipoDoc || '').toUpperCase();
+            if (tipo === 'NC') return;
+            var mk = toMonthKey(r.billingMonth);
+            if (mk && recByMonth[mk]) recByMonth[mk].push(r);
+        });
+
         var cards = months.map(function (m) {
             var d = data[m];
             var deb = Math.round(d.ivaDebito);
@@ -1046,6 +1056,30 @@ window.Mazelab.Modules.DashboardModule = (function () {
             var ret = Math.round(d.retencionBH);
             var neto = deb - cred + ret;
             var color = neto > 0 ? 'var(--danger)' : 'var(--success)';
+
+            // Build detail table for this month
+            var detailRows = recByMonth[m].map(function (r) {
+                var neto2 = Number(r.invoicedAmount || r.montoNeto || r.monto_venta || 0);
+                return '<tr style="border-bottom:1px solid var(--border-subtle);">' +
+                    '<td style="padding:3px 4px;font-size:11px;">' + (r.sourceId || r.id || '-') + '</td>' +
+                    '<td style="padding:3px 4px;font-size:11px;">' + escapeHtml(r.clientName || '') + '</td>' +
+                    '<td style="padding:3px 4px;font-size:11px;">' + escapeHtml(r.eventName || '') + '</td>' +
+                    '<td style="padding:3px 4px;font-size:11px;">' + (r.invoiceNumber || '-') + '</td>' +
+                    '<td style="padding:3px 4px;font-size:11px;text-align:right;font-variant-numeric:tabular-nums;">' + formatCLP(neto2) + '</td>' +
+                '</tr>';
+            }).join('');
+
+            var detailHTML = recByMonth[m].length > 0
+                ? '<div class="dash-iva-detail" data-month="' + m + '" style="display:none;margin-top:8px;max-height:300px;overflow-y:auto;">' +
+                  '<table style="width:100%;border-collapse:collapse;"><thead><tr>' +
+                  '<th style="text-align:left;padding:3px 4px;font-size:10px;color:var(--text-muted);">ID</th>' +
+                  '<th style="text-align:left;padding:3px 4px;font-size:10px;color:var(--text-muted);">Cliente</th>' +
+                  '<th style="text-align:left;padding:3px 4px;font-size:10px;color:var(--text-muted);">Evento</th>' +
+                  '<th style="text-align:left;padding:3px 4px;font-size:10px;color:var(--text-muted);">Factura</th>' +
+                  '<th style="text-align:right;padding:3px 4px;font-size:10px;color:var(--text-muted);">Neto</th>' +
+                  '</tr></thead><tbody>' + detailRows + '</tbody></table></div>'
+                : '';
+
             return '<div class="card" style="flex:1">' +
                 '<div class="card-header"><span class="card-title">IVA ' + labels[m] + '</span></div>' +
                 '<table style="width:100%;font-size:13px;border-collapse:collapse">' +
@@ -1054,6 +1088,8 @@ window.Mazelab.Modules.DashboardModule = (function () {
                 '<tr><td style="padding:5px 0;color:var(--text-secondary)">Retenci\u00f3n BH</td><td class="text-right" style="font-weight:600">' + formatCLP(ret) + '</td></tr>' +
                 '<tr style="border-top:2px solid var(--border)"><td style="padding:8px 0;font-weight:700">IVA Neto estimado</td><td class="text-right" style="font-weight:700;font-size:15px;color:' + color + '">' + formatCLP(neto) + '</td></tr>' +
                 '</table>' +
+                '<button class="btn btn-secondary btn-sm dash-iva-toggle" data-month="' + m + '" style="margin-top:8px;font-size:11px;">Ver ' + recByMonth[m].length + ' facturas</button>' +
+                detailHTML +
                 '<div style="font-size:11px;color:var(--text-muted);margin-top:8px">IVA ventas - IVA compras + Ret. BH. No incluye PPM.</div>' +
                 '</div>';
         }).join('');
@@ -1089,6 +1125,17 @@ window.Mazelab.Modules.DashboardModule = (function () {
             if (body) {
                 body.innerHTML = buildDashboard(sales, receivables, payables, services);
                 body.addEventListener('click', function (e) {
+                    // IVA detail toggle
+                    var ivaBtn = e.target.closest('.dash-iva-toggle');
+                    if (ivaBtn) {
+                        var month = ivaBtn.dataset.month;
+                        var detail = document.querySelector('.dash-iva-detail[data-month="' + month + '"]');
+                        if (detail) {
+                            var vis = detail.style.display === 'none';
+                            detail.style.display = vis ? 'block' : 'none';
+                            ivaBtn.textContent = vis ? 'Ocultar facturas' : 'Ver facturas';
+                        }
+                    }
                     var btn = e.target.closest('#rankings-scope-toggle .toggle-option');
                     if (btn && btn.dataset.scope && btn.dataset.scope !== rankingsScope) {
                         rankingsScope = btn.dataset.scope;

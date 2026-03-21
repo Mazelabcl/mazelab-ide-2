@@ -161,10 +161,9 @@ window.Mazelab.Modules.FinanceModule = (function () {
             var baseDate = getVencimientoBaseDate(r);
             if (baseDate) {
                 var diffDays = Math.floor((new Date() - baseDate) / (1000 * 60 * 60 * 24));
-                // paymentTerms: días de plazo desde emisión de factura (default 30).
-                // Para sin_factura, baseDate = eventDate, paymentTerms aplica igual.
                 var paymentTerms = Number(r.paymentTerms) || 30;
                 var daysOverdue = diffDays - paymentTerms;
+                r._daysOverdue = Math.max(0, daysOverdue); // store for badge display
                 if (daysOverdue > 90) return 'vencida_90';
                 if (daysOverdue > 60) return 'vencida_60';
                 if (daysOverdue > 30) return 'vencida_30';
@@ -255,16 +254,18 @@ window.Mazelab.Modules.FinanceModule = (function () {
                label + '<span style="opacity:' + (active ? 1 : 0.25) + ';font-size:10px">' + arrow + '</span></th>';
     }
 
-    function getStatusBadge(status) {
+    function getStatusBadge(status, rec) {
+        var days = (rec && rec._daysOverdue) ? rec._daysOverdue : 0;
+        var daysLabel = days > 0 ? ' (' + days + 'd)' : '';
         var map = {
             'pagada': '<span class="badge badge-success">Pagada</span>',
             'pendiente': '<span class="badge badge-warning">Pendiente</span>',
             'pendiente_pago': '<span class="badge badge-warning">Pendiente</span>',
             'pendiente_factura': '<span class="badge badge-info">Pre-evento</span>',
             'post_evento_sin_factura': '<span class="badge badge-warning">Facturar</span>',
-            'vencida_30': '<span class="badge badge-warning">Vencida 30+</span>',
-            'vencida_60': '<span class="badge badge-danger">Vencida 60+</span>',
-            'vencida_90': '<span class="badge badge-danger">Vencida 90+</span>',
+            'vencida_30': '<span class="badge badge-warning">Vencida' + daysLabel + '</span>',
+            'vencida_60': '<span class="badge badge-danger">Vencida' + daysLabel + '</span>',
+            'vencida_90': '<span class="badge badge-danger">Vencida' + daysLabel + '</span>',
             'anulada': '<span class="badge badge-secondary">Anulada</span>',
             'nc': '<span class="badge badge-secondary">N. Cr\u00e9dito</span>',
             'por_vencer': '<span class="badge badge-warning">Por Vencer</span>'
@@ -600,7 +601,7 @@ window.Mazelab.Modules.FinanceModule = (function () {
                 html += '<td>' + formatCLP(pagado) + '</td>';
                 html += '<td>' + formatCLP(restante) + '</td>';
                 html += '<td>' + formatDate(getEffectiveEventDate(r)) + '</td>';
-                html += '<td>' + getStatusBadge(realStatus) + '</td>';
+                html += '<td>' + getStatusBadge(realStatus, r) + '</td>';
                 html += '<td>';
                 if (realStatus === 'pendiente_factura' || realStatus === 'post_evento_sin_factura') {
                     html += '<button class="btn btn-secondary btn-sm btn-facturar" data-id="' + r.id + '" style="margin-right:4px">Facturar</button>';
@@ -658,7 +659,7 @@ window.Mazelab.Modules.FinanceModule = (function () {
                 row += '<td>' + formatCLP(pagado) + '</td>';
                 row += '<td>' + formatCLP(restante) + '</td>';
                 row += '<td>' + formatDate(r.eventDate) + '</td>';
-                row += '<td>' + getStatusBadge(realStatus) + '</td>';
+                row += '<td>' + getStatusBadge(realStatus, r) + '</td>';
                 row += '<td>';
                 if (realStatus === 'pendiente_factura' || realStatus === 'post_evento_sin_factura') {
                     row += '<button class="btn btn-secondary btn-sm btn-facturar" data-id="' + r.id + '" style="margin-right:4px">Facturar</button>';
