@@ -613,6 +613,7 @@ window.Mazelab.Modules.FinanceModule = (function () {
                     var cobrosArr = Array.isArray(r.cobros) ? r.cobros : [];
                     var cobrarLabel = cobrosArr.length > 0 ? (cobrosArr.length + 1) + '\u00b0 Cobro' : 'Cobrar';
                     html += '<button class="btn-sm btn-icon btn-cobrar" data-id="' + r.id + '" title="Enviar cobro" style="background:linear-gradient(135deg,#e67e22,#f39c12);color:white;border:none;margin-right:4px">' + cobrarLabel + '</button>';
+                    html += '<button class="btn-sm btn-icon btn-nc" data-id="' + r.id + '" title="Registrar Nota de Cr\u00e9dito" style="color:var(--text-secondary);margin-right:4px">NC</button>';
                 }
                 html += '<button class="btn-sm btn-icon btn-eliminar" data-id="' + r.id + '" title="Eliminar" style="color:var(--danger,#e74c3c);">Eliminar</button>';
                 html += '</td></tr>';
@@ -1023,6 +1024,13 @@ window.Mazelab.Modules.FinanceModule = (function () {
         document.querySelectorAll('.btn-cobrar').forEach(function (btn) {
             btn.addEventListener('click', function () {
                 openCobrarModal(this.dataset.id);
+            });
+        });
+
+        // NC buttons
+        document.querySelectorAll('.btn-nc').forEach(function (btn) {
+            btn.addEventListener('click', function () {
+                openNCModal(this.dataset.id);
             });
         });
 
@@ -1834,6 +1842,85 @@ window.Mazelab.Modules.FinanceModule = (function () {
             console.error('Error marking as paid:', err);
             alert('Error al marcar como pagado: ' + err.message);
         }
+    }
+
+    // =========================================================================
+    // NOTA DE CRÉDITO
+    // =========================================================================
+
+    function openNCModal(id) {
+        var rec = allReceivables.find(function (r) { return r.id === id; });
+        if (!rec) return;
+        var modalContainer = document.getElementById('finance-modal-container');
+        if (!modalContainer) return;
+
+        var montoFacturado = getMontoFacturado(rec);
+
+        var html = '<div class="modal-overlay active" id="nc-modal-overlay">';
+        html += '<div class="modal" style="max-width:500px;width:95%">';
+        html += '<div class="modal-header"><h3>Registrar Nota de Cr\u00e9dito</h3><button class="modal-close" id="nc-close">&times;</button></div>';
+        html += '<div style="background:var(--bg-tertiary);border-radius:var(--radius-sm);padding:10px 14px;margin-bottom:12px;font-size:13px">';
+        html += '<strong>' + escapeHtml(rec.clientName || '') + '</strong> — ' + escapeHtml(rec.eventName || '');
+        html += '<br>Factura: <strong>' + (rec.invoiceNumber || '-') + '</strong> — Neto: ' + formatCLP(montoFacturado);
+        html += '</div>';
+        html += '<div class="form-group"><label>N\u00b0 Nota de Cr\u00e9dito</label><input type="text" id="nc-number" class="form-control" placeholder="Ej: 456"></div>';
+        html += '<div class="form-group"><label>Monto Neto de la NC</label><input type="number" id="nc-amount" class="form-control" min="0" placeholder="Ej: 170000"></div>';
+        html += '<div class="form-group"><label>Motivo</label><input type="text" id="nc-motivo" class="form-control" placeholder="Ej: Problema en servicio, descuento acordado..."></div>';
+        html += '<div class="form-actions"><button class="btn btn-primary" id="nc-save">Registrar NC</button><button class="btn btn-secondary" id="nc-cancel">Cancelar</button></div>';
+        html += '</div></div>';
+
+        modalContainer.innerHTML = html;
+
+        function closeModal() { modalContainer.innerHTML = ''; }
+        document.getElementById('nc-close').addEventListener('click', closeModal);
+        document.getElementById('nc-cancel').addEventListener('click', closeModal);
+        document.getElementById('nc-modal-overlay').addEventListener('click', function (e) { if (e.target === this) closeModal(); });
+
+        document.getElementById('nc-save').addEventListener('click', async function () {
+            var ncNumber = (document.getElementById('nc-number').value || '').trim();
+            var ncAmount = Number(document.getElementById('nc-amount').value) || 0;
+            var ncMotivo = (document.getElementById('nc-motivo').value || '').trim();
+
+            if (ncAmount <= 0) { alert('Ingresa el monto neto de la NC.'); return; }
+
+            try {
+                // Create NC record linked to original invoice
+                await window.Mazelab.DataService.create('receivables', {
+                    id: window.Mazelab.Storage.generateId(),
+                    sourceId: rec.sourceId || '',
+                    tipoDoc: 'NC',
+                    invoiceNumber: ncNumber,
+                    eventName: rec.eventName || '',
+                    eventDate: rec.eventDate || '',
+                    clientName: rec.clientName || '',
+                    montoNeto: ncAmount,
+                    invoicedAmount: ncAmount,
+                    montoFacturado: ncAmount,
+                    billingMonth: new Date().toLocaleDateString('es-CL', { day: '2-digit', month: '2-digit', year: 'numeric' }),
+                    status: 'nc',
+                    saleId: rec.saleId || '',
+                    ncAsociada: rec.invoiceNumber || '',
+                    comments: ncMotivo
+                });
+
+                // Also update the sale's refundAmount if linked
+                if (rec.saleId) {
+                    var linkedSale = (cachedSales || []).find(function (s) { return String(s.id) === String(rec.saleId); });
+                    if (linkedSale) {
+                        var currentRefund = Number(linkedSale.refundAmount || 0);
+                        await window.Mazelab.DataService.update('sales', linkedSale.id, {
+                            refundAmount: currentRefund + ncAmount,
+                            hasIssue: true
+                        });
+                    }
+                }
+
+                closeModal();
+                await loadAndRender();
+            } catch (err) {
+                alert('Error al registrar NC: ' + err.message);
+            }
+        });
     }
 
     async function deleteReceivable(id) {

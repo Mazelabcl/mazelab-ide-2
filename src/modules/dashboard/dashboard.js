@@ -230,7 +230,9 @@ window.Mazelab.Modules.DashboardModule = (function () {
             var amt = Number(s.amount || s.monto_venta || 0);
             var ed = getSaleDate(s);
             if (!ed) { totalAll += amt; return; }
-            var y = new Date(ed).getFullYear();
+            var dd = parseFuzzyDate(ed);
+            if (!dd) { totalAll += amt; return; }
+            var y = dd.getFullYear();
             totalAll += amt;
             if (y === thisYear) { totalThisYear += amt; countThisYear++; }
             else if (y === lastYear) totalLastYear += amt;
@@ -311,6 +313,21 @@ window.Mazelab.Modules.DashboardModule = (function () {
         return s.closingDate || s.closing_date || s.eventDate || s.event_date || s.fecha_evento || '';
     }
 
+    // Parse date that could be YYYY-MM-DD, YYYY-MM, DD/MM/YYYY, MM/YYYY
+    function parseFuzzyDate(str) {
+        if (!str) return null;
+        var s = String(str).trim();
+        var ymd = s.match(/^(\d{4})-(\d{2})-(\d{2})/);
+        if (ymd) return new Date(Number(ymd[1]), Number(ymd[2]) - 1, Number(ymd[3]));
+        var ym = s.match(/^(\d{4})-(\d{2})$/);
+        if (ym) return new Date(Number(ym[1]), Number(ym[2]) - 1, 15);
+        var dmy = s.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
+        if (dmy) return new Date(Number(dmy[3]), Number(dmy[2]) - 1, Number(dmy[1]));
+        var my = s.match(/^(\d{1,2})\/(\d{4})$/);
+        if (my) return new Date(Number(my[2]), Number(my[1]) - 1, 15);
+        return parseLocalDate(str);
+    }
+
     // --- Reusable: YoY Chart ---
     function buildYoYChart(sales) {
         var now = new Date();
@@ -323,7 +340,7 @@ window.Mazelab.Modules.DashboardModule = (function () {
         sales.forEach(function (s) {
             var ed = getSaleDate(s);
             if (!ed) return;
-            var d = parseLocalDate(ed);
+            var d = parseFuzzyDate(ed);
             if (!d) return;
             var y = d.getFullYear();
             var m = d.getMonth();
@@ -334,17 +351,6 @@ window.Mazelab.Modules.DashboardModule = (function () {
         console.log('[Dashboard YoY] Ventas por closingDate (fallback eventDate):');
         [thisYear, lastYear, twoYearsAgo].forEach(function (y) {
             console.log('  ' + y + ':', months.map(function (m, i) { return m + ': ' + formatCLPShort(yoyData[y][i]); }).join(' | '));
-        });
-        // Detail: Q1 2026 sales
-        console.log('[Dashboard YoY] Detalle Q1 ' + thisYear + ':');
-        sales.forEach(function (s) {
-            var ed = getSaleDate(s);
-            if (!ed) return;
-            var d = parseLocalDate(ed);
-            if (!d) return;
-            if (d.getFullYear() !== thisYear || d.getMonth() > 2) return;
-            var hasClosing = !!(s.closingDate || s.closing_date);
-            console.log('  ID:' + (s.sourceId || s.id) + ' | ' + (s.clientName || '').substring(0, 20) + ' | $' + (Number(s.amount || 0) / 1000000).toFixed(1) + 'M | fecha:' + ed + (hasClosing ? ' (closingDate)' : ' (eventDate fallback)'));
         });
         var maxYoY = 1;
         [thisYear, lastYear, twoYearsAgo].forEach(function (y) {
@@ -416,7 +422,7 @@ window.Mazelab.Modules.DashboardModule = (function () {
         sales.forEach(function (s) {
             var ed = getSaleDate(s);
             if (!ed) return;
-            var d = new Date(ed);
+            var d = parseFuzzyDate(ed);
             var y = d.getFullYear();
             if (!qData[y]) return;
             var q = Math.floor(d.getMonth() / 3);
