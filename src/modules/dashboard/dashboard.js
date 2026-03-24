@@ -347,11 +347,21 @@ window.Mazelab.Modules.DashboardModule = (function () {
             if (yoyData[y]) yoyData[y][m] += Number(s.amount || s.monto_venta || 0);
         });
 
-        // Debug: log yearly totals + Q1 detail
+        // Debug: log yearly totals + raw closingDate for Q1
         console.log('[Dashboard YoY] Ventas por closingDate (fallback eventDate):');
         [thisYear, lastYear, twoYearsAgo].forEach(function (y) {
             console.log('  ' + y + ':', months.map(function (m, i) { return m + ': ' + formatCLPShort(yoyData[y][i]); }).join(' | '));
         });
+        var q1 = [];
+        sales.forEach(function (s) {
+            var ed = getSaleDate(s);
+            var d = parseFuzzyDate(ed);
+            if (!d) return;
+            if (d.getFullYear() === thisYear && d.getMonth() <= 2) {
+                q1.push({ id: s.sourceId || s.id, monto: Number(s.amount || 0), closingDate: s.closingDate || '', eventDate: s.eventDate || '', usado: ed });
+            }
+        });
+        console.table(q1);
         var maxYoY = 1;
         [thisYear, lastYear, twoYearsAgo].forEach(function (y) {
             yoyData[y].forEach(function (v) { if (v > maxYoY) maxYoY = v; });
