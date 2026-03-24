@@ -642,7 +642,7 @@ window.Mazelab.Modules.SalesModule = (function () {
             clientName: clientName,
             eventName: document.getElementById('sale-event-name').value,
             eventDate: document.getElementById('sale-event-date').value,
-            closingDate: document.getElementById('sale-closing-date').value,
+            closingDate: document.getElementById('sale-closing-date').value || new Date().toISOString().split('T')[0],
             serviceIds: selectedServices,
             jornadas: document.getElementById('sale-jornadas').value ? Number(document.getElementById('sale-jornadas').value) : null,
             amount: document.getElementById('sale-amount').value ? Number(document.getElementById('sale-amount').value) : 0,
