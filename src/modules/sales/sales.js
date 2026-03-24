@@ -742,7 +742,6 @@ window.Mazelab.Modules.SalesModule = (function () {
                 await DS.create('receivables', {
                     id: window.Mazelab.Storage.generateId(),
                     sourceId: nextId,
-                    eventId: saleId,
                     eventName: data.eventName || '',
                     eventDate: data.eventDate || '',
                     clientName: data.clientName || '',

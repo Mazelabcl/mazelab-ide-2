@@ -323,16 +323,28 @@ window.Mazelab.Modules.DashboardModule = (function () {
         sales.forEach(function (s) {
             var ed = getSaleDate(s);
             if (!ed) return;
-            var d = new Date(ed);
+            var d = parseLocalDate(ed);
+            if (!d) return;
             var y = d.getFullYear();
             var m = d.getMonth();
             if (yoyData[y]) yoyData[y][m] += Number(s.amount || s.monto_venta || 0);
         });
 
-        // Debug: log 2026 Q1 for verification
-        console.log('[Dashboard YoY] Ventas por closingDate:');
+        // Debug: log yearly totals + Q1 detail
+        console.log('[Dashboard YoY] Ventas por closingDate (fallback eventDate):');
         [thisYear, lastYear, twoYearsAgo].forEach(function (y) {
             console.log('  ' + y + ':', months.map(function (m, i) { return m + ': ' + formatCLPShort(yoyData[y][i]); }).join(' | '));
+        });
+        // Detail: Q1 2026 sales
+        console.log('[Dashboard YoY] Detalle Q1 ' + thisYear + ':');
+        sales.forEach(function (s) {
+            var ed = getSaleDate(s);
+            if (!ed) return;
+            var d = parseLocalDate(ed);
+            if (!d) return;
+            if (d.getFullYear() !== thisYear || d.getMonth() > 2) return;
+            var hasClosing = !!(s.closingDate || s.closing_date);
+            console.log('  ID:' + (s.sourceId || s.id) + ' | ' + (s.clientName || '').substring(0, 20) + ' | $' + (Number(s.amount || 0) / 1000000).toFixed(1) + 'M | fecha:' + ed + (hasClosing ? ' (closingDate)' : ' (eventDate fallback)'));
         });
         var maxYoY = 1;
         [thisYear, lastYear, twoYearsAgo].forEach(function (y) {
