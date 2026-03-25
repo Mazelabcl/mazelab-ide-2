@@ -178,6 +178,11 @@ window.Mazelab.Modules.FinanceModule = (function () {
     // FORMAT HELPERS
     // =========================================================================
 
+    function escapeHtml(str) {
+        if (!str) return '';
+        return String(str).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+    }
+
     function formatCLP(amount) {
         var n = Math.round(Number(amount) || 0);
         var negative = n < 0;
