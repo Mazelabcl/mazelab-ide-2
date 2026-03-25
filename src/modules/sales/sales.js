@@ -675,6 +675,22 @@ window.Mazelab.Modules.SalesModule = (function () {
                     return rSaleId === sid || rEventId === sid || rSourceId === sid ||
                            (ssid && (rSaleId === ssid || rEventId === ssid || rSourceId === ssid));
                 });
+                // If no CXC exists, create one (fixes orphaned sales)
+                if (linkedCXCs.length === 0 && data.amount > 0) {
+                    await DS.create('receivables', {
+                        id: window.Mazelab.Storage.generateId(),
+                        sourceId: ssid || sid,
+                        eventName: data.eventName || '',
+                        eventDate: data.eventDate || '',
+                        clientName: data.clientName || '',
+                        monto_venta: data.amount || 0,
+                        invoicedAmount: 0,
+                        amountPaid: 0,
+                        status: 'sin_factura',
+                        saleId: sid,
+                        sourceType: 'auto'
+                    });
+                }
                 for (var ri = 0; ri < linkedCXCs.length; ri++) {
                     var cxcUpdate = {
                         eventName: data.eventName,
