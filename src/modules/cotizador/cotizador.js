@@ -135,8 +135,10 @@ window.Mazelab.Modules.CotizadorModule = (function () {
         var sub = 0;
         for (var i = 0; i < bloque.items.length; i++) {
             var item = bloque.items[i];
-            item.total = (Number(item.unitario) || 0) * (Number(item.cantidad) || 0) * (Number(item.dias) || 1);
-            sub += item.total;
+            var cant = Number(item.cantidad) || 0;
+            item.total = (Number(item.unitario) || 0) * cant * (Number(item.dias) || 1);
+            // Items with cantidad=0 are opcionales — don't add to subtotal
+            if (cant > 0) sub += item.total;
         }
         bloque.subtotalBloque = sub;
         return sub;
@@ -449,7 +451,7 @@ window.Mazelab.Modules.CotizadorModule = (function () {
         html += '  <div style="display:flex;align-items:center;gap:8px;">';
         if (bIdx > 0) html += '<button class="btn btn-secondary btn-sm cot-btn-move-bloque" data-bidx="' + bIdx + '" data-dir="up" style="padding:2px 6px;font-size:14px;line-height:1;">&#9650;</button>';
         if (bIdx < formState.bloques.length - 1) html += '<button class="btn btn-secondary btn-sm cot-btn-move-bloque" data-bidx="' + bIdx + '" data-dir="down" style="padding:2px 6px;font-size:14px;line-height:1;">&#9660;</button>';
-        html += '  <h4 style="margin:0;color:var(--accent-primary);">' + escapeHtml(bloque.serviceName || 'Servicio ' + (bIdx + 1)) + '</h4>';
+        html += '  <input type="text" class="cot-bloque-name" data-bidx="' + bIdx + '" value="' + escapeHtml(bloque.serviceName || 'Servicio ' + (bIdx + 1)) + '" style="margin:0;color:var(--accent-primary);font-size:1.1rem;font-weight:700;background:transparent;border:none;border-bottom:1px dashed var(--border-color);padding:2px 4px;width:auto;min-width:120px;">';
         html += '  </div>';
         html += '  <button class="btn btn-secondary btn-sm cot-btn-remove-bloque" data-bidx="' + bIdx + '" style="color:var(--danger);">Quitar servicio</button>';
         html += '</div>';
@@ -562,6 +564,11 @@ window.Mazelab.Modules.CotizadorModule = (function () {
             }
         }
 
+        // Always show "Add custom item" button
+        html += '<div style="margin-top:0.5rem;">';
+        html += '<button class="btn btn-secondary btn-sm cot-btn-add-custom" data-bidx="' + bIdx + '" style="margin:0.2rem 0.25rem;font-size:0.75rem;border-style:dashed;">+ Agregar item manual</button>';
+        html += '</div>';
+
         html += '</div>'; // .cot-bloque
         return html;
     }
@@ -672,6 +679,19 @@ window.Mazelab.Modules.CotizadorModule = (function () {
                     html += '</tr>';
                 }
                 html += '</table>';
+            }
+
+            // Opcionales (qty=0 items) — shown separately
+            var opcionales = bloque.items.filter(function (it) { return (Number(it.cantidad) || 0) === 0 && (Number(it.unitario) || 0) > 0; });
+            if (opcionales.length > 0) {
+                html += '<div style="margin-top:0.5rem;padding-top:0.5rem;border-top:1px dashed #ccc;">';
+                html += '<p style="font-size:0.8rem;color:#999;margin:0 0 0.3rem;font-style:italic;">Opcionales (no incluidos en el total):</p>';
+                html += '<table style="width:100%;border-collapse:collapse;">';
+                opcionales.forEach(function (op) {
+                    html += '<tr style="opacity:0.7;"><td style="padding:0.3rem 0;color:#666;font-size:0.85rem;">' + escapeHtml(op.label) + '</td>';
+                    html += '<td class="cot-price" style="padding:0.3rem 0;text-align:right;color:#666;font-size:0.85rem;">' + formatCLP(Number(op.unitario) || 0) + '</td></tr>';
+                });
+                html += '</table></div>';
             }
 
             // Bloque subtotal
@@ -796,13 +816,16 @@ window.Mazelab.Modules.CotizadorModule = (function () {
                 formState.bloques[bIdx5].items[iIdx5].label = labelInputs[li].value;
             }
         }
-        // Read bloque descriptions
+        // Read bloque descriptions and names
         var descInputs = document.querySelectorAll('.cot-bloque-desc');
         for (var dci = 0; dci < descInputs.length; dci++) {
             var bIdx6 = parseInt(descInputs[dci].getAttribute('data-bidx'), 10);
-            if (formState.bloques[bIdx6]) {
-                formState.bloques[bIdx6].descripcion = descInputs[dci].value;
-            }
+            if (formState.bloques[bIdx6]) formState.bloques[bIdx6].descripcion = descInputs[dci].value;
+        }
+        var nameInputs = document.querySelectorAll('.cot-bloque-name');
+        for (var nci = 0; nci < nameInputs.length; nci++) {
+            var bIdx7 = parseInt(nameInputs[nci].getAttribute('data-bidx'), 10);
+            if (formState.bloques[bIdx7]) formState.bloques[bIdx7].serviceName = nameInputs[nci].value;
         }
     }
 
@@ -983,17 +1006,32 @@ window.Mazelab.Modules.CotizadorModule = (function () {
                 if (formState.bloques[i].serviceName) serviceNames.push(formState.bloques[i].serviceName);
             }
 
+            // Build comments from cotización notas + bloques descriptions
+            var cotComments = [];
+            if (savedCot.codigo) cotComments.push('Cotización: ' + savedCot.codigo);
+            if (formState.notas) cotComments.push('Notas: ' + formState.notas);
+            for (var ci = 0; ci < formState.bloques.length; ci++) {
+                var bl = formState.bloques[ci];
+                if (bl.descripcion) cotComments.push(bl.serviceName + ': ' + bl.descripcion);
+            }
+
             var saleRecord = {
                 id: 'sale-' + Date.now(),
                 clientName: formState.clientName,
                 eventName: formState.eventName || formState.clientName,
                 eventDate: formState.eventDate || todayStr(),
+                closingDate: todayStr(),
                 serviceIds: serviceIds,
                 serviceNames: serviceNames.join(', '),
                 amount: t.totalNeto,
+                jornadas: 1,
                 status: 'confirmada',
                 boardColumn: 1,
-                comments: 'Generada desde cotizacion ' + (savedCot.codigo || '')
+                comments: cotComments.join('\n'),
+                contactName: formState.contactName || '',
+                contactEmail: formState.contactEmail || '',
+                contactTel: formState.contactTel || '',
+                lugar: formState.lugar || ''
             };
 
             var DS = window.Mazelab.DataService;
@@ -1466,6 +1504,24 @@ window.Mazelab.Modules.CotizadorModule = (function () {
                     showView('form');
                     return;
                 }
+
+                if (target.classList.contains('cot-btn-add-custom')) {
+                    readFormState();
+                    var bIdx5 = parseInt(target.getAttribute('data-bidx'), 10);
+                    if (formState.bloques[bIdx5]) {
+                        formState.bloques[bIdx5].items.push({
+                            tipo: 'adicional',
+                            label: 'Item personalizado',
+                            descripcion: '',
+                            unitario: 0,
+                            cantidad: 0,
+                            dias: 1,
+                            total: 0
+                        });
+                    }
+                    showView('form');
+                    return;
+                }
             });
         }
 
@@ -1476,6 +1532,11 @@ window.Mazelab.Modules.CotizadorModule = (function () {
                 if (target.classList.contains('cot-bloque-desc')) {
                     var descBIdx = parseInt(target.getAttribute('data-bidx'), 10);
                     if (formState.bloques[descBIdx]) formState.bloques[descBIdx].descripcion = target.value;
+                    return;
+                }
+                if (target.classList.contains('cot-bloque-name')) {
+                    var nameBIdx = parseInt(target.getAttribute('data-bidx'), 10);
+                    if (formState.bloques[nameBIdx]) formState.bloques[nameBIdx].serviceName = target.value;
                     return;
                 }
                 if (target.classList.contains('cot-item-cantidad') || target.classList.contains('cot-item-unitario') || target.classList.contains('cot-item-dias') || target.classList.contains('cot-item-label')) {
