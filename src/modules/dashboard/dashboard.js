@@ -116,7 +116,11 @@ window.Mazelab.Modules.DashboardModule = (function () {
         // ---- KPI calculations ----
         var totalVentas = 0;
         var countVentas = sales.length;
-        sales.forEach(function (s) { totalVentas += Number(s.amount || s.monto_venta || 0); });
+        var totalRefunds = 0;
+        sales.forEach(function (s) {
+            totalVentas += Number(s.amount || s.monto_venta || 0);
+            totalRefunds += Number(s.refundAmount || s.monto_devolucion || 0);
+        });
 
         // CXC
         var totalCXC = 0, countCXC = 0;
@@ -179,7 +183,7 @@ window.Mazelab.Modules.DashboardModule = (function () {
                 '<div class="kpi-card accent">' +
                     '<div class="kpi-label">Ventas Totales</div>' +
                     '<div class="kpi-value">' + formatCLP(totalVentas) + '</div>' +
-                    '<div class="kpi-sub">' + countVentas + ' ventas registradas</div>' +
+                    '<div class="kpi-sub">' + countVentas + ' ventas' + (totalRefunds > 0 ? ' · NC/Dev: -' + formatCLP(totalRefunds) + ' · Neto: ' + formatCLP(totalVentas - totalRefunds) : '') + '</div>' +
                 '</div>' +
                 '<div class="kpi-card warning">' +
                     '<div class="kpi-label">Por Cobrar (CXC)</div>' +

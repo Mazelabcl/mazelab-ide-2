@@ -369,17 +369,22 @@ window.Mazelab.Modules.FinanceModule = (function () {
 
         // Row 1 — Monthly metrics
         var facturadoMes = 0;
+        var ncMes = 0;
         var pagadoMes = 0;
         var porVencerMes = 0;
 
         receivables.forEach(function (r) {
-            if (r.tipoDoc === 'NC') return;
             if (matchesBillingMonth(r.billingMonth, currentMonthKey)) {
-                facturadoMes += getMontoFacturado(r);
+                if (r.tipoDoc === 'NC') {
+                    ncMes += getMontoFacturado(r);
+                } else {
+                    facturadoMes += getMontoFacturado(r);
+                }
             }
         });
 
-        var ivaMes = facturadoMes * 0.19;
+        var facturadoNetoMes = facturadoMes - ncMes;
+        var ivaMes = facturadoNetoMes * 0.19;
 
         // Pagado este mes: estimate from billing month + ~30 days
         receivables.forEach(function (r) {
@@ -437,6 +442,8 @@ window.Mazelab.Modules.FinanceModule = (function () {
         return {
             data: data,
             facturadoMes: facturadoMes,
+            ncMes: ncMes,
+            facturadoNetoMes: facturadoNetoMes,
             ivaMes: ivaMes,
             pagadoMes: pagadoMes,
             porVencerMes: porVencerMes,
@@ -461,13 +468,14 @@ window.Mazelab.Modules.FinanceModule = (function () {
         html += '<div class="kpi-grid">';
         html += '<div class="kpi-card">';
         html += '  <div class="kpi-label">Facturado Este Mes</div>';
-        html += '  <div class="kpi-value">' + formatCLP(kpis.facturadoMes) + '</div>';
-        html += '  <div class="kpi-sub">Neto facturado del mes</div>';
+        html += '  <div class="kpi-value">' + formatCLP(kpis.facturadoNetoMes) + '</div>';
+        if (kpis.ncMes > 0) html += '  <div class="kpi-sub" style="color:var(--danger)">NC: -' + formatCLP(kpis.ncMes) + ' (Bruto: ' + formatCLP(kpis.facturadoMes) + ')</div>';
+        else html += '  <div class="kpi-sub">Neto facturado del mes</div>';
         html += '</div>';
         html += '<div class="kpi-card">';
         html += '  <div class="kpi-label">IVA del Mes</div>';
         html += '  <div class="kpi-value">' + formatCLP(kpis.ivaMes) + '</div>';
-        html += '  <div class="kpi-sub">19% del facturado</div>';
+        html += '  <div class="kpi-sub">19% del facturado neto</div>';
         html += '</div>';
         html += '<div class="kpi-card">';
         html += '  <div class="kpi-label">Pagado Este Mes</div>';
