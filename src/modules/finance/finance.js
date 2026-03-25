@@ -438,14 +438,12 @@ window.Mazelab.Modules.FinanceModule = (function () {
         var totalFacturadoPend = 0;
         data.facturadoPendientes.forEach(function (r) { totalFacturadoPend += getPendienteFacturado(r); });
 
-        // Por cobrar: only post-evento + facturado pendiente (pre-evento excluded — hasn't happened yet)
-        var totalPostEventoNeto = 0;
-        data.postEventoSinFactura.forEach(function (r) { totalPostEventoNeto += getMonto(r); });
-        var totalPorCobrar = (totalPostEventoNeto * 1.19) + totalFacturadoPend;
+        // Por cobrar: ALL sin factura (pre + post) + facturado pendiente
+        var totalPorCobrar = (totalSinFacturaNeto * 1.19) + totalFacturadoPend;
 
-        // Lo que es mío: only post-evento (can bill) + facturado pendiente
+        // Lo que es mío: ALL sin factura + facturado pendiente
         var totalSinFacturaMio = 0;
-        data.postEventoSinFactura.forEach(function (r) { totalSinFacturaMio += getPendienteMio(r); });
+        data.sinFactura.forEach(function (r) { totalSinFacturaMio += getPendienteMio(r); });
 
         var totalFacturadoMio = 0;
         data.facturadoPendientes.forEach(function (r) { totalFacturadoMio += getPendienteMio(r); });
@@ -506,12 +504,15 @@ window.Mazelab.Modules.FinanceModule = (function () {
         html += '<div class="kpi-grid-5">';
         var postCount = kpis.data.postEventoSinFactura.length;
         var preCount = kpis.data.preEvento.length;
+        var postMonto = 0, preMonto = 0;
+        kpis.data.postEventoSinFactura.forEach(function (r) { postMonto += getMonto(r); });
+        kpis.data.preEvento.forEach(function (r) { preMonto += getMonto(r); });
         html += '<div class="kpi-card ' + (postCount > 0 ? 'danger' : 'warning') + '" id="kpi-sin-factura" style="cursor:pointer;" title="Click para ver detalle">';
         html += '  <div class="kpi-label">Sin Factura</div>';
         html += '  <div class="kpi-value">' + kpis.data.sinFactura.length + '</div>';
         html += '  <div class="kpi-sub">';
-        if (postCount > 0) html += '<span style="color:var(--danger);font-weight:600;">' + postCount + ' por facturar</span> · ';
-        html += preCount + ' pre-evento';
+        if (postCount > 0) html += '<span style="color:var(--danger);font-weight:600;">' + postCount + ' por facturar (' + formatCLP(postMonto) + ')</span><br>';
+        html += preCount + ' pre-evento (' + formatCLP(preMonto) + ')';
         html += '</div>';
         html += '</div>';
         html += '<div class="kpi-card info">';
