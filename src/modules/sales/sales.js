@@ -893,6 +893,53 @@ window.Mazelab.Modules.SalesModule = (function () {
 
         refreshTable();
 
+        // Check for pending sale from cotizador
+        var pendCot = window.Mazelab._pendingSaleFromCot;
+        if (pendCot) {
+            delete window.Mazelab._pendingSaleFromCot;
+            // Open new sale form pre-filled
+            setTimeout(function () {
+                openModal(null); // open blank form
+                setTimeout(function () {
+                    // Pre-fill fields
+                    var clientSel = document.getElementById('sale-client');
+                    if (clientSel) {
+                        // Try to match client by name
+                        for (var ci = 0; ci < clientSel.options.length; ci++) {
+                            if (clientSel.options[ci].text === pendCot.clientName) {
+                                clientSel.value = clientSel.options[ci].value;
+                                break;
+                            }
+                        }
+                    }
+                    var evName = document.getElementById('sale-event-name');
+                    if (evName) evName.value = pendCot.eventName || '';
+                    var evDate = document.getElementById('sale-event-date');
+                    if (evDate) evDate.value = pendCot.eventDate || '';
+                    var closDate = document.getElementById('sale-closing-date');
+                    if (closDate) closDate.value = pendCot.closingDate || '';
+                    var amtEl = document.getElementById('sale-amount');
+                    if (amtEl) amtEl.value = pendCot.amount || '';
+                    var jorEl = document.getElementById('sale-jornadas');
+                    if (jorEl) jorEl.value = pendCot.jornadas || 1;
+                    var commEl = document.getElementById('sale-comments');
+                    if (commEl) commEl.value = pendCot.comments || '';
+                    // Check service checkboxes
+                    if (pendCot.serviceIds && pendCot.serviceIds.length) {
+                        pendCot.serviceIds.forEach(function (sid) {
+                            var cb = document.querySelector('.sale-service-cb[value="' + sid + '"]');
+                            if (cb) cb.checked = true;
+                        });
+                    }
+                    // Highlight unfilled required fields
+                    ['sale-client', 'sale-staff', 'sale-event-date'].forEach(function (fid) {
+                        var el = document.getElementById(fid);
+                        if (el && !el.value) el.style.borderColor = 'var(--warning)';
+                    });
+                }, 100);
+            }, 200);
+        }
+
         // Search
         const searchInput = document.getElementById('sales-search');
         if (searchInput) {

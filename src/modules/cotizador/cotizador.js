@@ -467,18 +467,32 @@ window.Mazelab.Modules.CotizadorModule = (function () {
             html += '</div>';
         }
 
-        // Check if any item in this bloque has dias > 1
-        var showDiasCol = false;
-        for (var dc = 0; dc < bloque.items.length; dc++) {
-            if ((Number(bloque.items[dc].dias) || 1) > 1) { showDiasCol = true; break; }
+        // Column visibility — auto-detect from data, store on bloque
+        if (bloque.showCant === undefined) bloque.showCant = true;
+        if (bloque.showDias === undefined) {
+            bloque.showDias = false;
+            for (var dc = 0; dc < bloque.items.length; dc++) {
+                if ((Number(bloque.items[dc].dias) || 1) > 1) { bloque.showDias = true; break; }
+            }
         }
+        var showCantCol = bloque.showCant;
+        var showDiasCol = bloque.showDias;
+        var diasLabel = bloque.diasLabel || 'Dias';
+
+        // Column toggle buttons
+        html += '<div style="display:flex;gap:6px;margin-bottom:6px;font-size:11px;">';
+        html += '<span style="color:var(--text-muted);">Columnas:</span>';
+        html += '<button class="btn btn-secondary btn-sm cot-toggle-col" data-bidx="' + bIdx + '" data-col="showCant" style="padding:1px 8px;font-size:10px;' + (showCantCol ? 'border-color:var(--accent-primary);color:var(--accent-primary);' : 'opacity:0.5;') + '">Cant.</button>';
+        html += '<button class="btn btn-secondary btn-sm cot-toggle-col" data-bidx="' + bIdx + '" data-col="showDias" style="padding:1px 8px;font-size:10px;' + (showDiasCol ? 'border-color:var(--accent-primary);color:var(--accent-primary);' : 'opacity:0.5;') + '">' + escapeHtml(diasLabel) + '</button>';
+        if (showDiasCol) html += '<input type="text" class="cot-dias-label" data-bidx="' + bIdx + '" value="' + escapeHtml(diasLabel) + '" style="width:60px;font-size:10px;padding:1px 4px;background:transparent;border:1px dashed var(--border-color);color:var(--text-secondary);border-radius:4px;" title="Editar nombre columna">';
+        html += '</div>';
 
         // Items table
         html += '<table style="width:100%;border-collapse:collapse;">';
         html += '<thead><tr>';
         html += '<th style="text-align:left;padding:0.4rem;color:var(--text-secondary);font-size:0.8rem;border-bottom:1px solid var(--bg-secondary);">Item</th>';
-        html += '<th style="text-align:center;padding:0.4rem;color:var(--text-secondary);font-size:0.8rem;border-bottom:1px solid var(--bg-secondary);width:60px;">Cant.</th>';
-        if (showDiasCol) html += '<th style="text-align:center;padding:0.4rem;color:var(--text-secondary);font-size:0.8rem;border-bottom:1px solid var(--bg-secondary);width:60px;">Dias</th>';
+        if (showCantCol) html += '<th style="text-align:center;padding:0.4rem;color:var(--text-secondary);font-size:0.8rem;border-bottom:1px solid var(--bg-secondary);width:60px;">Cant.</th>';
+        if (showDiasCol) html += '<th style="text-align:center;padding:0.4rem;color:var(--text-secondary);font-size:0.8rem;border-bottom:1px solid var(--bg-secondary);width:60px;">' + escapeHtml(diasLabel) + '</th>';
         html += '<th style="text-align:right;padding:0.4rem;color:var(--text-secondary);font-size:0.8rem;border-bottom:1px solid var(--bg-secondary);width:110px;">Unitario</th>';
         html += '<th style="text-align:right;padding:0.4rem;color:var(--text-secondary);font-size:0.8rem;border-bottom:1px solid var(--bg-secondary);width:110px;">Total</th>';
         html += '<th style="width:40px;border-bottom:1px solid var(--bg-secondary);"></th>';
@@ -497,7 +511,7 @@ window.Mazelab.Modules.CotizadorModule = (function () {
                 html += ' <span style="color:var(--text-muted);font-size:0.65rem;">(' + escapeHtml(item.tipo) + ')</span>';
             }
             html += '</td>';
-            html += '<td style="padding:0.4rem;text-align:center;"><input type="number" class="form-control cot-item-cantidad" data-bidx="' + bIdx + '" data-iidx="' + ii + '" value="' + (item.cantidad || 1) + '" min="0" style="width:65px;text-align:center;' + inputStyle + '"></td>';
+            if (showCantCol) html += '<td style="padding:0.4rem;text-align:center;"><input type="number" class="form-control cot-item-cantidad" data-bidx="' + bIdx + '" data-iidx="' + ii + '" value="' + (item.cantidad || 1) + '" min="0" style="width:65px;text-align:center;' + inputStyle + '"></td>';
             if (showDiasCol) html += '<td style="padding:0.4rem;text-align:center;"><input type="number" class="form-control cot-item-dias" data-bidx="' + bIdx + '" data-iidx="' + ii + '" value="' + itemDias + '" min="1" style="width:65px;text-align:center;' + inputStyle + '"></td>';
             html += '<td style="padding:0.4rem;text-align:right;"><input type="number" class="form-control cot-item-unitario" data-bidx="' + bIdx + '" data-iidx="' + ii + '" value="' + (item.unitario || 0) + '" min="0" style="width:100px;text-align:right;' + inputStyle + '"></td>';
             html += '<td style="padding:0.4rem;text-align:right;color:var(--text-primary);font-weight:600;font-size:0.9rem;" class="cot-item-total">' + formatCLP(itemTotal) + '</td>';
@@ -1001,58 +1015,42 @@ window.Mazelab.Modules.CotizadorModule = (function () {
             var t = calcTotals();
             var serviceIds = [];
             var serviceNames = [];
+            var maxDias = 1;
             for (var i = 0; i < formState.bloques.length; i++) {
-                if (formState.bloques[i].serviceId) serviceIds.push(formState.bloques[i].serviceId);
-                if (formState.bloques[i].serviceName) serviceNames.push(formState.bloques[i].serviceName);
+                var bl = formState.bloques[i];
+                if (bl.serviceId) serviceIds.push(bl.serviceId);
+                if (bl.serviceName) serviceNames.push(bl.serviceName);
+                for (var j = 0; j < bl.items.length; j++) {
+                    var d = Number(bl.items[j].dias) || 1;
+                    if (d > maxDias) maxDias = d;
+                }
             }
 
-            // Build comments from cotización notas + bloques descriptions
-            var cotComments = [];
-            if (savedCot.codigo) cotComments.push('Cotización: ' + savedCot.codigo);
-            if (formState.notas) cotComments.push('Notas: ' + formState.notas);
-            for (var ci = 0; ci < formState.bloques.length; ci++) {
-                var bl = formState.bloques[ci];
-                if (bl.descripcion) cotComments.push(bl.serviceName + ': ' + bl.descripcion);
-            }
+            // Build structured comments
+            var comments = '';
+            comments += '-- Servicios: ' + serviceNames.join('; ') + '\n';
+            comments += '-- Jornadas: ' + maxDias + '\n';
+            if (savedCot.codigo) comments += '-- Cotización: ' + savedCot.codigo + '\n';
+            if (formState.lugar) comments += '-- Lugar: ' + formState.lugar + '\n';
+            if (formState.contactName) comments += '-- Contacto: ' + formState.contactName + (formState.contactTel ? ' (' + formState.contactTel + ')' : '') + '\n';
+            if (formState.notas) comments += '\nNotas:\n' + formState.notas;
 
-            var saleRecord = {
-                id: 'sale-' + Date.now(),
+            // Store pre-fill data for Sales module to pick up
+            window.Mazelab._pendingSaleFromCot = {
+                cotId: savedCot.id,
+                cotCodigo: savedCot.codigo || '',
                 clientName: formState.clientName,
                 eventName: formState.eventName || formState.clientName,
-                eventDate: formState.eventDate || todayStr(),
+                eventDate: formState.eventDate || '',
                 closingDate: todayStr(),
                 serviceIds: serviceIds,
-                serviceNames: serviceNames.join(', '),
                 amount: t.totalNeto,
-                jornadas: 1,
-                status: 'confirmada',
-                boardColumn: 1,
-                comments: cotComments.join('\n'),
-                contactName: formState.contactName || '',
-                contactEmail: formState.contactEmail || '',
-                contactTel: formState.contactTel || '',
-                lugar: formState.lugar || ''
+                jornadas: maxDias,
+                comments: comments
             };
 
-            var DS = window.Mazelab.DataService;
-            DS.create('sales', saleRecord).then(function () {
-                // Update cotizacion with saleId
-                DS.update('cotizaciones', savedCot.id, { saleId: saleRecord.id }).then(function () {
-                    savedCot.saleId = saleRecord.id;
-                    for (var k = 0; k < cotizaciones.length; k++) {
-                        if (cotizaciones[k].id === savedCot.id) {
-                            cotizaciones[k].saleId = saleRecord.id;
-                            cotizaciones[k].estado = 'aprobada';
-                            break;
-                        }
-                    }
-                    alert('Venta creada exitosamente.');
-                    showView('list');
-                });
-            }).catch(function (err) {
-                console.error('Error creating sale:', err);
-                alert('Error al crear la venta.');
-            });
+            // Navigate to Sales module — it will detect _pendingSaleFromCot and open the form
+            window.Mazelab.navigateTo('sales');
         });
     }
 
@@ -1505,6 +1503,17 @@ window.Mazelab.Modules.CotizadorModule = (function () {
                     return;
                 }
 
+                if (target.classList.contains('cot-toggle-col')) {
+                    readFormState();
+                    var togBIdx = parseInt(target.getAttribute('data-bidx'), 10);
+                    var togCol = target.getAttribute('data-col');
+                    if (formState.bloques[togBIdx]) {
+                        formState.bloques[togBIdx][togCol] = !formState.bloques[togBIdx][togCol];
+                    }
+                    showView('form');
+                    return;
+                }
+
                 if (target.classList.contains('cot-btn-add-custom')) {
                     readFormState();
                     var bIdx5 = parseInt(target.getAttribute('data-bidx'), 10);
@@ -1537,6 +1546,11 @@ window.Mazelab.Modules.CotizadorModule = (function () {
                 if (target.classList.contains('cot-bloque-name')) {
                     var nameBIdx = parseInt(target.getAttribute('data-bidx'), 10);
                     if (formState.bloques[nameBIdx]) formState.bloques[nameBIdx].serviceName = target.value;
+                    return;
+                }
+                if (target.classList.contains('cot-dias-label')) {
+                    var dlBIdx = parseInt(target.getAttribute('data-bidx'), 10);
+                    if (formState.bloques[dlBIdx]) formState.bloques[dlBIdx].diasLabel = target.value;
                     return;
                 }
                 if (target.classList.contains('cot-item-cantidad') || target.classList.contains('cot-item-unitario') || target.classList.contains('cot-item-dias') || target.classList.contains('cot-item-label')) {
