@@ -369,6 +369,15 @@ window.Mazelab.Modules.DashboardModule = (function () {
             var mm = String(d.getMonth() + 1).padStart(2, '0');
             if (dashMonth[mm]) dashMonth[mm].push(String(s.sourceId || s.id));
         });
+        // Check for sales with NO date at all
+        var noDate = [];
+        ['863','864','865','866','867','868','869','870','871','872','873','874','875','876','877','878','879','880','881','882','883'].forEach(function (id) {
+            var s = sales.find(function (x) { return String(x.sourceId || x.id) === id; });
+            if (s) noDate.push({ id: id, closing: s.closingDate || '-', event: s.eventDate || s.event_date || '-', amt: Number(s.amount || 0) });
+            else noDate.push({ id: id, closing: 'NOT FOUND', event: 'NOT FOUND', amt: 0 });
+        });
+        console.log('[AUDIT] Ventas 863-883 sin fecha:');
+        console.table(noDate);
         ['01','02','03'].forEach(function (mm) {
             var expected = expectedIds[mm];
             var got = dashMonth[mm];
