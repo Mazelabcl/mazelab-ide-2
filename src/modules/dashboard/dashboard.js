@@ -351,29 +351,51 @@ window.Mazelab.Modules.DashboardModule = (function () {
             if (yoyData[y]) yoyData[y][m] += Number(s.amount || s.monto_venta || 0);
         });
 
-        // Debug: log yearly totals + raw closingDate for Q1
-        console.log('[Dashboard YoY] Ventas por closingDate (fallback eventDate):');
+        // Audit: compare against user's known IDs per month
+        console.log('[Dashboard YoY] Totales:');
         [thisYear, lastYear, twoYearsAgo].forEach(function (y) {
             console.log('  ' + y + ':', months.map(function (m, i) { return m + ': ' + formatCLPShort(yoyData[y][i]); }).join(' | '));
         });
-        var q1 = [];
+        var expectedIds = {
+            '01': ['827','828','829','830','831','832','833','834','835','836','841','883'],
+            '02': ['837','838','839','840','842','843','844','845','846','847','848','849','850','851','852','853','854','855','856','857','858','859','860'],
+            '03': ['861','862','863','864','865','866','867','868','869','870','871','872','873','874','875','876','877','878','879','880','881','882']
+        };
+        var dashMonth = { '01': [], '02': [], '03': [] };
         sales.forEach(function (s) {
             var ed = getSaleDate(s);
             var d = parseFuzzyDate(ed);
-            if (!d) return;
-            if (d.getFullYear() === thisYear && d.getMonth() <= 2) {
-                q1.push({ id: s.sourceId || s.id, monto: Number(s.amount || 0), closingDate: s.closingDate || '', eventDate: s.eventDate || '', usado: ed });
-            }
+            if (!d || d.getFullYear() !== thisYear) return;
+            var mm = String(d.getMonth() + 1).padStart(2, '0');
+            if (dashMonth[mm]) dashMonth[mm].push(String(s.sourceId || s.id));
         });
-        console.table(q1);
+        ['01','02','03'].forEach(function (mm) {
+            var expected = expectedIds[mm];
+            var got = dashMonth[mm];
+            var missing = expected.filter(function (id) { return got.indexOf(id) === -1; });
+            var extra = got.filter(function (id) { return expected.indexOf(id) === -1; });
+            var total = 0;
+            got.forEach(function (id) {
+                var s = sales.find(function (x) { return String(x.sourceId || x.id) === id; });
+                if (s) total += Number(s.amount || 0);
+            });
+            console.log('[AUDIT ' + months[Number(mm) - 1] + ' ' + thisYear + '] Esperados: ' + expected.length + ' | Dashboard: ' + got.length + ' | Total: ' + formatCLPShort(total));
+            if (missing.length) console.log('  FALTAN en dashboard:', missing.join(', '));
+            if (extra.length) console.log('  EXTRA en dashboard:', extra.join(', '));
+            // Show each sale with date used
+            got.forEach(function (id) {
+                var s = sales.find(function (x) { return String(x.sourceId || x.id) === id; });
+                if (s) console.log('    ' + id + ' | ' + (s.clientName || '').substring(0, 15) + ' | $' + (Number(s.amount || 0) / 1000000).toFixed(1) + 'M | closing:' + (s.closingDate || '-') + ' | event:' + (s.eventDate || '-'));
+            });
+        });
         var maxYoY = 1;
         [thisYear, lastYear, twoYearsAgo].forEach(function (y) {
             yoyData[y].forEach(function (v) { if (v > maxYoY) maxYoY = v; });
         });
         var colors = {};
         colors[thisYear] = '#00e676';
-        colors[lastYear] = '#475569';
-        colors[twoYearsAgo] = 'rgba(255,255,255,0.08)';
+        colors[lastYear] = '#fbbf24';
+        colors[twoYearsAgo] = '#334155';
 
         // Store sales by year-month for click detail
         var salesByYM = {};
@@ -398,19 +420,19 @@ window.Mazelab.Modules.DashboardModule = (function () {
             });
             var isCurrentMonth = mi === now.getMonth();
             var monthKey = thisYear + '-' + String(mi + 1).padStart(2, '0');
-            yoyBars += '<div class="yoy-month-col" data-month="' + monthKey + '" style="display:flex;flex-direction:column;align-items:center;flex:1;gap:4px;cursor:pointer;">' +
-                '<div style="font-size:11px;font-weight:600;color:var(--text-primary);">' + formatCLPShort(yoyData[thisYear][mi]) + '</div>' +
-                '<div style="width:100%;height:140px;display:flex;align-items:flex-end;gap:2px;">' + bars + '</div>' +
-                '<span style="font-size:10px;color:' + (isCurrentMonth ? 'var(--accent-primary)' : 'var(--text-secondary)') + ';font-weight:' + (isCurrentMonth ? '700' : '400') + ';">' + months[mi] + '</span>' +
+            yoyBars += '<div class="yoy-month-col" data-month="' + monthKey + '" style="display:flex;flex-direction:column;align-items:center;flex:1;gap:6px;cursor:pointer;">' +
+                '<div style="font-size:13px;font-weight:700;color:var(--text-primary);">' + formatCLPShort(yoyData[thisYear][mi]) + '</div>' +
+                '<div style="width:100%;height:220px;display:flex;align-items:flex-end;gap:3px;">' + bars + '</div>' +
+                '<span style="font-size:12px;color:' + (isCurrentMonth ? 'var(--accent-primary)' : 'var(--text-secondary)') + ';font-weight:' + (isCurrentMonth ? '700' : '400') + ';">' + months[mi] + '</span>' +
             '</div>';
         }
-        var yoyLegend = '<div style="display:flex;gap:16px;justify-content:center;margin-top:8px;font-size:11px;">';
+        var yoyLegend = '<div style="display:flex;gap:20px;justify-content:center;margin-top:12px;font-size:13px;font-weight:600;">';
         [thisYear, lastYear, twoYearsAgo].forEach(function (y) {
             yoyLegend += '<span><span style="display:inline-block;width:12px;height:12px;border-radius:2px;background:' + colors[y] + ';vertical-align:middle;margin-right:4px;"></span>' + y + ' (' + formatCLPShort(yoyData[y].reduce(function (a, b) { return a + b; }, 0)) + ')</span>';
         });
         yoyLegend += '</div>';
         // YoY summary table
-        var yoyTable = '<table style="width:100%;border-collapse:collapse;font-size:12px;margin-top:8px;">';
+        var yoyTable = '<table style="width:100%;border-collapse:collapse;font-size:13px;margin-top:12px;">';
         yoyTable += '<thead><tr><th style="text-align:left;padding:3px 6px;color:var(--text-secondary);font-size:11px;">Año</th>';
         months.forEach(function (m) { yoyTable += '<th style="text-align:right;padding:3px 4px;color:var(--text-secondary);font-size:11px;">' + m + '</th>'; });
         yoyTable += '<th style="text-align:right;padding:3px 6px;color:var(--text-secondary);font-size:11px;font-weight:700;">Total</th></tr></thead><tbody>';
@@ -426,7 +448,7 @@ window.Mazelab.Modules.DashboardModule = (function () {
 
         return '<div class="card" style="margin-bottom:var(--space-md);">' +
             '<div class="card-header"><span class="card-title">Ventas por Mes — Comparativa Anual</span><span style="font-size:11px;color:var(--text-muted);">Click en un mes para ver detalle</span></div>' +
-            '<div style="display:flex;gap:4px;align-items:flex-end;padding:var(--space-md) var(--space-sm);">' + yoyBars + '</div>' +
+            '<div style="display:flex;gap:8px;align-items:flex-end;padding:var(--space-lg) var(--space-sm);">' + yoyBars + '</div>' +
             yoyLegend + yoyTable +
             '<div id="yoy-month-detail" style="display:none;margin-top:12px;max-height:400px;overflow-y:auto;"></div>' +
             '</div>';
