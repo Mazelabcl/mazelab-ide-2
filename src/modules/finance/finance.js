@@ -613,6 +613,9 @@ window.Mazelab.Modules.FinanceModule = (function () {
                     var cobrosArr = Array.isArray(r.cobros) ? r.cobros : [];
                     var cobrarLabel = cobrosArr.length > 0 ? (cobrosArr.length + 1) + '\u00b0 Cobro' : 'Cobrar';
                     html += '<button class="btn-sm btn-icon btn-cobrar" data-id="' + r.id + '" title="Enviar cobro" style="background:linear-gradient(135deg,#e67e22,#f39c12);color:white;border:none;margin-right:4px">' + cobrarLabel + '</button>';
+                }
+                // NC available for any invoiced record (including paid)
+                if (getMontoFacturado(r) > 0 && realStatus !== 'nc' && realStatus !== 'anulada') {
                     html += '<button class="btn-sm btn-icon btn-nc" data-id="' + r.id + '" title="Registrar Nota de Cr\u00e9dito" style="color:var(--text-secondary);margin-right:4px">NC</button>';
                 }
                 html += '<button class="btn-sm btn-icon btn-eliminar" data-id="' + r.id + '" title="Eliminar" style="color:var(--danger,#e74c3c);">Eliminar</button>';

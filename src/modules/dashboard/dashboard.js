@@ -370,6 +370,20 @@ window.Mazelab.Modules.DashboardModule = (function () {
         colors[thisYear] = '#00e676';
         colors[lastYear] = '#475569';
         colors[twoYearsAgo] = 'rgba(255,255,255,0.08)';
+
+        // Store sales by year-month for click detail
+        var salesByYM = {};
+        sales.forEach(function (s) {
+            var ed = getSaleDate(s);
+            if (!ed) return;
+            var d = parseFuzzyDate(ed);
+            if (!d) return;
+            var key = d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0');
+            if (!salesByYM[key]) salesByYM[key] = [];
+            salesByYM[key].push({ id: s.sourceId || s.id, client: s.clientName || '', event: s.eventName || '', amt: Number(s.amount || 0), date: ed });
+        });
+        window._yoySalesByMonth = salesByYM;
+
         var yoyBars = '';
         for (var mi = 0; mi < 12; mi++) {
             var bars = '';
@@ -379,7 +393,8 @@ window.Mazelab.Modules.DashboardModule = (function () {
                 bars += '<div style="flex:1;background:' + colors[y] + ';height:' + Math.max(pct, 2) + '%;border-radius:2px 2px 0 0;" title="' + y + ': ' + formatCLP(val) + '"></div>';
             });
             var isCurrentMonth = mi === now.getMonth();
-            yoyBars += '<div style="display:flex;flex-direction:column;align-items:center;flex:1;gap:4px;">' +
+            var monthKey = thisYear + '-' + String(mi + 1).padStart(2, '0');
+            yoyBars += '<div class="yoy-month-col" data-month="' + monthKey + '" style="display:flex;flex-direction:column;align-items:center;flex:1;gap:4px;cursor:pointer;">' +
                 '<div style="font-size:11px;font-weight:600;color:var(--text-primary);">' + formatCLPShort(yoyData[thisYear][mi]) + '</div>' +
                 '<div style="width:100%;height:140px;display:flex;align-items:flex-end;gap:2px;">' + bars + '</div>' +
                 '<span style="font-size:10px;color:' + (isCurrentMonth ? 'var(--accent-primary)' : 'var(--text-secondary)') + ';font-weight:' + (isCurrentMonth ? '700' : '400') + ';">' + months[mi] + '</span>' +
@@ -406,9 +421,11 @@ window.Mazelab.Modules.DashboardModule = (function () {
         yoyTable += '</tbody></table>';
 
         return '<div class="card" style="margin-bottom:var(--space-md);">' +
-            '<div class="card-header"><span class="card-title">Ventas por Mes — Comparativa Anual</span></div>' +
+            '<div class="card-header"><span class="card-title">Ventas por Mes — Comparativa Anual</span><span style="font-size:11px;color:var(--text-muted);">Click en un mes para ver detalle</span></div>' +
             '<div style="display:flex;gap:4px;align-items:flex-end;padding:var(--space-md) var(--space-sm);">' + yoyBars + '</div>' +
-            yoyLegend + yoyTable + '</div>';
+            yoyLegend + yoyTable +
+            '<div id="yoy-month-detail" style="display:none;margin-top:12px;max-height:400px;overflow-y:auto;"></div>' +
+            '</div>';
     }
 
     // --- Quarterly comparison with top events ---
@@ -1161,6 +1178,29 @@ window.Mazelab.Modules.DashboardModule = (function () {
             if (body) {
                 body.innerHTML = buildDashboard(sales, receivables, payables, services);
                 body.addEventListener('click', function (e) {
+                    // YoY month click → show sales detail
+                    var yoyCol = e.target.closest('.yoy-month-col');
+                    if (yoyCol) {
+                        var mk = yoyCol.dataset.month;
+                        var detailEl = document.getElementById('yoy-month-detail');
+                        if (detailEl && window._yoySalesByMonth) {
+                            if (detailEl.dataset.open === mk) { detailEl.style.display = 'none'; detailEl.dataset.open = ''; return; }
+                            detailEl.dataset.open = mk;
+                            var items = window._yoySalesByMonth[mk] || [];
+                            var total = items.reduce(function (a, b) { return a + b.amt; }, 0);
+                            var h = '<div style="padding:10px;border-top:1px solid var(--border-color);">';
+                            h += '<h4 style="margin:0 0 8px;color:var(--accent-primary);">' + mk + ' — ' + formatCLP(total) + ' (' + items.length + ' ventas)</h4>';
+                            h += '<table style="width:100%;border-collapse:collapse;font-size:12px;">';
+                            h += '<thead><tr><th style="text-align:left;padding:4px;">ID</th><th style="text-align:left;padding:4px;">Cliente</th><th style="text-align:left;padding:4px;">Evento</th><th style="text-align:right;padding:4px;">Monto</th><th style="text-align:left;padding:4px;">Fecha</th></tr></thead><tbody>';
+                            items.sort(function (a, b) { return b.amt - a.amt; });
+                            items.forEach(function (it) {
+                                h += '<tr style="border-bottom:1px solid var(--border-subtle);"><td style="padding:3px 4px;">' + it.id + '</td><td style="padding:3px 4px;">' + escapeHtml(it.client) + '</td><td style="padding:3px 4px;">' + escapeHtml(it.event) + '</td><td style="padding:3px 4px;text-align:right;font-variant-numeric:tabular-nums;font-weight:600;">' + formatCLP(it.amt) + '</td><td style="padding:3px 4px;">' + it.date + '</td></tr>';
+                            });
+                            h += '</tbody></table></div>';
+                            detailEl.innerHTML = h;
+                            detailEl.style.display = 'block';
+                        }
+                    }
                     // IVA detail toggle
                     var ivaBtn = e.target.closest('.dash-iva-toggle');
                     if (ivaBtn) {
