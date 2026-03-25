@@ -286,6 +286,8 @@ window.Mazelab.Modules.FinanceModule = (function () {
         var facturas = [];
         var notasCredito = [];
         var sinFactura = [];
+        var preEvento = [];
+        var postEventoSinFactura = [];
         var facturadoPendientes = [];
         var facturadoEnPlazo = [];
         var facturadoVencido30 = [];
@@ -306,9 +308,14 @@ window.Mazelab.Modules.FinanceModule = (function () {
                 notasCredito.push(r);
             }
 
-            // sinFactura (includes both pre-event and post-event without invoice)
-            if ((realStatus === 'pendiente_factura' || realStatus === 'post_evento_sin_factura') && r.tipoDoc !== 'NC') {
+            // sinFactura — separate pre-event from post-event
+            if (realStatus === 'pendiente_factura' && r.tipoDoc !== 'NC') {
                 sinFactura.push(r);
+                preEvento.push(r);
+            }
+            if (realStatus === 'post_evento_sin_factura' && r.tipoDoc !== 'NC') {
+                sinFactura.push(r);
+                postEventoSinFactura.push(r);
             }
 
             // facturadoPendientes
@@ -355,7 +362,9 @@ window.Mazelab.Modules.FinanceModule = (function () {
             facturadoEnPlazo: facturadoEnPlazo,
             facturadoVencido30: facturadoVencido30,
             facturadoVencido60: facturadoVencido60,
-            facturadoVencido90: facturadoVencido90
+            facturadoVencido90: facturadoVencido90,
+            preEvento: preEvento,
+            postEventoSinFactura: postEventoSinFactura
         };
     }
 
@@ -429,10 +438,14 @@ window.Mazelab.Modules.FinanceModule = (function () {
         var totalFacturadoPend = 0;
         data.facturadoPendientes.forEach(function (r) { totalFacturadoPend += getPendienteFacturado(r); });
 
-        var totalPorCobrar = (totalSinFacturaNeto * 1.19) + totalFacturadoPend;
+        // Por cobrar: only post-evento + facturado pendiente (pre-evento excluded — hasn't happened yet)
+        var totalPostEventoNeto = 0;
+        data.postEventoSinFactura.forEach(function (r) { totalPostEventoNeto += getMonto(r); });
+        var totalPorCobrar = (totalPostEventoNeto * 1.19) + totalFacturadoPend;
 
+        // Lo que es mío: only post-evento (can bill) + facturado pendiente
         var totalSinFacturaMio = 0;
-        data.sinFactura.forEach(function (r) { totalSinFacturaMio += getPendienteMio(r); });
+        data.postEventoSinFactura.forEach(function (r) { totalSinFacturaMio += getPendienteMio(r); });
 
         var totalFacturadoMio = 0;
         data.facturadoPendientes.forEach(function (r) { totalFacturadoMio += getPendienteMio(r); });
@@ -491,10 +504,15 @@ window.Mazelab.Modules.FinanceModule = (function () {
 
         // Row 2 — 5 cards (status)
         html += '<div class="kpi-grid-5">';
-        html += '<div class="kpi-card warning">';
+        var postCount = kpis.data.postEventoSinFactura.length;
+        var preCount = kpis.data.preEvento.length;
+        html += '<div class="kpi-card ' + (postCount > 0 ? 'danger' : 'warning') + '" id="kpi-sin-factura" style="cursor:pointer;" title="Click para ver detalle">';
         html += '  <div class="kpi-label">Sin Factura</div>';
         html += '  <div class="kpi-value">' + kpis.data.sinFactura.length + '</div>';
-        html += '  <div class="kpi-sub">' + formatCLP(kpis.totalSinFacturaNeto) + ' neto</div>';
+        html += '  <div class="kpi-sub">';
+        if (postCount > 0) html += '<span style="color:var(--danger);font-weight:600;">' + postCount + ' por facturar</span> · ';
+        html += preCount + ' pre-evento';
+        html += '</div>';
         html += '</div>';
         html += '<div class="kpi-card info">';
         html += '  <div class="kpi-label">En Plazo</div>';
@@ -618,6 +636,7 @@ window.Mazelab.Modules.FinanceModule = (function () {
                 html += '<td>';
                 if (realStatus === 'pendiente_factura' || realStatus === 'post_evento_sin_factura') {
                     html += '<button class="btn btn-secondary btn-sm btn-facturar" data-id="' + r.id + '" style="margin-right:4px">Facturar</button>';
+                    html += '<button class="btn btn-secondary btn-sm btn-solicitar-oc" data-id="' + r.id + '" style="margin-right:4px;font-size:10px;">Solicitar OC</button>';
                 }
                 // Abono/Pagado Total solo para facturas emitidas
                 if (realStatus !== 'pagada' && realStatus !== 'anulada' && realStatus !== 'nc' && realStatus !== 'pendiente_factura' && realStatus !== 'post_evento_sin_factura') {
@@ -1019,6 +1038,55 @@ window.Mazelab.Modules.FinanceModule = (function () {
                 openFacturarModal(this.dataset.id);
             });
         });
+        document.querySelectorAll('.btn-solicitar-oc').forEach(function (btn) {
+            btn.addEventListener('click', function () {
+                openSolicitarOCModal(this.dataset.id);
+            });
+        });
+
+        // KPI "Sin Factura" click → show popup with post-evento list
+        var kpiSinFactura = document.getElementById('kpi-sin-factura');
+        if (kpiSinFactura) {
+            kpiSinFactura.addEventListener('click', function () {
+                var postEvento = allReceivables.filter(function (r) {
+                    return (r._realStatus || getRealTimeStatus(r)) === 'post_evento_sin_factura';
+                });
+                if (postEvento.length === 0) { alert('No hay eventos post-evento pendientes de factura.'); return; }
+                var modalContainer = document.getElementById('finance-modal-container');
+                if (!modalContainer) return;
+                var rows = postEvento.map(function (r) {
+                    var evDate = getEffectiveEventDate(r);
+                    var diasSinFactura = evDate ? Math.floor((new Date() - parseLocalDate(evDate)) / 86400000) : 0;
+                    var avisos = Array.isArray(r.avisos_factura) ? r.avisos_factura.length : 0;
+                    return '<tr>' +
+                        '<td style="padding:4px 6px;font-size:12px;">' + (r.sourceId || '-') + '</td>' +
+                        '<td style="padding:4px 6px;font-size:12px;">' + escapeHtml(r.clientName || '') + '</td>' +
+                        '<td style="padding:4px 6px;font-size:12px;">' + escapeHtml(r.eventName || '') + '</td>' +
+                        '<td style="padding:4px 6px;font-size:12px;">' + formatCLP(getMonto(r)) + '</td>' +
+                        '<td style="padding:4px 6px;font-size:12px;color:' + (diasSinFactura > 30 ? 'var(--danger)' : 'var(--warning)') + ';font-weight:600;">' + diasSinFactura + 'd</td>' +
+                        '<td style="padding:4px 6px;font-size:12px;">' + (avisos > 0 ? avisos + ' aviso(s)' : '-') + '</td>' +
+                        '<td style="padding:4px 6px;"><button class="btn btn-secondary btn-sm btn-solicitar-oc" data-id="' + r.id + '" style="font-size:10px;">Solicitar OC</button> <button class="btn btn-secondary btn-sm btn-facturar" data-id="' + r.id + '" style="font-size:10px;">Facturar</button></td>' +
+                    '</tr>';
+                }).join('');
+                var html = '<div class="modal-overlay active" id="sin-factura-overlay">' +
+                    '<div class="modal" style="max-width:850px;width:95%">' +
+                    '<div class="modal-header"><h3>Pendientes de Facturar (' + postEvento.length + ')</h3><button class="modal-close" id="sf-close">&times;</button></div>' +
+                    '<div style="overflow-x:auto;"><table class="data-table"><thead><tr><th>ID</th><th>Cliente</th><th>Evento</th><th>Monto</th><th>D\u00edas</th><th>Avisos</th><th>Acciones</th></tr></thead><tbody>' + rows + '</tbody></table></div>' +
+                    '<div class="form-actions" style="margin-top:12px"><button class="btn btn-secondary" id="sf-close-btn">Cerrar</button></div>' +
+                    '</div></div>';
+                modalContainer.innerHTML = html;
+                document.getElementById('sf-close').addEventListener('click', function () { modalContainer.innerHTML = ''; });
+                document.getElementById('sf-close-btn').addEventListener('click', function () { modalContainer.innerHTML = ''; });
+                document.getElementById('sin-factura-overlay').addEventListener('click', function (e) { if (e.target === this) modalContainer.innerHTML = ''; });
+                // Delegate buttons inside modal
+                modalContainer.addEventListener('click', function (e) {
+                    var facBtn = e.target.closest('.btn-facturar');
+                    if (facBtn) { modalContainer.innerHTML = ''; openFacturarModal(facBtn.dataset.id); }
+                    var ocBtn = e.target.closest('.btn-solicitar-oc');
+                    if (ocBtn) { openSolicitarOCModal(ocBtn.dataset.id); }
+                });
+            });
+        }
 
         // Abono buttons
         document.querySelectorAll('.btn-abono').forEach(function (btn) {
@@ -1821,6 +1889,121 @@ window.Mazelab.Modules.FinanceModule = (function () {
 
                 closeModal();
                 await loadAndRender();
+            } catch (err) { alert('Error: ' + err.message); }
+        });
+    }
+
+    // =========================================================================
+    // SOLICITAR OC / FACTURA
+    // =========================================================================
+
+    function openSolicitarOCModal(id) {
+        var rec = allReceivables.find(function (r) { return r.id === id; });
+        if (!rec) return;
+        var modalContainer = document.getElementById('finance-modal-container');
+        if (!modalContainer) return;
+
+        var avisos = Array.isArray(rec.avisos_factura) ? rec.avisos_factura : [];
+        var avisoNum = avisos.length + 1;
+        var monto = getMonto(rec);
+        var evDate = getEffectiveEventDate(rec);
+
+        var historyHTML = '';
+        if (avisos.length > 0) {
+            historyHTML = '<div style="margin-bottom:12px"><p style="font-size:11px;font-weight:600;color:var(--text-secondary);text-transform:uppercase;letter-spacing:.05em;margin-bottom:4px">Avisos enviados</p>';
+            avisos.forEach(function (a) {
+                historyHTML += '<div style="padding:4px 8px;background:var(--bg-tertiary);border-radius:4px;margin-bottom:3px;font-size:12px;"><span style="color:var(--text-secondary)">' + (a.date || '') + '</span> — Aviso #' + (a.num || '') + (a.context ? ' — ' + a.context : '') + '</div>';
+            });
+            historyHTML += '</div>';
+        }
+
+        var templateText = 'Estimado/a,\n\nEn nuestro sistema nos figura como pendiente de facturaci\u00f3n el evento:\n\n' +
+            'Evento: ' + (rec.eventName || '-') + '\n' +
+            'Fecha: ' + (evDate || '-') + '\n' +
+            'Monto neto: ' + formatCLP(monto) + '\n\n' +
+            'Favor cu\u00e9ntanos si nos env\u00edas una OC o datos de facturaci\u00f3n para poder emitir la factura.\n\n' +
+            'Quedo atento, saludos.';
+
+        var html = '<div class="modal-overlay active" id="oc-modal-overlay">';
+        html += '<div class="modal" style="max-width:650px;width:95%">';
+        html += '<div class="modal-header"><h3>' + avisoNum + '\u00b0 Solicitud de OC / Factura</h3><button class="modal-close" id="oc-close-x">&times;</button></div>';
+        html += '<div style="background:var(--bg-tertiary);border-radius:var(--radius-sm);padding:10px 14px;margin-bottom:12px;font-size:13px">';
+        html += '<strong>' + escapeHtml(rec.clientName || '') + '</strong> — ' + escapeHtml(rec.eventName || '') + '<br>Monto: <strong>' + formatCLP(monto) + '</strong>';
+        html += '</div>';
+        html += historyHTML;
+        html += '<div class="form-group" style="margin-bottom:8px"><label style="font-size:13px">Contexto adicional</label>';
+        html += '<input type="text" id="oc-context" class="form-control" placeholder="Ej: Se comprometi\u00f3 a enviar OC hoy..."></div>';
+        html += '<div style="display:flex;gap:8px;margin-bottom:12px">';
+        html += '<button class="btn btn-secondary" id="oc-btn-template">Usar plantilla</button>';
+        html += '<button class="btn btn-primary" id="oc-btn-ai">Generar con IA</button>';
+        html += '</div>';
+        html += '<div id="oc-email-area" style="display:none">';
+        html += '<textarea id="oc-email-text" class="form-control" rows="10" style="font-family:monospace;font-size:12px;margin-bottom:8px"></textarea>';
+        html += '<div style="display:flex;gap:8px">';
+        html += '<button class="btn btn-secondary" id="oc-copy">Copiar</button>';
+        html += '<button class="btn btn-primary" id="oc-save">Marcar como enviado</button>';
+        html += '</div></div>';
+        html += '<div class="form-actions" style="margin-top:12px"><button class="btn btn-secondary" id="oc-cancel">Cerrar</button></div>';
+        html += '</div></div>';
+
+        modalContainer.innerHTML = html;
+
+        function closeModal() { modalContainer.innerHTML = ''; }
+        document.getElementById('oc-close-x').addEventListener('click', closeModal);
+        document.getElementById('oc-cancel').addEventListener('click', closeModal);
+        document.getElementById('oc-modal-overlay').addEventListener('click', function (e) { if (e.target === this) closeModal(); });
+
+        document.getElementById('oc-btn-template').addEventListener('click', function () {
+            document.getElementById('oc-email-text').value = templateText;
+            document.getElementById('oc-email-area').style.display = 'block';
+        });
+
+        document.getElementById('oc-btn-ai').addEventListener('click', async function () {
+            var ctx = (document.getElementById('oc-context').value || '').trim();
+            var AI = window.Mazelab && window.Mazelab.AIService;
+            if (!AI || !AI.getConfig().apiKey) { alert('API Key no configurada.'); return; }
+            this.disabled = true;
+            this.textContent = 'Generando...';
+            try {
+                var histCtx = avisos.map(function (a) { return a.date + ': Aviso #' + a.num + (a.context ? ' (' + a.context + ')' : ''); }).join('\n');
+                var prompt = 'Genera un mensaje profesional y cordial en español para solicitar una orden de compra o datos de facturación al cliente.\n' +
+                    'Cliente: ' + (rec.clientName || '') + '\nEvento: ' + (rec.eventName || '') + '\nMonto neto: ' + formatCLP(monto) + '\nFecha evento: ' + (evDate || '') + '\n' +
+                    'N\u00famero de aviso: ' + avisoNum + '\n' +
+                    (histCtx ? 'Historial de avisos previos:\n' + histCtx + '\n' : '') +
+                    (ctx ? 'Contexto adicional: ' + ctx + '\n' : '') +
+                    'Genera texto plano sin markdown. Breve, directo, profesional.';
+                var text = await AI.sendMessage(prompt, 'Solicita OC/factura al cliente.');
+                document.getElementById('oc-email-text').value = text;
+                document.getElementById('oc-email-area').style.display = 'block';
+            } catch (err) {
+                alert('Error: ' + err.message);
+                document.getElementById('oc-email-text').value = templateText;
+                document.getElementById('oc-email-area').style.display = 'block';
+            } finally {
+                this.disabled = false;
+                this.textContent = 'Generar con IA';
+            }
+        });
+
+        document.getElementById('oc-copy').addEventListener('click', function () {
+            var t = document.getElementById('oc-email-text').value;
+            if (navigator.clipboard) navigator.clipboard.writeText(t).then(function () {
+                document.getElementById('oc-copy').textContent = 'Copiado!';
+                setTimeout(function () { document.getElementById('oc-copy').textContent = 'Copiar'; }, 2000);
+            });
+        });
+
+        document.getElementById('oc-save').addEventListener('click', async function () {
+            var ctx = (document.getElementById('oc-context').value || '').trim();
+            var today = new Date().toISOString().split('T')[0];
+            var newAviso = { date: today, num: avisoNum, context: ctx };
+            var updated = avisos.concat([newAviso]);
+            try {
+                await window.Mazelab.DataService.update('receivables', rec.id, { avisos_factura: updated });
+                var idx = allReceivables.findIndex(function (r2) { return r2.id === rec.id; });
+                if (idx !== -1) allReceivables[idx].avisos_factura = updated;
+                closeModal();
+                refreshTable();
             } catch (err) { alert('Error: ' + err.message); }
         });
     }
