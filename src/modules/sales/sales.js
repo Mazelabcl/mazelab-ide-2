@@ -750,8 +750,7 @@ window.Mazelab.Modules.SalesModule = (function () {
                     amountPaid: 0,
                     status: 'sin_factura',
                     saleId: saleId,
-                    sourceType: 'auto',
-                    staffName: data.staffId ? (staff.find(function(st){ return st.id === data.staffId; }) || {}).name || '' : ''
+                    sourceType: 'auto'
                 });
 
                 // Auto-generate CXP draft entries from service cost templates
