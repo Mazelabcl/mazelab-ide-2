@@ -479,19 +479,22 @@ window.Mazelab.Modules.CotizadorModule = (function () {
         var showDiasCol = bloque.showDias;
         var diasLabel = bloque.diasLabel || 'Dias';
 
+        var cantLabel = bloque.cantLabel || 'Cant.';
+
         // Column toggle buttons
-        html += '<div style="display:flex;gap:6px;margin-bottom:6px;font-size:11px;">';
+        html += '<div style="display:flex;gap:6px;margin-bottom:6px;font-size:11px;align-items:center;">';
         html += '<span style="color:var(--text-muted);">Columnas:</span>';
-        html += '<button class="btn btn-secondary btn-sm cot-toggle-col" data-bidx="' + bIdx + '" data-col="showCant" style="padding:1px 8px;font-size:10px;' + (showCantCol ? 'border-color:var(--accent-primary);color:var(--accent-primary);' : 'opacity:0.5;') + '">Cant.</button>';
+        html += '<button class="btn btn-secondary btn-sm cot-toggle-col" data-bidx="' + bIdx + '" data-col="showCant" style="padding:1px 8px;font-size:10px;' + (showCantCol ? 'border-color:var(--accent-primary);color:var(--accent-primary);' : 'opacity:0.5;') + '">' + escapeHtml(cantLabel) + '</button>';
+        if (showCantCol) html += '<input type="text" class="cot-cant-label" data-bidx="' + bIdx + '" value="' + escapeHtml(cantLabel) + '" style="width:55px;font-size:10px;padding:1px 4px;background:transparent;border:1px dashed var(--border-color);color:var(--text-secondary);border-radius:4px;" title="Editar nombre">';
         html += '<button class="btn btn-secondary btn-sm cot-toggle-col" data-bidx="' + bIdx + '" data-col="showDias" style="padding:1px 8px;font-size:10px;' + (showDiasCol ? 'border-color:var(--accent-primary);color:var(--accent-primary);' : 'opacity:0.5;') + '">' + escapeHtml(diasLabel) + '</button>';
-        if (showDiasCol) html += '<input type="text" class="cot-dias-label" data-bidx="' + bIdx + '" value="' + escapeHtml(diasLabel) + '" style="width:60px;font-size:10px;padding:1px 4px;background:transparent;border:1px dashed var(--border-color);color:var(--text-secondary);border-radius:4px;" title="Editar nombre columna">';
+        if (showDiasCol) html += '<input type="text" class="cot-dias-label" data-bidx="' + bIdx + '" value="' + escapeHtml(diasLabel) + '" style="width:55px;font-size:10px;padding:1px 4px;background:transparent;border:1px dashed var(--border-color);color:var(--text-secondary);border-radius:4px;" title="Editar nombre">';
         html += '</div>';
 
         // Items table
         html += '<table style="width:100%;border-collapse:collapse;">';
         html += '<thead><tr>';
         html += '<th style="text-align:left;padding:0.4rem;color:var(--text-secondary);font-size:0.8rem;border-bottom:1px solid var(--bg-secondary);">Item</th>';
-        if (showCantCol) html += '<th style="text-align:center;padding:0.4rem;color:var(--text-secondary);font-size:0.8rem;border-bottom:1px solid var(--bg-secondary);width:60px;">Cant.</th>';
+        if (showCantCol) html += '<th style="text-align:center;padding:0.4rem;color:var(--text-secondary);font-size:0.8rem;border-bottom:1px solid var(--bg-secondary);width:60px;">' + escapeHtml(cantLabel) + '</th>';
         if (showDiasCol) html += '<th style="text-align:center;padding:0.4rem;color:var(--text-secondary);font-size:0.8rem;border-bottom:1px solid var(--bg-secondary);width:60px;">' + escapeHtml(diasLabel) + '</th>';
         html += '<th style="text-align:right;padding:0.4rem;color:var(--text-secondary);font-size:0.8rem;border-bottom:1px solid var(--bg-secondary);width:110px;">Unitario</th>';
         html += '<th style="text-align:right;padding:0.4rem;color:var(--text-secondary);font-size:0.8rem;border-bottom:1px solid var(--bg-secondary);width:110px;">Total</th>';
@@ -685,8 +688,10 @@ window.Mazelab.Modules.CotizadorModule = (function () {
                     html += '<tr style="border-bottom:1px solid #e5e7eb;">';
                     html += '<td style="padding:0.5rem 0.5rem 0.5rem 0;color:#333;">';
                     html += '<strong>' + escapeHtml(item.label) + '</strong>';
-                    if (item.cantidad > 1) html += ' <span style="color:#666;">x' + item.cantidad + '</span>';
-                    if (itemDias2 > 1) html += ' <span style="color:#666;">x' + itemDias2 + ' dias</span>';
+                    var previewParts = [];
+                    if (item.cantidad > 1) previewParts.push(item.cantidad + ' unid.');
+                    if (itemDias2 > 1) previewParts.push(itemDias2 + ' ' + (bloque.diasLabel || 'dias'));
+                    if (previewParts.length) html += ' <span style="color:#666;">(' + previewParts.join(' x ') + ')</span>';
                     if (item.descripcion) html += '<br><span style="font-size:0.8rem;color:#888;font-style:italic;white-space:pre-line;">' + escapeHtml(item.descripcion) + '</span>';
                     html += '</td>';
                     html += '<td class="cot-price" style="padding:0.5rem 0;text-align:right;color:#333;font-weight:600;white-space:nowrap;">' + formatCLP(rowTotal) + '</td>';
@@ -1551,6 +1556,11 @@ window.Mazelab.Modules.CotizadorModule = (function () {
                 if (target.classList.contains('cot-dias-label')) {
                     var dlBIdx = parseInt(target.getAttribute('data-bidx'), 10);
                     if (formState.bloques[dlBIdx]) formState.bloques[dlBIdx].diasLabel = target.value;
+                    return;
+                }
+                if (target.classList.contains('cot-cant-label')) {
+                    var clBIdx = parseInt(target.getAttribute('data-bidx'), 10);
+                    if (formState.bloques[clBIdx]) formState.bloques[clBIdx].cantLabel = target.value;
                     return;
                 }
                 if (target.classList.contains('cot-item-cantidad') || target.classList.contains('cot-item-unitario') || target.classList.contains('cot-item-dias') || target.classList.contains('cot-item-label')) {

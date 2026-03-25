@@ -722,11 +722,19 @@ window.Mazelab.Modules.SalesModule = (function () {
                 }
             } else {
                 // Asignar ID numérico auto-incremental (max existente + 1)
+                // Also check receivables and payables to avoid ID collision
                 var maxId = 0;
                 sales.forEach(function (s) {
                     var numId = parseInt(s.sourceId || s.id, 10);
                     if (!isNaN(numId) && numId > maxId) maxId = numId;
                 });
+                try {
+                    var allRec = await DS.getAll('receivables') || [];
+                    allRec.forEach(function (r) {
+                        var numId = parseInt(r.sourceId, 10);
+                        if (!isNaN(numId) && numId > maxId) maxId = numId;
+                    });
+                } catch (e) {}
                 var nextId = String(maxId + 1);
 
                 // Capture the created sale so we can link CXC and CXP to it
