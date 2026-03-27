@@ -167,6 +167,20 @@ window.Mazelab.Modules = window.Mazelab.Modules || {};
     window.Mazelab.initApp = initApp;
 
     // --- Entry point ---
+    // Protect modals: prevent close when mousedown starts inside .modal
+    // (user drags/selects text and releases outside the modal box)
+    var _modalMouseDownInside = false;
+    document.addEventListener('mousedown', function (e) {
+        _modalMouseDownInside = !!e.target.closest('.modal');
+    }, true);
+    document.addEventListener('click', function (e) {
+        if (_modalMouseDownInside && e.target.classList &&
+            (e.target.classList.contains('modal-overlay') || e.target.id && e.target.id.indexOf('overlay') !== -1)) {
+            e.stopImmediatePropagation();
+        }
+        _modalMouseDownInside = false;
+    }, true);
+
     document.addEventListener('DOMContentLoaded', async () => {
         var Auth = window.Mazelab.Auth;
 

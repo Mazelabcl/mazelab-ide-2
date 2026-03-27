@@ -232,10 +232,8 @@ window.Mazelab.Modules.SalesModule = (function () {
 
                     <div class="form-row">
                         <div class="form-group">
-                            <label for="sale-client">Cliente</label>
-                            <select id="sale-client" class="form-control" required>
-                                <option value="">Seleccionar cliente...</option>
-                            </select>
+                            <label for="sale-clientName">Cliente</label>
+                            <input type="text" id="sale-clientName" class="form-control" placeholder="Escribir nombre del cliente..." required autocomplete="off" />
                         </div>
                         <div class="form-group">
                             <label for="sale-staff">Vendedor</label>
@@ -310,6 +308,62 @@ window.Mazelab.Modules.SalesModule = (function () {
                         </div>
                     </div>
 
+                    <!-- Traspaso accordion -->
+                    <div class="accordion-item" style="margin-top:16px">
+                        <div class="accordion-header" id="traspaso-toggle" style="cursor:pointer;padding:10px 12px;background:rgba(255,255,255,0.05);border-radius:8px;display:flex;justify-content:space-between;align-items:center">
+                            <span style="font-weight:600;font-size:13px;color:var(--text-secondary)">Info del Traspaso (opcional)</span>
+                            <span id="traspaso-arrow" style="font-size:11px;color:var(--text-muted);transition:transform .2s;display:inline-block">&#9660;</span>
+                        </div>
+                        <div id="traspaso-fields" style="display:none;padding:12px 0 0">
+                            <div class="form-row">
+                                <div class="form-group">
+                                    <label for="sale-traspaso-contactoNombre">Contacto en locaci&oacute;n</label>
+                                    <input type="text" id="sale-traspaso-contactoNombre" class="form-control" placeholder="Nombre del contacto" />
+                                </div>
+                                <div class="form-group">
+                                    <label for="sale-traspaso-contactoTel">Tel&eacute;fono</label>
+                                    <input type="text" id="sale-traspaso-contactoTel" class="form-control" placeholder="Tel&eacute;fono del contacto" />
+                                </div>
+                                <div class="form-group">
+                                    <label for="sale-traspaso-contactoEmail">Email</label>
+                                    <input type="text" id="sale-traspaso-contactoEmail" class="form-control" placeholder="Email del contacto" />
+                                </div>
+                            </div>
+                            <div class="form-group">
+                                <label for="sale-traspaso-lugarEvento">Lugar del evento</label>
+                                <input type="text" id="sale-traspaso-lugarEvento" class="form-control" placeholder="Direcci&oacute;n o lugar del evento" />
+                            </div>
+                            <div class="form-row">
+                                <div class="form-group">
+                                    <label for="sale-traspaso-horaMontaje">Hora montaje</label>
+                                    <input type="time" id="sale-traspaso-horaMontaje" class="form-control" />
+                                </div>
+                                <div class="form-group">
+                                    <label for="sale-traspaso-horaInicio">Hora inicio</label>
+                                    <input type="time" id="sale-traspaso-horaInicio" class="form-control" />
+                                </div>
+                                <div class="form-group">
+                                    <label for="sale-traspaso-horaTermino">Hora t&eacute;rmino</label>
+                                    <input type="time" id="sale-traspaso-horaTermino" class="form-control" />
+                                </div>
+                            </div>
+                            <div class="form-row">
+                                <div class="form-group">
+                                    <label for="sale-traspaso-pax">PAX (cantidad personas)</label>
+                                    <input type="number" id="sale-traspaso-pax" class="form-control" min="0" step="1" placeholder="0" />
+                                </div>
+                                <div class="form-group">
+                                    <label for="sale-traspaso-vestimenta">Vestimenta</label>
+                                    <input type="text" id="sale-traspaso-vestimenta" class="form-control" placeholder="C&oacute;digo de vestimenta" />
+                                </div>
+                            </div>
+                            <div class="form-group">
+                                <label for="sale-traspaso-notaVendedor">Nota para operaciones</label>
+                                <textarea id="sale-traspaso-notaVendedor" class="form-control" rows="3" placeholder="Indicaciones para el equipo de operaciones..."></textarea>
+                            </div>
+                        </div>
+                    </div>
+
                     <div class="form-actions">
                         <button type="button" class="btn-secondary" id="sale-cancel-btn">Cancelar</button>
                         <button type="submit" class="btn-primary" id="sale-save-btn">Guardar</button>
@@ -320,14 +374,9 @@ window.Mazelab.Modules.SalesModule = (function () {
     }
 
     function populateDropdowns() {
-        // Clients dropdown
-        const clientSelect = document.getElementById('sale-client');
-        if (clientSelect) {
-            clientSelect.innerHTML = '<option value="">Seleccionar cliente...</option>' +
-                clients.slice().sort((a, b) => ((a.name || a.nombre || '')).localeCompare(b.name || b.nombre || '')).map(c => {
-                    const name = c.name || c.nombre || '';
-                    return `<option value="${c.id}">${name}</option>`;
-                }).join('');
+        // Client autocomplete (datalist-based)
+        if (window.Mazelab.Autocomplete) {
+            window.Mazelab.Autocomplete.attachClientAutocomplete('sale-clientName', null, null);
         }
 
         // Staff dropdown
@@ -513,15 +562,14 @@ window.Mazelab.Modules.SalesModule = (function () {
             title.textContent = 'Editar Venta';
             document.getElementById('sale-id').value = sale.id;
 
-            // Client — prefer clientId; fallback to name-match for imported records
-            var clientSelEl = document.getElementById('sale-client');
-            if (sale.clientId) {
-                clientSelEl.value = sale.clientId;
-            } else if (sale.clientName) {
-                var matchedClient = clients.find(function(c) { return (c.name || c.nombre || '') === sale.clientName; });
-                clientSelEl.value = matchedClient ? matchedClient.id : '';
+            // Client — fill text input with clientName
+            var clientInput = document.getElementById('sale-clientName');
+            if (sale.clientName) {
+                clientInput.value = sale.clientName;
+            } else if (sale.clientId) {
+                clientInput.value = getClientName(sale.clientId);
             } else {
-                clientSelEl.value = '';
+                clientInput.value = '';
             }
 
             document.getElementById('sale-event-name').value = sale.eventName || '';
@@ -570,12 +618,36 @@ window.Mazelab.Modules.SalesModule = (function () {
             } else {
                 checkboxes.forEach(cb => { cb.checked = false; });
             }
+
+            // Populate traspaso fields
+            var traspasoFields = ['contactoNombre','contactoTel','contactoEmail','lugarEvento','horaMontaje','horaInicio','horaTermino','pax','vestimenta','notaVendedor'];
+            var hasAnyTraspaso = false;
+            traspasoFields.forEach(function(f) {
+                var el = document.getElementById('sale-traspaso-' + f);
+                var val = sale['traspaso_' + f];
+                if (el) el.value = (val != null && val !== '') ? val : '';
+                if (val != null && val !== '' && val !== 0) hasAnyTraspaso = true;
+            });
+            var traspasoFieldsDiv = document.getElementById('traspaso-fields');
+            var traspasoArrow = document.getElementById('traspaso-arrow');
+            if (hasAnyTraspaso) {
+                if (traspasoFieldsDiv) traspasoFieldsDiv.style.display = '';
+                if (traspasoArrow) traspasoArrow.style.transform = 'rotate(180deg)';
+            } else {
+                if (traspasoFieldsDiv) traspasoFieldsDiv.style.display = 'none';
+                if (traspasoArrow) traspasoArrow.style.transform = '';
+            }
         } else {
             editingId = null;
             title.textContent = 'Nueva Venta';
             form.reset();
             document.getElementById('sale-id').value = '';
             document.getElementById('sale-refund-group').style.display = 'none';
+            // Collapse traspaso section for new sales
+            var traspasoFieldsDiv = document.getElementById('traspaso-fields');
+            var traspasoArrow = document.getElementById('traspaso-arrow');
+            if (traspasoFieldsDiv) traspasoFieldsDiv.style.display = 'none';
+            if (traspasoArrow) traspasoArrow.style.transform = '';
         }
 
         overlay.classList.add('active');
@@ -600,7 +672,7 @@ window.Mazelab.Modules.SalesModule = (function () {
                 document.querySelectorAll('#sale-services-accordion .accordion-item').forEach(function (acc) {
                     var content = acc.querySelector('.accordion-content');
                     if (!content) return;
-                    var visible = content.querySelectorAll('.checkbox-label[style=""], .checkbox-label:not([style])');
+                    var visible = Array.from(content.querySelectorAll('.checkbox-label')).filter(function (el) { return el.style.display !== 'none'; });
                     if (q) {
                         content.style.display = visible.length > 0 ? 'grid' : 'none';
                         acc.style.display = visible.length > 0 ? '' : 'none';
@@ -634,12 +706,13 @@ window.Mazelab.Modules.SalesModule = (function () {
             selectedServices.push(cb.value);
         });
 
-        const clientId = document.getElementById('sale-client').value;
-        const clientName = getClientName(clientId);
+        const clientNameVal = (document.getElementById('sale-clientName').value || '').trim();
+        const matchedClient = clients.find(function(c) { return (c.name || c.nombre || '') === clientNameVal; });
+        const clientId = matchedClient ? matchedClient.id : '';
 
         return {
             clientId: clientId,
-            clientName: clientName,
+            clientName: clientNameVal,
             eventName: document.getElementById('sale-event-name').value,
             eventDate: document.getElementById('sale-event-date').value,
             closingDate: document.getElementById('sale-closing-date').value || new Date().toISOString().split('T')[0],
@@ -650,7 +723,17 @@ window.Mazelab.Modules.SalesModule = (function () {
             status: document.getElementById('sale-status').value || 'pendiente',
             comments: document.getElementById('sale-comments').value,
             hasIssue: document.getElementById('sale-has-issue').checked,
-            refundAmount: document.getElementById('sale-refund-amount').value ? Number(document.getElementById('sale-refund-amount').value) : 0
+            refundAmount: document.getElementById('sale-refund-amount').value ? Number(document.getElementById('sale-refund-amount').value) : 0,
+            traspaso_contactoNombre: (document.getElementById('sale-traspaso-contactoNombre').value || '').trim(),
+            traspaso_contactoTel: (document.getElementById('sale-traspaso-contactoTel').value || '').trim(),
+            traspaso_contactoEmail: (document.getElementById('sale-traspaso-contactoEmail').value || '').trim(),
+            traspaso_lugarEvento: (document.getElementById('sale-traspaso-lugarEvento').value || '').trim(),
+            traspaso_horaMontaje: document.getElementById('sale-traspaso-horaMontaje').value || '',
+            traspaso_horaInicio: document.getElementById('sale-traspaso-horaInicio').value || '',
+            traspaso_horaTermino: document.getElementById('sale-traspaso-horaTermino').value || '',
+            traspaso_pax: document.getElementById('sale-traspaso-pax').value ? Number(document.getElementById('sale-traspaso-pax').value) : null,
+            traspaso_vestimenta: (document.getElementById('sale-traspaso-vestimenta').value || '').trim(),
+            traspaso_notaVendedor: (document.getElementById('sale-traspaso-notaVendedor').value || '').trim()
         };
     }
 
@@ -994,6 +1077,20 @@ window.Mazelab.Modules.SalesModule = (function () {
             overlay.addEventListener('click', function (e) {
                 if (e.target === overlay) {
                     closeModal();
+                }
+            });
+        }
+
+        // Traspaso accordion toggle
+        var traspasoToggle = document.getElementById('traspaso-toggle');
+        if (traspasoToggle) {
+            traspasoToggle.addEventListener('click', function () {
+                var fields = document.getElementById('traspaso-fields');
+                var arrow = document.getElementById('traspaso-arrow');
+                if (fields) {
+                    var isHidden = fields.style.display === 'none' || fields.style.display === '';
+                    fields.style.display = isHidden ? 'block' : 'none';
+                    if (arrow) arrow.style.transform = isHidden ? 'rotate(180deg)' : '';
                 }
             });
         }

@@ -651,6 +651,10 @@ window.Mazelab.Modules.FinanceModule = (function () {
                 if (getMontoFacturado(r) > 0 && realStatus !== 'nc' && realStatus !== 'anulada') {
                     html += '<button class="btn-sm btn-icon btn-nc" data-id="' + r.id + '" title="Registrar Nota de Cr\u00e9dito" style="color:var(--text-secondary);margin-right:4px">NC</button>';
                 }
+                // Mail facturacion button — only for invoiced records
+                if (r.invoiceNumber) {
+                    html += '<button class="btn-sm btn-icon btn-mail-factura" data-id="' + r.id + '" title="Mail facturaci\u00f3n" style="color:var(--accent-primary);margin-right:4px">&#9993; Mail</button>';
+                }
                 html += '<button class="btn-sm btn-icon btn-eliminar" data-id="' + r.id + '" title="Eliminar" style="color:var(--danger,#e74c3c);">Eliminar</button>';
                 html += '</td></tr>';
             });
@@ -707,6 +711,10 @@ window.Mazelab.Modules.FinanceModule = (function () {
                     var cobrosArr2 = Array.isArray(r.cobros) ? r.cobros : [];
                     var cobrarLabel2 = cobrosArr2.length > 0 ? (cobrosArr2.length + 1) + '\u00b0 Cobro' : 'Cobrar';
                     row += '<button class="btn-sm btn-icon btn-cobrar" data-id="' + r.id + '" style="background:linear-gradient(135deg,#e67e22,#f39c12);color:white;border:none;margin-right:4px">' + cobrarLabel2 + '</button>';
+                }
+                // Mail facturacion button — only for invoiced records
+                if (r.invoiceNumber) {
+                    row += '<button class="btn-sm btn-icon btn-mail-factura" data-id="' + r.id + '" title="Mail facturaci\u00f3n" style="color:var(--accent-primary);margin-right:4px">&#9993; Mail</button>';
                 }
                 row += '<button class="btn-sm btn-icon btn-eliminar" data-id="' + r.id + '" style="color:var(--danger)">Eliminar</button>';
                 row += '</td></tr>';
@@ -1112,6 +1120,13 @@ window.Mazelab.Modules.FinanceModule = (function () {
             });
         });
 
+        // Mail facturacion buttons
+        document.querySelectorAll('.btn-mail-factura').forEach(function (btn) {
+            btn.addEventListener('click', function () {
+                openMailFacturaModal(this.dataset.id);
+            });
+        });
+
         // NC buttons
         document.querySelectorAll('.btn-nc').forEach(function (btn) {
             btn.addEventListener('click', function () {
@@ -1125,6 +1140,129 @@ window.Mazelab.Modules.FinanceModule = (function () {
                 var id = this.dataset.id;
                 deleteReceivable(id);
             });
+        });
+    }
+
+    // =========================================================================
+    // MAIL FACTURACION — enviar factura al cliente
+    // =========================================================================
+
+    function openMailFacturaModal(id) {
+        var rec = allReceivables.find(function (r) { return r.id === id; });
+        if (!rec) return;
+        var modalContainer = document.getElementById('finance-modal-container');
+        if (!modalContainer) return;
+
+        var companyInfo = getCompanyInfo();
+        var montoNeto = getMontoFacturado(rec);
+        var iva = Math.round(montoNeto * 0.19);
+        var total = montoNeto + iva;
+        var eventDateStr = formatDate(getEffectiveEventDate(rec));
+        var invoiceNum = rec.invoiceNumber || '';
+        var eventName = rec.eventName || '';
+        var clientName = rec.clientName || '';
+        var clientEmail = rec.clientEmail || rec.contactEmail || '';
+        var subject = 'Factura N\u00b0 ' + invoiceNum + ' - ' + eventName;
+
+        // Build bank info section
+        var bankText = '';
+        if (companyInfo && (companyInfo.banco || companyInfo.numeroCuenta || companyInfo.bankName || companyInfo.bankAccount)) {
+            bankText = '\nDatos de transferencia:\n';
+            if (companyInfo.nombre) bankText += '  Titular:        ' + companyInfo.nombre + '\n';
+            if (companyInfo.rut || companyInfo.bankRut) bankText += '  RUT:            ' + (companyInfo.rut || companyInfo.bankRut) + '\n';
+            if (companyInfo.banco || companyInfo.bankName) bankText += '  Banco:          ' + (companyInfo.banco || companyInfo.bankName) + '\n';
+            if (companyInfo.tipoCuenta) bankText += '  Tipo de Cuenta: ' + companyInfo.tipoCuenta + '\n';
+            if (companyInfo.numeroCuenta || companyInfo.bankAccount) bankText += '  N\u00famero Cuenta:  ' + (companyInfo.numeroCuenta || companyInfo.bankAccount) + '\n';
+            if (companyInfo.email) bankText += '  Email:          ' + companyInfo.email + '\n';
+        }
+
+        var emailBody = 'Estimado/a,\n\n' +
+            'Se adjunta factura N\u00b0 ' + invoiceNum + ' por servicios realizados el d\u00eda ' + eventDateStr + ' para el evento ' + eventName + '.\n\n' +
+            'Monto neto: ' + formatCLP(montoNeto) + '\n' +
+            'IVA (19%): ' + formatCLP(iva) + '\n' +
+            'Total: ' + formatCLP(total) + '\n' +
+            bankText +
+            '\nQuedamos atentos a la confirmaci\u00f3n del pago.\n\n' +
+            'Saludos cordiales,\n' +
+            (companyInfo && companyInfo.nombre ? companyInfo.nombre : 'Mazelab Producciones');
+
+        var html = '<div class="modal-overlay active" id="mail-factura-overlay">';
+        html += '<div class="modal" style="max-width:640px;width:95%">';
+        html += '  <div class="modal-header">';
+        html += '    <h3>Mail Facturaci\u00f3n</h3>';
+        html += '    <button class="modal-close" id="mail-factura-close-x">&times;</button>';
+        html += '  </div>';
+
+        // Summary
+        html += '  <div style="background:var(--bg-tertiary);border-radius:var(--radius-sm);padding:10px 14px;margin-bottom:12px;font-size:13px">';
+        html += '    <strong>' + escapeHtml(clientName || 'Sin cliente') + '</strong>';
+        html += '    &nbsp;&middot;&nbsp;' + escapeHtml(eventName || 'Sin evento');
+        html += '    &nbsp;&middot;&nbsp;Factura: <strong>' + escapeHtml(invoiceNum) + '</strong>';
+        html += '    <br>Neto: ' + formatCLP(montoNeto) + ' &middot; IVA: ' + formatCLP(iva) + ' &middot; <strong>Total: ' + formatCLP(total) + '</strong>';
+        html += '  </div>';
+
+        // Client email
+        html += '  <div class="form-group" style="margin-bottom:8px">';
+        html += '    <label style="font-size:13px">Email del cliente</label>';
+        html += '    <input type="email" id="mail-factura-email" class="form-control" value="' + escapeHtml(clientEmail) + '" placeholder="correo@cliente.cl">';
+        html += '  </div>';
+
+        // Subject
+        html += '  <div class="form-group" style="margin-bottom:8px">';
+        html += '    <label style="font-size:13px">Asunto</label>';
+        html += '    <input type="text" id="mail-factura-subject" class="form-control" value="' + escapeHtml(subject) + '">';
+        html += '  </div>';
+
+        // Email body textarea
+        html += '  <div class="form-group" style="margin-bottom:12px">';
+        html += '    <label style="font-size:13px">Mensaje <span style="font-weight:400;color:var(--text-secondary)">(editable)</span></label>';
+        html += '    <textarea id="mail-factura-body" class="form-control" rows="12" style="font-family:monospace;font-size:12px;margin-top:4px"></textarea>';
+        html += '  </div>';
+
+        // Action buttons
+        html += '  <div style="display:flex;gap:8px;flex-wrap:wrap">';
+        html += '    <button class="btn btn-secondary" id="mail-factura-copy">Copiar al portapapeles</button>';
+        html += '    <button class="btn btn-primary" id="mail-factura-send">Enviar por email</button>';
+        html += '  </div>';
+
+        html += '  <div class="form-actions" style="margin-top:12px">';
+        html += '    <button class="btn btn-secondary" id="mail-factura-cancel">Cerrar</button>';
+        html += '  </div>';
+        html += '</div></div>';
+
+        modalContainer.innerHTML = html;
+
+        // Set textarea value via DOM to avoid HTML escaping issues
+        document.getElementById('mail-factura-body').value = emailBody;
+
+        function closeModal() { modalContainer.innerHTML = ''; }
+
+        document.getElementById('mail-factura-close-x').addEventListener('click', closeModal);
+        document.getElementById('mail-factura-cancel').addEventListener('click', closeModal);
+        document.getElementById('mail-factura-overlay').addEventListener('click', function (e) {
+            if (e.target === this) closeModal();
+        });
+
+        // Copy to clipboard
+        document.getElementById('mail-factura-copy').addEventListener('click', function () {
+            var body = document.getElementById('mail-factura-body').value;
+            if (navigator.clipboard) {
+                navigator.clipboard.writeText(body).then(function () {
+                    var btn = document.getElementById('mail-factura-copy');
+                    if (btn) { btn.textContent = 'Copiado!'; setTimeout(function () { btn.textContent = 'Copiar al portapapeles'; }, 2000); }
+                });
+            }
+        });
+
+        // Send via mailto
+        document.getElementById('mail-factura-send').addEventListener('click', function () {
+            var toEmail = (document.getElementById('mail-factura-email').value || '').trim();
+            var subjectVal = (document.getElementById('mail-factura-subject').value || '').trim();
+            var bodyVal = document.getElementById('mail-factura-body').value || '';
+            var mailtoUrl = 'mailto:' + encodeURIComponent(toEmail) +
+                '?subject=' + encodeURIComponent(subjectVal) +
+                '&body=' + encodeURIComponent(bodyVal);
+            window.open(mailtoUrl, '_blank');
         });
     }
 
@@ -1872,7 +2010,11 @@ window.Mazelab.Modules.FinanceModule = (function () {
                     tipoDoc:        tipoDoc,
                     status:         'pendiente_pago',
                     saleId:         linkedSaleId,
+                    sourceId:       rec.sourceId || '',
                     sourceType:     'factura',
+                    avisos_factura: rec.avisos_factura || [],
+                    notas_cobranza: rec.notas_cobranza || [],
+                    cobros:         rec.cobros || [],
                     payments:       []
                 });
 
@@ -2158,6 +2300,6 @@ window.Mazelab.Modules.FinanceModule = (function () {
     // =========================================================================
     // PUBLIC API
     // =========================================================================
-    return { render: render, init: init };
+    return { render: render, init: init, computeKPIs: computeKPIs };
 
 })();

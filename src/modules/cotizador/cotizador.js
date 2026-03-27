@@ -1602,6 +1602,11 @@ window.Mazelab.Modules.CotizadorModule = (function () {
                 updateLiveTotals();
             });
         }
+
+        // Client autocomplete with contact auto-fill
+        if (window.Mazelab.Autocomplete) {
+            window.Mazelab.Autocomplete.attachClientAutocomplete('cot-clientName', 'cot-contactTel', 'cot-contactEmail');
+        }
     }
 
     function bindPreviewEvents() {

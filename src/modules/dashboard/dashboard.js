@@ -110,6 +110,86 @@ window.Mazelab.Modules.DashboardModule = (function () {
     }
 
     // ================================================================
+    //  OPERATIONS ACTIVITY FEED
+    // ================================================================
+    function buildOpsActivityFeed(sales) {
+        var SHORT_MONTHS = ['ene','feb','mar','abr','may','jun','jul','ago','sep','oct','nov','dic'];
+        function fmtShort(dateStr) {
+            if (!dateStr) return '';
+            var d = new Date(dateStr);
+            if (isNaN(d.getTime())) return '';
+            return d.getDate() + ' ' + SHORT_MONTHS[d.getMonth()];
+        }
+
+        var now = new Date();
+        var sevenDaysAgo = new Date(now.getTime() - 7 * 86400000);
+        var activities = [];
+
+        sales.forEach(function (s) {
+            var eventName = s.eventName || s.event_name || s.clientName || s.client_name || 'Evento';
+
+            // 1) Checklist items with checkedAt
+            (s.checklist || []).forEach(function (item) {
+                if (item.checked && item.checkedAt) {
+                    var d = new Date(item.checkedAt);
+                    if (!isNaN(d.getTime()) && d >= sevenDaysAgo) {
+                        activities.push({ date: d, dateStr: fmtShort(item.checkedAt), eventName: eventName, desc: (item.label || 'Tarea') + ' \u2713' });
+                    }
+                }
+            });
+
+            // 2) Equipment assignments
+            (s.equiposAsignados || []).forEach(function (eq) {
+                var at = eq.assignedAt || eq.createdAt;
+                if (at) {
+                    var d = new Date(at);
+                    if (!isNaN(d.getTime()) && d >= sevenDaysAgo) {
+                        activities.push({ date: d, dateStr: fmtShort(at), eventName: eventName, desc: 'Equipo asignado: ' + (eq.equipoNombre || eq.nombre || eq.equipoId || 'equipo') });
+                    }
+                }
+            });
+
+            // 3) Traspaso completed
+            var traspaso = s.traspaso || {};
+            var traspasoAt = traspaso.savedAt || traspaso.timestamp;
+            if (traspasoAt) {
+                var dt = new Date(traspasoAt);
+                if (!isNaN(dt.getTime()) && dt >= sevenDaysAgo) {
+                    activities.push({ date: dt, dateStr: fmtShort(traspasoAt), eventName: eventName, desc: 'Traspaso completado' });
+                }
+            }
+        });
+
+        activities.sort(function (a, b) { return b.date - a.date; });
+        activities = activities.slice(0, 20);
+
+        var itemsHTML = '';
+        if (activities.length === 0) {
+            itemsHTML = '<div style="padding:24px;text-align:center;color:var(--text-muted);font-size:13px">Sin actividad reciente en operaciones</div>';
+        } else {
+            activities.forEach(function (a) {
+                itemsHTML +=
+                    '<div style="display:flex;align-items:center;gap:8px;padding:6px 8px;border-bottom:1px solid rgba(255,255,255,0.05);font-size:12px">' +
+                        '<span style="color:var(--text-muted);min-width:50px">' + escapeHtml(a.dateStr) + '</span>' +
+                        '<span style="color:var(--accent);font-weight:500;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:160px">' + escapeHtml(a.eventName) + '</span>' +
+                        '<span style="color:var(--text-secondary)">\u2014 ' + escapeHtml(a.desc) + '</span>' +
+                    '</div>';
+            });
+        }
+
+        return '' +
+            '<div class="card" style="margin-top:var(--space-lg)">' +
+                '<div class="card-header" style="display:flex;align-items:center;justify-content:space-between">' +
+                    '<h3>Actividad de Operaciones</h3>' +
+                    '<span class="badge badge-info">\u00DAltimos 7 d\u00edas</span>' +
+                '</div>' +
+                '<div style="max-height:400px;overflow-y:auto;padding:var(--space-sm)">' +
+                    itemsHTML +
+                '</div>' +
+            '</div>';
+    }
+
+    // ================================================================
     //  FULL DASHBOARD (superadmin / socio)
     // ================================================================
     function buildFullDashboard(sales, receivables, payables, services) {
@@ -122,24 +202,10 @@ window.Mazelab.Modules.DashboardModule = (function () {
             totalRefunds += Number(s.refundAmount || s.monto_devolucion || 0);
         });
 
-        // CXC
-        var totalCXC = 0, countCXC = 0;
-        receivables.forEach(function (r) {
-            var st = (r.status || '').toLowerCase();
-            var tipo = (r.tipoDoc || r.tipo_doc || '').toUpperCase();
-            if (st === 'pagada' || st === 'anulada' || tipo === 'NC') return;
-            if (st === 'pendiente' || st === 'pendiente_pago' || st === 'pendiente_factura' ||
-                st === 'facturada' || st === 'vencida_30' || st === 'vencida_60' || st === 'vencida_90') {
-                var neto = Number(r.montoNeto || r.monto_neto || r.invoicedAmount || r.monto_venta || r.amount) || 0;
-                var totalOwed = (tipo === 'E') ? neto : neto * 1.19;
-                var paid = 0;
-                if (r.payments && Array.isArray(r.payments)) {
-                    paid = r.payments.reduce(function (s, p) { return s + (Number(p.amount) || 0); }, 0);
-                }
-                var pending = Math.max(0, totalOwed - paid);
-                if (pending > 0) { totalCXC += pending; countCXC++; }
-            }
-        });
+        // CXC — delegate to FinanceModule for consistent calculation
+        var cxcKPIs = window.Mazelab.Modules.FinanceModule.computeKPIs(receivables);
+        var totalCXC = cxcKPIs.totalPorCobrar;
+        var countCXC = cxcKPIs.data.sinFactura.length + cxcKPIs.data.facturadoPendientes.length;
 
         // CXP
         var totalCXP = 0, countCXP = 0;
@@ -215,7 +281,8 @@ window.Mazelab.Modules.DashboardModule = (function () {
         var quarterlyHTML = buildQuarterlyView(sales);
         var comercialCards = buildComercialCards(sales, receivables, services);
 
-        return kpiHTML + upcomingHTML + yoyHTML + quarterlyHTML + chartHTML + ivaHTML + rankingsHTML + comercialCards;
+        var opsActivityHTML = buildOpsActivityFeed(sales);
+        return kpiHTML + upcomingHTML + opsActivityHTML + yoyHTML + quarterlyHTML + chartHTML + ivaHTML + rankingsHTML + comercialCards;
     }
 
     // ================================================================
@@ -243,21 +310,10 @@ window.Mazelab.Modules.DashboardModule = (function () {
             else if (y === twoYearsAgo) totalTwoYearsAgo += amt;
         });
 
-        // CXC
-        var totalCXC = 0, countCXC = 0;
-        receivables.forEach(function (r) {
-            var st = (r.status || '').toLowerCase();
-            var tipo = (r.tipoDoc || r.tipo_doc || '').toUpperCase();
-            if (st === 'pagada' || st === 'anulada' || tipo === 'NC') return;
-            var neto = Number(r.montoNeto || r.monto_neto || r.invoicedAmount || r.monto_venta || r.amount) || 0;
-            var totalOwed = (tipo === 'E') ? neto : neto * 1.19;
-            var paid = 0;
-            if (r.payments && Array.isArray(r.payments)) {
-                paid = r.payments.reduce(function (s2, p) { return s2 + (Number(p.amount) || 0); }, 0);
-            }
-            var pending = Math.max(0, totalOwed - paid);
-            if (pending > 0) { totalCXC += pending; countCXC++; }
-        });
+        // CXC — delegate to FinanceModule for consistent calculation
+        var cxcKPIs = window.Mazelab.Modules.FinanceModule.computeKPIs(receivables);
+        var totalCXC = cxcKPIs.totalPorCobrar;
+        var countCXC = cxcKPIs.data.sinFactura.length + cxcKPIs.data.facturadoPendientes.length;
 
         var cobradoCount = receivables.filter(function (r) { return (r.status || '').toLowerCase() === 'pagada'; }).length;
         var totalDocs = receivables.length;
@@ -301,7 +357,8 @@ window.Mazelab.Modules.DashboardModule = (function () {
         var upcomingHTML = buildUpcomingEvents(sales, services);
         var comercialCards = buildComercialCards(sales, receivables, services);
 
-        return kpiHTML + yoyHTML + quarterlyHTML + upcomingHTML + comercialCards;
+        var opsActivityHTML = buildOpsActivityFeed(sales);
+        return kpiHTML + upcomingHTML + opsActivityHTML + yoyHTML + quarterlyHTML + comercialCards;
     }
 
     function formatCLPShort(n) {
@@ -778,7 +835,8 @@ window.Mazelab.Modules.DashboardModule = (function () {
         var alertsHTML = buildOpsAlerts(sales);
         var futureChart = buildEventsBarChart(sales, 'future');
 
-        return kpiHTML + alertsHTML + upcomingHTML + futureChart;
+        var opsActivityHTML = buildOpsActivityFeed(sales);
+        return kpiHTML + alertsHTML + opsActivityHTML + upcomingHTML + futureChart;
     }
 
     // ================================================================
