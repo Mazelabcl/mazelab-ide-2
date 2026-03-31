@@ -1629,9 +1629,31 @@ window.Mazelab.Modules.CotizadorModule = (function () {
                 if (cnEl) cnEl.value = first.nombre || '';
                 if (telEl) telEl.value = first.telefono || '';
                 if (emailEl) emailEl.value = first.email || '';
-                // Show contact chips if multiple contacts
-                if (contactos.length > 1 && cnEl && window.Mazelab.Autocomplete && window.Mazelab.Autocomplete.showContactChips) {
-                    window.Mazelab.Autocomplete.showContactChips(cnEl, contactos, 'cot-contactTel', 'cot-contactEmail');
+                // Show contact chips
+                if (contactos.length > 0 && cnEl) {
+                    var chipParent = cnEl.closest('.form-group') || cnEl.parentNode;
+                    var chipId = 'cot-contact-chips';
+                    var chipDiv = document.getElementById(chipId);
+                    if (!chipDiv) {
+                        chipDiv = document.createElement('div');
+                        chipDiv.id = chipId;
+                        chipDiv.style.cssText = 'display:flex;flex-wrap:wrap;gap:6px;margin-top:6px';
+                        chipParent.appendChild(chipDiv);
+                    }
+                    chipDiv.innerHTML = contactos.map(function (ct, i) {
+                        var label = ct.nombre || 'Contacto ' + (i + 1);
+                        var sub = [ct.telefono, ct.email].filter(Boolean).join(' · ');
+                        return '<button type="button" class="cot-contact-chip" style="font-size:11px;padding:4px 10px;border-radius:12px;background:' + (i === 0 ? 'rgba(139,92,246,0.35)' : 'rgba(139,92,246,0.15)') + ';color:var(--accent);border:1px solid rgba(139,92,246,0.3);cursor:pointer;text-align:left;line-height:1.3" data-nombre="' + (ct.nombre || '').replace(/"/g, '&quot;') + '" data-tel="' + (ct.telefono || '').replace(/"/g, '&quot;') + '" data-email="' + (ct.email || '').replace(/"/g, '&quot;') + '"><strong>' + label + '</strong>' + (sub ? '<br><span style="font-size:10px;opacity:0.7">' + sub + '</span>' : '') + '</button>';
+                    }).join('');
+                    chipDiv.querySelectorAll('.cot-contact-chip').forEach(function (chip) {
+                        chip.addEventListener('click', function () {
+                            if (cnEl) cnEl.value = this.dataset.nombre || '';
+                            if (telEl) telEl.value = this.dataset.tel || '';
+                            if (emailEl) emailEl.value = this.dataset.email || '';
+                            chipDiv.querySelectorAll('.cot-contact-chip').forEach(function (c) { c.style.background = 'rgba(139,92,246,0.15)'; });
+                            this.style.background = 'rgba(139,92,246,0.35)';
+                        });
+                    });
                 }
             }
             cotClientInput.addEventListener('change', onCotClientPicked);

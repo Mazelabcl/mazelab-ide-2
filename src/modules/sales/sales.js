@@ -426,12 +426,31 @@ window.Mazelab.Modules.SalesModule = (function () {
                     traspasoFields.style.display = 'block';
                     if (traspasoArrow) traspasoArrow.style.transform = 'rotate(180deg)';
                 }
-                // Show contact chips
-                if (window.Mazelab.Autocomplete && window.Mazelab.Autocomplete.showContactChips && cnEl) {
-                    window.Mazelab.Autocomplete.showContactChips(
-                        cnEl, contactos,
-                        'sale-traspaso-contactoTel', 'sale-traspaso-contactoEmail'
-                    );
+                // Show contact chips inline
+                if (contactos.length > 0 && cnEl) {
+                    var chipParent = cnEl.closest('.form-group') || cnEl.parentNode;
+                    var chipId = 'sale-traspaso-contact-chips';
+                    var chipDiv = document.getElementById(chipId);
+                    if (!chipDiv) {
+                        chipDiv = document.createElement('div');
+                        chipDiv.id = chipId;
+                        chipDiv.style.cssText = 'display:flex;flex-wrap:wrap;gap:6px;margin-top:6px';
+                        chipParent.appendChild(chipDiv);
+                    }
+                    chipDiv.innerHTML = contactos.map(function (ct, i) {
+                        var label = ct.nombre || 'Contacto ' + (i + 1);
+                        var sub = [ct.telefono, ct.email].filter(Boolean).join(' · ');
+                        return '<button type="button" class="sale-contact-chip" style="font-size:11px;padding:4px 10px;border-radius:12px;background:' + (i === 0 ? 'rgba(139,92,246,0.35)' : 'rgba(139,92,246,0.15)') + ';color:var(--accent);border:1px solid rgba(139,92,246,0.3);cursor:pointer;text-align:left;line-height:1.3" data-nombre="' + (ct.nombre || '').replace(/"/g, '&quot;') + '" data-tel="' + (ct.telefono || '').replace(/"/g, '&quot;') + '" data-email="' + (ct.email || '').replace(/"/g, '&quot;') + '"><strong>' + label + '</strong>' + (sub ? '<br><span style="font-size:10px;opacity:0.7">' + sub + '</span>' : '') + '</button>';
+                    }).join('');
+                    chipDiv.querySelectorAll('.sale-contact-chip').forEach(function (chip) {
+                        chip.addEventListener('click', function () {
+                            if (cnEl) cnEl.value = this.dataset.nombre || '';
+                            if (telEl) telEl.value = this.dataset.tel || '';
+                            if (emailEl) emailEl.value = this.dataset.email || '';
+                            chipDiv.querySelectorAll('.sale-contact-chip').forEach(function (c) { c.style.background = 'rgba(139,92,246,0.15)'; });
+                            this.style.background = 'rgba(139,92,246,0.35)';
+                        });
+                    });
                 }
             }
             clientInput.addEventListener('change', onClientPicked);
@@ -678,14 +697,25 @@ window.Mazelab.Modules.SalesModule = (function () {
                 checkboxes.forEach(cb => { cb.checked = false; });
             }
 
-            // Populate traspaso fields
-            var traspasoFields = ['contactoNombre','contactoTel','contactoEmail','lugarEvento','horaMontaje','horaInicio','horaTermino','pax','vestimenta','notaVendedor'];
+            // Populate traspaso fields from traspaso object (kanban-compatible)
+            var tr = sale.traspaso || {};
+            var fieldMap = {
+                contactoNombre: tr.contactoNombre || '',
+                contactoTel: tr.contactoTel || '',
+                contactoEmail: tr.contactoEmail || '',
+                lugarEvento: tr.lugar || '',
+                horaMontaje: tr.horarioMontaje || '',
+                horaInicio: tr.horarioServicio || '',
+                horaTermino: tr.horarioDesmontaje || '',
+                pax: tr.pax || '',
+                vestimenta: tr.vestimenta || '',
+                notaVendedor: tr.notaVendedor || ''
+            };
             var hasAnyTraspaso = false;
-            traspasoFields.forEach(function(f) {
+            Object.keys(fieldMap).forEach(function(f) {
                 var el = document.getElementById('sale-traspaso-' + f);
-                var val = sale['traspaso_' + f];
-                if (el) el.value = (val != null && val !== '') ? val : '';
-                if (val != null && val !== '' && val !== 0) hasAnyTraspaso = true;
+                if (el) el.value = fieldMap[f];
+                if (fieldMap[f]) hasAnyTraspaso = true;
             });
             var traspasoFieldsDiv = document.getElementById('traspaso-fields');
             var traspasoArrow = document.getElementById('traspaso-arrow');
@@ -762,6 +792,28 @@ window.Mazelab.Modules.SalesModule = (function () {
         editingId = null;
     }
 
+    function buildTraspasoObject() {
+        var t = {
+            contactoNombre:     (document.getElementById('sale-traspaso-contactoNombre').value || '').trim(),
+            contactoTel:        (document.getElementById('sale-traspaso-contactoTel').value || '').trim(),
+            contactoEmail:      (document.getElementById('sale-traspaso-contactoEmail').value || '').trim(),
+            lugar:              (document.getElementById('sale-traspaso-lugarEvento').value || '').trim(),
+            horarioMontaje:     (document.getElementById('sale-traspaso-horaMontaje').value || '').trim(),
+            horarioServicio:    (document.getElementById('sale-traspaso-horaInicio').value || '').trim(),
+            horarioDesmontaje:  (document.getElementById('sale-traspaso-horaTermino').value || '').trim(),
+            pax:                (document.getElementById('sale-traspaso-pax').value || '').trim(),
+            vestimenta:         (document.getElementById('sale-traspaso-vestimenta').value || '').trim(),
+            notaVendedor:       (document.getElementById('sale-traspaso-notaVendedor').value || '').trim()
+        };
+        // Only return object if at least one field is filled
+        var hasData = Object.keys(t).some(function (k) { return t[k] !== ''; });
+        if (hasData) {
+            t.savedAt = new Date().toISOString();
+            return t;
+        }
+        return null;
+    }
+
     function getFormData() {
         const selectedServices = [];
         document.querySelectorAll('.sale-service-cb:checked').forEach(cb => {
@@ -786,16 +838,7 @@ window.Mazelab.Modules.SalesModule = (function () {
             comments: document.getElementById('sale-comments').value,
             hasIssue: document.getElementById('sale-has-issue').checked,
             refundAmount: document.getElementById('sale-refund-amount').value ? Number(document.getElementById('sale-refund-amount').value) : 0,
-            traspaso_contactoNombre: (document.getElementById('sale-traspaso-contactoNombre').value || '').trim(),
-            traspaso_contactoTel: (document.getElementById('sale-traspaso-contactoTel').value || '').trim(),
-            traspaso_contactoEmail: (document.getElementById('sale-traspaso-contactoEmail').value || '').trim(),
-            traspaso_lugarEvento: (document.getElementById('sale-traspaso-lugarEvento').value || '').trim(),
-            traspaso_horaMontaje: document.getElementById('sale-traspaso-horaMontaje').value || '',
-            traspaso_horaInicio: document.getElementById('sale-traspaso-horaInicio').value || '',
-            traspaso_horaTermino: document.getElementById('sale-traspaso-horaTermino').value || '',
-            traspaso_pax: document.getElementById('sale-traspaso-pax').value ? Number(document.getElementById('sale-traspaso-pax').value) : null,
-            traspaso_vestimenta: (document.getElementById('sale-traspaso-vestimenta').value || '').trim(),
-            traspaso_notaVendedor: (document.getElementById('sale-traspaso-notaVendedor').value || '').trim()
+            traspaso: buildTraspasoObject()
         };
     }
 
