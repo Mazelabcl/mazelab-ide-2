@@ -233,7 +233,7 @@ window.Mazelab.Modules.SalesModule = (function () {
                     <div class="form-row">
                         <div class="form-group">
                             <label for="sale-clientName">Cliente</label>
-                            <input type="text" id="sale-clientName" class="form-control" placeholder="Escribir nombre del cliente..." required autocomplete="off" />
+                            <input type="text" id="sale-clientName" class="form-control" placeholder="Escribir nombre del cliente..." required />
                         </div>
                         <div class="form-group">
                             <label for="sale-staff">Vendedor</label>
@@ -374,9 +374,14 @@ window.Mazelab.Modules.SalesModule = (function () {
     }
 
     function populateDropdowns() {
-        // Client autocomplete (datalist-based)
+        // Client autocomplete with cascade to traspaso contact fields
         if (window.Mazelab.Autocomplete) {
-            window.Mazelab.Autocomplete.attachClientAutocomplete('sale-clientName', null, null);
+            window.Mazelab.Autocomplete.attachClientAutocomplete(
+                'sale-clientName',
+                'sale-traspaso-contactoNombre',
+                'sale-traspaso-contactoTel',
+                'sale-traspaso-contactoEmail'
+            );
         }
 
         // Staff dropdown

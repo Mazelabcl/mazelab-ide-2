@@ -1996,7 +1996,7 @@ window.Mazelab.Modules.FinanceModule = (function () {
 
                 // 1. Crear una nueva CXC row para esta factura específica
                 var linkedSaleId = rec.saleId || (/^\d+$/.test(String(rec.id || '')) ? rec.id : null);
-                await window.Mazelab.DataService.create('receivables', {
+                var newRec = {
                     id:             window.Mazelab.Storage.generateId(),
                     eventName:      rec.eventName  || '',
                     eventDate:      rec.eventDate  || '',
@@ -2012,11 +2012,13 @@ window.Mazelab.Modules.FinanceModule = (function () {
                     saleId:         linkedSaleId,
                     sourceId:       rec.sourceId || '',
                     sourceType:     'factura',
-                    avisos_factura: rec.avisos_factura || [],
-                    notas_cobranza: rec.notas_cobranza || [],
-                    cobros:         rec.cobros || [],
                     payments:       []
-                });
+                };
+                // Preserve history arrays only if they exist on the original record
+                if (rec.avisos_factura && rec.avisos_factura.length) newRec.avisos_factura = rec.avisos_factura;
+                if (rec.notas_cobranza && rec.notas_cobranza.length) newRec.notas_cobranza = rec.notas_cobranza;
+                if (rec.cobros && rec.cobros.length) newRec.cobros = rec.cobros;
+                await window.Mazelab.DataService.create('receivables', newRec);
 
                 // 2. Actualizar o eliminar la CXC residual (por facturar)
                 if (netoRestante <= 0) {

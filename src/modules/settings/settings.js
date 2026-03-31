@@ -1036,7 +1036,22 @@ window.Mazelab.Modules.SettingsModule = (function () {
     function renderClientForm(client) {
         const c = client || {};
         const name = c.name || c.nombre || '';
-        const ejecutivos = Array.isArray(c.ejecutivos) ? c.ejecutivos.join(', ') : (c.ejecutivos || '');
+        // Migrate legacy ejecutivos (string array) to contactos (object array)
+        var contactos = Array.isArray(c.contactos) ? c.contactos : [];
+        if (!contactos.length && Array.isArray(c.ejecutivos) && c.ejecutivos.length) {
+            contactos = c.ejecutivos.map(function (n) { return { nombre: n, telefono: '', email: '' }; });
+        }
+
+        var contactosHTML = '';
+        contactos.forEach(function (ct, i) {
+            contactosHTML += `
+                <div class="client-contacto-row" style="display:flex;gap:8px;align-items:center;margin-bottom:6px">
+                    <input type="text" class="form-control cc-nombre" value="${escapeHtml(ct.nombre || '')}" placeholder="Nombre" style="flex:2" />
+                    <input type="text" class="form-control cc-tel" value="${escapeHtml(ct.telefono || '')}" placeholder="Telefono" style="flex:1" />
+                    <input type="text" class="form-control cc-email" value="${escapeHtml(ct.email || '')}" placeholder="Email" style="flex:2" />
+                    <button type="button" class="btn-sm btn-icon cc-remove" style="color:var(--danger);font-size:16px" title="Eliminar">&times;</button>
+                </div>`;
+        });
 
         return `
             <div class="form-row">
@@ -1062,8 +1077,13 @@ window.Mazelab.Modules.SettingsModule = (function () {
                 </div>
             </div>
             <div class="form-group">
-                <label for="client-ejecutivos">Ejecutivos (separados por coma)</label>
-                <input type="text" id="client-ejecutivos" class="form-control" value="${escapeHtml(ejecutivos)}" placeholder="Ej: Juan Perez, Maria Lopez" />
+                <label style="display:flex;align-items:center;justify-content:space-between">
+                    <span>Contactos / Ejecutivos</span>
+                    <button type="button" class="btn-sm" id="client-add-contacto" style="font-size:12px">+ Agregar</button>
+                </label>
+                <div id="client-contactos-list" style="margin-top:6px">
+                    ${contactosHTML || '<div style="color:var(--text-muted);font-size:12px;padding:4px 0">Sin contactos registrados</div>'}
+                </div>
             </div>
             <div class="form-group">
                 <label for="client-notas">Notas</label>
@@ -1072,19 +1092,55 @@ window.Mazelab.Modules.SettingsModule = (function () {
     }
 
     function getClientFormData() {
-        const ejecutivosRaw = document.getElementById('client-ejecutivos').value.trim();
-        const ejecutivos = ejecutivosRaw
-            ? ejecutivosRaw.split(',').map(e => e.trim()).filter(Boolean)
-            : [];
+        // Collect contactos from dynamic rows
+        var contactos = [];
+        document.querySelectorAll('.client-contacto-row').forEach(function (row) {
+            var nombre = (row.querySelector('.cc-nombre').value || '').trim();
+            var telefono = (row.querySelector('.cc-tel').value || '').trim();
+            var email = (row.querySelector('.cc-email').value || '').trim();
+            if (nombre || telefono || email) {
+                contactos.push({ nombre: nombre, telefono: telefono, email: email });
+            }
+        });
+        // Backward-compat: also store ejecutivos as flat name array
+        var ejecutivos = contactos.map(function (c) { return c.nombre; }).filter(Boolean);
 
         return {
             nombre: document.getElementById('client-nombre').value.trim(),
             rut: document.getElementById('client-rut').value.trim() || null,
             plazo_pago: document.getElementById('client-plazo-pago').value ? Number(document.getElementById('client-plazo-pago').value) : 30,
             ejecutivos: ejecutivos,
+            contactos: contactos,
             notas: document.getElementById('client-notas').value.trim() || null,
             activo: document.getElementById('client-activo').checked
         };
+    }
+
+    function bindClientContactEvents() {
+        var addBtn = document.getElementById('client-add-contacto');
+        if (addBtn) {
+            addBtn.addEventListener('click', function () {
+                var list = document.getElementById('client-contactos-list');
+                if (!list) return;
+                // Remove empty-state text if present
+                var empty = list.querySelector('[style*="color:var(--text-muted)"]');
+                if (empty) empty.remove();
+                var row = document.createElement('div');
+                row.className = 'client-contacto-row';
+                row.style.cssText = 'display:flex;gap:8px;align-items:center;margin-bottom:6px';
+                row.innerHTML = '<input type="text" class="form-control cc-nombre" value="" placeholder="Nombre" style="flex:2" />' +
+                    '<input type="text" class="form-control cc-tel" value="" placeholder="Telefono" style="flex:1" />' +
+                    '<input type="text" class="form-control cc-email" value="" placeholder="Email" style="flex:2" />' +
+                    '<button type="button" class="btn-sm btn-icon cc-remove" style="color:var(--danger);font-size:16px" title="Eliminar">&times;</button>';
+                list.appendChild(row);
+                row.querySelector('.cc-nombre').focus();
+                row.querySelector('.cc-remove').addEventListener('click', function () { row.remove(); });
+            });
+        }
+        // Bind remove on existing rows
+        document.querySelectorAll('.cc-remove').forEach(function (btn) {
+            btn.addEventListener('click', function () { btn.closest('.client-contacto-row').remove(); });
+        });
     }
 
     // --- Modal Logic ---
@@ -1123,6 +1179,7 @@ window.Mazelab.Modules.SettingsModule = (function () {
             case 'clientes':
                 body.innerHTML = renderClientForm(item);
                 if (modalEl) modalEl.classList.remove('modal-wide');
+                bindClientContactEvents();
                 break;
         }
 

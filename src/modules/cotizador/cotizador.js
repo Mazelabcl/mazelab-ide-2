@@ -1605,7 +1605,7 @@ window.Mazelab.Modules.CotizadorModule = (function () {
 
         // Client autocomplete with contact auto-fill
         if (window.Mazelab.Autocomplete) {
-            window.Mazelab.Autocomplete.attachClientAutocomplete('cot-clientName', 'cot-contactTel', 'cot-contactEmail');
+            window.Mazelab.Autocomplete.attachClientAutocomplete('cot-clientName', 'cot-contactName', 'cot-contactTel', 'cot-contactEmail');
         }
     }
 
