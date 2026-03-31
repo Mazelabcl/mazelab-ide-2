@@ -336,15 +336,15 @@ window.Mazelab.Modules.SalesModule = (function () {
                             <div class="form-row">
                                 <div class="form-group">
                                     <label for="sale-traspaso-horaMontaje">Hora montaje</label>
-                                    <input type="time" id="sale-traspaso-horaMontaje" class="form-control" />
+                                    <input type="text" id="sale-traspaso-horaMontaje" class="form-control" placeholder="Ej: 09:00 o Coordinar" />
                                 </div>
                                 <div class="form-group">
                                     <label for="sale-traspaso-horaInicio">Hora inicio</label>
-                                    <input type="time" id="sale-traspaso-horaInicio" class="form-control" />
+                                    <input type="text" id="sale-traspaso-horaInicio" class="form-control" placeholder="Ej: 20:00 o Coordinar" />
                                 </div>
                                 <div class="form-group">
                                     <label for="sale-traspaso-horaTermino">Hora t&eacute;rmino</label>
-                                    <input type="time" id="sale-traspaso-horaTermino" class="form-control" />
+                                    <input type="text" id="sale-traspaso-horaTermino" class="form-control" placeholder="Ej: 23:00 o Coordinar" />
                                 </div>
                             </div>
                             <div class="form-row">
