@@ -70,43 +70,45 @@ window.Mazelab.Autocomplete = (function () {
                 if (!client) return;
 
                 var contactos = client.contactos;
-                if (contactos.length > 0) {
-                    // If there's a contact name field, set up contact dropdown
+                var first = contactos.length > 0 ? contactos[0] : null;
+
+                // Auto-fill first contact into fields
+                if (first) {
                     if (contactNameId) {
-                        buildContactDropdown(contactNameId, phoneFillId, emailFillId, contactos);
-                        // Auto-select first contact
-                        var first = contactos[0];
                         var cnEl = document.getElementById(contactNameId);
-                        if (cnEl) { cnEl.value = first.nombre || ''; cnEl.dispatchEvent(new Event('change')); }
-                        if (phoneFillId) {
-                            var pEl = document.getElementById(phoneFillId);
-                            if (pEl) pEl.value = first.telefono || '';
-                        }
-                        if (emailFillId) {
-                            var eEl = document.getElementById(emailFillId);
-                            if (eEl) eEl.value = first.email || '';
-                        }
-                    } else {
-                        // No separate contact field — fill phone/email from first contact
-                        var first = contactos[0];
-                        if (phoneFillId) {
-                            var pEl = document.getElementById(phoneFillId);
-                            if (pEl && !pEl.value) pEl.value = first.telefono || client.phone || '';
-                        }
-                        if (emailFillId) {
-                            var eEl = document.getElementById(emailFillId);
-                            if (eEl && !eEl.value) eEl.value = first.email || client.email || '';
-                        }
+                        if (cnEl) cnEl.value = first.nombre || '';
                     }
-                } else {
-                    // No contacts — fill from client-level fields
                     if (phoneFillId) {
                         var pEl = document.getElementById(phoneFillId);
-                        if (pEl && !pEl.value) pEl.value = client.phone;
+                        if (pEl) pEl.value = first.telefono || client.phone || '';
                     }
                     if (emailFillId) {
                         var eEl = document.getElementById(emailFillId);
-                        if (eEl && !eEl.value) eEl.value = client.email;
+                        if (eEl) eEl.value = first.email || client.email || '';
+                    }
+                } else {
+                    if (phoneFillId) {
+                        var pEl = document.getElementById(phoneFillId);
+                        if (pEl && !pEl.value) pEl.value = client.phone || '';
+                    }
+                    if (emailFillId) {
+                        var eEl = document.getElementById(emailFillId);
+                        if (eEl && !eEl.value) eEl.value = client.email || '';
+                    }
+                }
+
+                // Show contact chips for quick selection (if multiple contacts)
+                if (contactos.length > 0 && contactNameId) {
+                    var cnEl2 = document.getElementById(contactNameId);
+                    if (cnEl2) {
+                        showContactChips(cnEl2, contactos, phoneFillId, emailFillId);
+                        // Auto-expand traspaso section if collapsed
+                        var traspasoFields = document.getElementById('traspaso-fields');
+                        var traspasoArrow = document.getElementById('traspaso-arrow');
+                        if (traspasoFields && traspasoFields.style.display === 'none') {
+                            traspasoFields.style.display = 'block';
+                            if (traspasoArrow) traspasoArrow.style.transform = 'rotate(180deg)';
+                        }
                     }
                 }
             }
@@ -170,9 +172,60 @@ window.Mazelab.Autocomplete = (function () {
         });
     }
 
+    // ---------------------------------------------------------------
+    //  showContactChips — visual chips for quick contact selection
+    // ---------------------------------------------------------------
+    function showContactChips(anchorEl, contactos, phoneFillId, emailFillId) {
+        // Find or create chips container after the anchor element's form-group
+        var parent = anchorEl.closest('.form-group') || anchorEl.parentNode;
+        var containerId = anchorEl.id + '-contact-chips';
+        var container = document.getElementById(containerId);
+        if (!container) {
+            container = document.createElement('div');
+            container.id = containerId;
+            container.style.cssText = 'display:flex;flex-wrap:wrap;gap:6px;margin-top:6px';
+            parent.appendChild(container);
+        }
+        container.innerHTML = contactos.map(function (ct, i) {
+            var label = ct.nombre || 'Contacto ' + (i + 1);
+            var sub = [ct.telefono, ct.email].filter(Boolean).join(' · ');
+            return '<button type="button" class="ac-contact-chip" style="font-size:11px;padding:4px 10px;border-radius:12px;background:rgba(139,92,246,0.15);color:var(--accent);border:1px solid rgba(139,92,246,0.3);cursor:pointer;text-align:left;line-height:1.3" ' +
+                'data-nombre="' + (ct.nombre || '').replace(/"/g, '&quot;') + '" ' +
+                'data-tel="' + (ct.telefono || '').replace(/"/g, '&quot;') + '" ' +
+                'data-email="' + (ct.email || '').replace(/"/g, '&quot;') + '">' +
+                '<strong>' + label + '</strong>' +
+                (sub ? '<br><span style="font-size:10px;opacity:0.7">' + sub + '</span>' : '') +
+                '</button>';
+        }).join('');
+
+        container.querySelectorAll('.ac-contact-chip').forEach(function (chip) {
+            chip.addEventListener('click', function () {
+                anchorEl.value = this.dataset.nombre || '';
+                if (phoneFillId) {
+                    var pEl = document.getElementById(phoneFillId);
+                    if (pEl) pEl.value = this.dataset.tel || '';
+                }
+                if (emailFillId) {
+                    var eEl = document.getElementById(emailFillId);
+                    if (eEl) eEl.value = this.dataset.email || '';
+                }
+                // Visual feedback — highlight selected chip
+                container.querySelectorAll('.ac-contact-chip').forEach(function (c) {
+                    c.style.background = 'rgba(139,92,246,0.15)';
+                });
+                this.style.background = 'rgba(139,92,246,0.35)';
+            });
+        });
+
+        // Highlight first chip by default
+        var firstChip = container.querySelector('.ac-contact-chip');
+        if (firstChip) firstChip.style.background = 'rgba(139,92,246,0.35)';
+    }
+
     return {
         attachClientAutocomplete: attachClientAutocomplete,
         buildContactDropdown: buildContactDropdown,
+        showContactChips: showContactChips,
         invalidateCache: invalidateCache
     };
 })();

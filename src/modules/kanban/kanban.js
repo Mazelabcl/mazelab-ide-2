@@ -2198,10 +2198,58 @@ window.Mazelab.Modules.KanbanModule = (function () {
         var contactoInput = document.getElementById('tr-contactoNombre');
         if (contactoInput) {
             var contactMap = {};
+            // From traspaso history
             sales.forEach(function (s) {
                 var t = s.traspaso || {};
                 if (t.contactoNombre) contactMap[t.contactoNombre] = { tel: t.contactoTel || '', email: t.contactoEmail || '' };
             });
+            // Enrich with contacts from Settings (client DB) for this event's client
+            if (sale && sale.clientName) {
+                window.Mazelab.DataService.getAll('clients').then(function (clients) {
+                    if (!clients) return;
+                    var client = clients.find(function (c) { return (c.name || c.nombre || '') === sale.clientName; });
+                    if (!client) return;
+                    var contactos = Array.isArray(client.contactos) ? client.contactos : [];
+                    if (!contactos.length && Array.isArray(client.ejecutivos)) {
+                        contactos = client.ejecutivos.map(function (n) { return { nombre: n, telefono: '', email: '' }; });
+                    }
+                    // Add to contactMap and update datalist
+                    contactos.forEach(function (ct) {
+                        if (ct.nombre && !contactMap[ct.nombre]) {
+                            contactMap[ct.nombre] = { tel: ct.telefono || '', email: ct.email || '' };
+                        }
+                    });
+                    // Rebuild datalist with enriched contacts
+                    var dl = document.getElementById('tr-contactos-list');
+                    if (dl) {
+                        dl.innerHTML = Object.keys(contactMap).sort().map(function (n) {
+                            return '<option value="' + escapeHtml(n) + '">';
+                        }).join('');
+                    }
+                    // Show contact chips for quick selection
+                    if (contactos.length > 0) {
+                        var chipsContainer = document.getElementById('tr-contact-chips');
+                        if (!chipsContainer) {
+                            chipsContainer = document.createElement('div');
+                            chipsContainer.id = 'tr-contact-chips';
+                            chipsContainer.style.cssText = 'display:flex;flex-wrap:wrap;gap:6px;margin-top:6px';
+                            contactoInput.parentNode.appendChild(chipsContainer);
+                        }
+                        chipsContainer.innerHTML = contactos.map(function (ct) {
+                            return '<button type="button" class="btn-sm tr-contact-chip" style="font-size:11px;padding:3px 8px;border-radius:12px;background:rgba(139,92,246,0.15);color:var(--accent);border:1px solid rgba(139,92,246,0.3);cursor:pointer" data-nombre="' + escapeHtml(ct.nombre || '') + '" data-tel="' + escapeHtml(ct.telefono || '') + '" data-email="' + escapeHtml(ct.email || '') + '">' + escapeHtml(ct.nombre || '') + '</button>';
+                        }).join('');
+                        chipsContainer.querySelectorAll('.tr-contact-chip').forEach(function (chip) {
+                            chip.addEventListener('click', function () {
+                                contactoInput.value = this.dataset.nombre || '';
+                                var telEl = document.getElementById('tr-contactoTel');
+                                var emailEl = document.getElementById('tr-contactoEmail');
+                                if (telEl) telEl.value = this.dataset.tel || '';
+                                if (emailEl) emailEl.value = this.dataset.email || '';
+                            });
+                        });
+                    }
+                });
+            }
             contactoInput.addEventListener('change', function () {
                 var info = contactMap[this.value];
                 if (!info) return;
