@@ -374,14 +374,70 @@ window.Mazelab.Modules.SalesModule = (function () {
     }
 
     function populateDropdowns() {
-        // Client autocomplete with cascade to traspaso contact fields
-        if (window.Mazelab.Autocomplete) {
-            window.Mazelab.Autocomplete.attachClientAutocomplete(
-                'sale-clientName',
-                'sale-traspaso-contactoNombre',
-                'sale-traspaso-contactoTel',
-                'sale-traspaso-contactoEmail'
-            );
+        // Client datalist — built synchronously from already-loaded clients array
+        var clientInput = document.getElementById('sale-clientName');
+        if (clientInput && clients.length > 0) {
+            var dlId = 'sale-clientName-list';
+            var existing = document.getElementById(dlId);
+            if (existing) existing.remove();
+            var dl = document.createElement('datalist');
+            dl.id = dlId;
+            // Build client map for contact lookup
+            var clientContactMap = {};
+            clients.slice().sort(function (a, b) {
+                return (a.name || a.nombre || '').localeCompare(b.name || b.nombre || '');
+            }).forEach(function (c) {
+                var name = c.name || c.nombre || c.clientName || '';
+                if (!name) return;
+                var opt = document.createElement('option');
+                opt.value = name;
+                dl.appendChild(opt);
+                // Build contactos from structured data or legacy ejecutivos
+                if (!clientContactMap[name]) {
+                    var contactos = [];
+                    if (Array.isArray(c.contactos) && c.contactos.length) {
+                        contactos = c.contactos;
+                    } else if (Array.isArray(c.ejecutivos) && c.ejecutivos.length) {
+                        contactos = c.ejecutivos.map(function (n) { return { nombre: n, telefono: '', email: '' }; });
+                    }
+                    clientContactMap[name] = contactos;
+                }
+            });
+            clientInput.setAttribute('list', dlId);
+            clientInput.parentNode.appendChild(dl);
+
+            // On client selection, show contact chips in traspaso section
+            function onClientPicked() {
+                var val = clientInput.value.trim();
+                var contactos = clientContactMap[val];
+                if (!contactos || !contactos.length) return;
+                // Auto-fill first contact
+                var first = contactos[0];
+                var cnEl = document.getElementById('sale-traspaso-contactoNombre');
+                var telEl = document.getElementById('sale-traspaso-contactoTel');
+                var emailEl = document.getElementById('sale-traspaso-contactoEmail');
+                if (cnEl) cnEl.value = first.nombre || '';
+                if (telEl) telEl.value = first.telefono || '';
+                if (emailEl) emailEl.value = first.email || '';
+                // Auto-expand traspaso
+                var traspasoFields = document.getElementById('traspaso-fields');
+                var traspasoArrow = document.getElementById('traspaso-arrow');
+                if (traspasoFields && traspasoFields.style.display === 'none') {
+                    traspasoFields.style.display = 'block';
+                    if (traspasoArrow) traspasoArrow.style.transform = 'rotate(180deg)';
+                }
+                // Show contact chips
+                if (window.Mazelab.Autocomplete && window.Mazelab.Autocomplete.showContactChips && cnEl) {
+                    window.Mazelab.Autocomplete.showContactChips(
+                        cnEl, contactos,
+                        'sale-traspaso-contactoTel', 'sale-traspaso-contactoEmail'
+                    );
+                }
+            }
+            clientInput.addEventListener('change', onClientPicked);
+            clientInput.addEventListener('input', function () {
+                if (clientContactMap[clientInput.value.trim()]) onClientPicked();
+            });
         }
 
         // Staff dropdown

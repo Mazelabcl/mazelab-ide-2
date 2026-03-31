@@ -1603,9 +1603,41 @@ window.Mazelab.Modules.CotizadorModule = (function () {
             });
         }
 
-        // Client autocomplete with contact auto-fill
-        if (window.Mazelab.Autocomplete) {
-            window.Mazelab.Autocomplete.attachClientAutocomplete('cot-clientName', 'cot-contactName', 'cot-contactTel', 'cot-contactEmail');
+        // Client contact auto-fill — uses already-loaded clients array
+        var cotClientInput = document.getElementById('cot-clientName');
+        if (cotClientInput && clients.length > 0) {
+            var cotClientContactMap = {};
+            clients.forEach(function (c) {
+                var name = c.name || c.nombre || c.clientName || '';
+                if (!name || cotClientContactMap[name]) return;
+                var contactos = [];
+                if (Array.isArray(c.contactos) && c.contactos.length) {
+                    contactos = c.contactos;
+                } else if (Array.isArray(c.ejecutivos) && c.ejecutivos.length) {
+                    contactos = c.ejecutivos.map(function (n) { return { nombre: n, telefono: '', email: '' }; });
+                }
+                cotClientContactMap[name] = contactos;
+            });
+            function onCotClientPicked() {
+                var val = cotClientInput.value.trim();
+                var contactos = cotClientContactMap[val];
+                if (!contactos || !contactos.length) return;
+                var first = contactos[0];
+                var cnEl = document.getElementById('cot-contactName');
+                var telEl = document.getElementById('cot-contactTel');
+                var emailEl = document.getElementById('cot-contactEmail');
+                if (cnEl) cnEl.value = first.nombre || '';
+                if (telEl) telEl.value = first.telefono || '';
+                if (emailEl) emailEl.value = first.email || '';
+                // Show contact chips if multiple contacts
+                if (contactos.length > 1 && cnEl && window.Mazelab.Autocomplete && window.Mazelab.Autocomplete.showContactChips) {
+                    window.Mazelab.Autocomplete.showContactChips(cnEl, contactos, 'cot-contactTel', 'cot-contactEmail');
+                }
+            }
+            cotClientInput.addEventListener('change', onCotClientPicked);
+            cotClientInput.addEventListener('input', function () {
+                if (cotClientContactMap[cotClientInput.value.trim()]) onCotClientPicked();
+            });
         }
     }
 
