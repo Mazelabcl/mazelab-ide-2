@@ -560,8 +560,6 @@ window.Mazelab.Modules.SalesModule = (function () {
 
         if (!overlay || !form) return;
 
-        populateDropdowns();
-
         if (sale) {
             editingId = sale.id;
             title.textContent = 'Editar Venta';
@@ -656,6 +654,9 @@ window.Mazelab.Modules.SalesModule = (function () {
         }
 
         overlay.classList.add('active');
+
+        // Populate dropdowns AFTER modal is visible (datalist needs visible parent)
+        populateDropdowns();
 
         // Service search filter
         var svcSearch = document.getElementById('sale-svc-search');
@@ -779,21 +780,37 @@ window.Mazelab.Modules.SalesModule = (function () {
                         sourceType: 'auto'
                     });
                 }
+                // Separate invoiced CXCs from sinFactura (residual)
+                var totalAlreadyInvoiced = 0;
                 for (var ri = 0; ri < linkedCXCs.length; ri++) {
-                    var cxcUpdate = {
-                        eventName: data.eventName,
-                        eventDate: data.eventDate,
-                        clientName: data.clientName,
-                        monto_venta: data.amount || 0
-                    };
-                    // Also update montoNeto/amount if CXC is not yet invoiced
                     var cxcRec = linkedCXCs[ri];
-                    var isInvoiced = cxcRec.montoFacturado > 0 || cxcRec.invoicedAmount > 0;
-                    if (!isInvoiced) {
-                        cxcUpdate.montoNeto = data.amount || 0;
-                        cxcUpdate.amount = data.amount || 0;
+                    var hasInvoice = cxcRec.invoiceNumber && cxcRec.invoiceNumber !== '';
+                    if (hasInvoice) {
+                        // Already invoiced: only update event metadata, NOT amounts
+                        totalAlreadyInvoiced += Number(cxcRec.montoNeto || cxcRec.invoicedAmount || cxcRec.monto_venta || 0);
+                        await DS.update('receivables', cxcRec.id, {
+                            eventName: data.eventName,
+                            eventDate: data.eventDate,
+                            clientName: data.clientName
+                        });
                     }
-                    await DS.update('receivables', cxcRec.id, cxcUpdate);
+                }
+                // Update sinFactura (residual) CXCs with correct remaining amount
+                var newSaleAmount = data.amount || 0;
+                var residualAmount = Math.max(0, newSaleAmount - totalAlreadyInvoiced);
+                for (var ri2 = 0; ri2 < linkedCXCs.length; ri2++) {
+                    var cxcRec2 = linkedCXCs[ri2];
+                    var hasInvoice2 = cxcRec2.invoiceNumber && cxcRec2.invoiceNumber !== '';
+                    if (!hasInvoice2) {
+                        await DS.update('receivables', cxcRec2.id, {
+                            eventName: data.eventName,
+                            eventDate: data.eventDate,
+                            clientName: data.clientName,
+                            monto_venta: residualAmount,
+                            montoNeto: residualAmount,
+                            amount: residualAmount
+                        });
+                    }
                 }
                 // Sincronizar CXP vinculados con datos actualizados
                 var allPayables = await DS.getAll('payables') || [];
