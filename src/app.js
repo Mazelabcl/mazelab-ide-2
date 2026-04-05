@@ -129,6 +129,11 @@ window.Mazelab.Modules = window.Mazelab.Modules || {};
             window.Mazelab.AlertsPanel.init();
         }
 
+        // Initialize chatbot (only if AI service has API key)
+        if (window.Mazelab.Chatbot) {
+            window.Mazelab.Chatbot.init();
+        }
+
         // Set up nav clicks + mobile sidebar close
         var sidebar = document.querySelector('.sidebar');
         document.querySelectorAll('.nav-item').forEach(item => {
