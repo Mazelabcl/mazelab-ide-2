@@ -15,6 +15,7 @@ window.Mazelab.Modules = window.Mazelab.Modules || {};
         cotizador: 'CotizadorModule',
         cashflow: 'CashflowModule',
         analytics: 'AnalyticsModule',
+        'cxc-kanban': 'CxcKanbanModule',
         settings: 'SettingsModule',
         import: 'ImportModule'
     };

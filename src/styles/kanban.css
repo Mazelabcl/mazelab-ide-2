@@ -525,3 +525,13 @@
         max-width: 100%;
     }
 }
+
+/* ============================
+   CXC Kanban — column overrides
+   ============================ */
+.cxc-kanban-board .kanban-column[data-col="4"] .kanban-col-header {
+    border-bottom-color: var(--danger);
+}
+.cxc-kanban-board .kanban-column[data-col="4"] .kanban-col-count {
+    background: var(--danger);
+}

@@ -143,6 +143,8 @@ window.Mazelab.Modules.FinanceModule = (function () {
         if (r.status === 'anulada') return 'anulada';
         // 3. Pagada
         if (r.status === 'pagado' || r.status === 'pagada') return 'pagada';
+        // 3b. En gestion (manually set via CXC Kanban)
+        if (r.status === 'en_gestion') return 'en_gestion';
         // 4. Pendiente factura by status — differentiate pre/post evento
         if (r.status === 'pendiente_factura' || r.status === 'sin_factura' || getMontoFacturado(r) <= 0) {
             var evDate = getEffectiveEventDate(r);
