@@ -63,7 +63,12 @@ window.Mazelab.Modules = window.Mazelab.Modules || {};
             setTimeout(() => {
                 wrapTables();
                 const p = mod.init();
-                if (p && p.then) p.then(wrapTables);
+                if (p && p.then) p.then(function () {
+                    wrapTables();
+                    // Refresh alerts badge after data loads
+                    if (window.Mazelab.AlertsService) window.Mazelab.AlertsService.invalidate();
+                    if (window.Mazelab.AlertsPanel) window.Mazelab.AlertsPanel.refresh();
+                });
                 setTimeout(wrapTables, 500);
             }, 0);
         }
@@ -116,6 +121,11 @@ window.Mazelab.Modules = window.Mazelab.Modules || {};
             } catch (e) {
                 console.warn('DataService init failed, using localStorage fallback:', e);
             }
+        }
+
+        // Initialize alerts panel (bell + badge)
+        if (window.Mazelab.AlertsPanel) {
+            window.Mazelab.AlertsPanel.init();
         }
 
         // Set up nav clicks + mobile sidebar close
