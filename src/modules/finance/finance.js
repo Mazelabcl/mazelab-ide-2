@@ -49,8 +49,9 @@ window.Mazelab.Modules.FinanceModule = (function () {
 
     function getPendienteFacturado(r) {
         var pagado = getTotalPagado(r);
-        if (r.tipoDoc === 'E') return getMontoFacturado(r) - pagado;
-        return (getMontoFacturado(r) * 1.19) - pagado;
+        var ncOffset = (r._ncOffset || 0) * 1.19; // NC is stored as neto, convert to IVA included
+        if (r.tipoDoc === 'E') return Math.max(0, getMontoFacturado(r) - pagado - (r._ncOffset || 0));
+        return Math.max(0, (getMontoFacturado(r) * 1.19) - pagado - ncOffset);
     }
 
     function isIvaPaid(mesEmision) {
@@ -296,9 +297,33 @@ window.Mazelab.Modules.FinanceModule = (function () {
         var facturadoVencido60 = [];
         var facturadoVencido90 = [];
 
+        // Build NC offset map: sum NC amounts by linked invoice number or sourceId
+        var ncByInvoice = {}; // invoiceNumber → total NC amount
+        var ncBySourceId = {}; // sourceId → total NC amount
+        receivables.forEach(function (r) {
+            if (r.tipoDoc !== 'NC') return;
+            var ncAmt = Number(r.montoFacturado || r.montoNeto || r.invoicedAmount || 0);
+            if (r.ncAsociada) {
+                ncByInvoice[r.ncAsociada] = (ncByInvoice[r.ncAsociada] || 0) + ncAmt;
+            }
+            if (r.sourceId) {
+                ncBySourceId[String(r.sourceId)] = (ncBySourceId[String(r.sourceId)] || 0) + ncAmt;
+            }
+        });
+
         receivables.forEach(function (r) {
             var realStatus = getRealTimeStatus(r);
             r._realStatus = realStatus;
+
+            // Compute NC offset for this invoice
+            r._ncOffset = 0;
+            if (r.tipoDoc !== 'NC') {
+                if (r.invoiceNumber && ncByInvoice[r.invoiceNumber]) {
+                    r._ncOffset = ncByInvoice[r.invoiceNumber];
+                } else if (r.sourceId && ncBySourceId[String(r.sourceId)]) {
+                    r._ncOffset = ncBySourceId[String(r.sourceId)];
+                }
+            }
 
             // facturas: tipoDoc = F, E, H, or empty. Exclude NC.
             if (r.tipoDoc !== 'NC') {
@@ -332,8 +357,9 @@ window.Mazelab.Modules.FinanceModule = (function () {
                 getMontoFacturado(r) > 0
             ) {
                 var pagado = getTotalPagado(r);
-                var montoTotal = r.tipoDoc === 'E' ? getMonto(r) : (getMontoFacturado(r) * 1.19);
-                if (pagado < montoTotal) {
+                var ncOff = (r._ncOffset || 0);
+                var montoTotal = r.tipoDoc === 'E' ? getMonto(r) - ncOff : (getMontoFacturado(r) * 1.19) - (ncOff * 1.19);
+                if (montoTotal > 0 && pagado < montoTotal) {
                     facturadoPendientes.push(r);
 
                     // Sub-clasificar por días desde emisión de factura (billingMonth)
@@ -1129,7 +1155,7 @@ window.Mazelab.Modules.FinanceModule = (function () {
                         if (base) overdue = Math.max(0, Math.floor((new Date() - base) / 86400000) - (Number(r.paymentTerms) || 30));
                     }
                     return '<tr>' +
-                        '<td style="padding:4px 6px;font-size:12px;">' + (r.sourceId || r.id || '-') + '</td>' +
+                        '<td style="padding:4px 6px;font-size:12px;">' + (r.sourceId || '-') + '</td>' +
                         '<td style="padding:4px 6px;font-size:12px;">' + escapeHtml(r.clientName || '') + '</td>' +
                         '<td style="padding:4px 6px;font-size:12px;">' + escapeHtml(r.eventName || '') + '</td>' +
                         '<td style="padding:4px 6px;font-size:12px;">' + (r.tipoDoc || '') + (r.numDoc || r.invoiceNumber ? ' #' + (r.numDoc || r.invoiceNumber) : '') + '</td>' +

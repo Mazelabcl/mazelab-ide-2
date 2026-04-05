@@ -1045,13 +1045,20 @@ window.Mazelab.Modules.SalesModule = (function () {
             const allReceivables = await DS.getAll('receivables') || [];
             const allPayables = await DS.getAll('payables') || [];
 
+            var saleSourceId = sale ? String(sale.sourceId || '') : '';
             const linkedCXC = allReceivables.filter(function (r) {
-                return String(r.saleId) === String(id) ||
-                    (r.sourceType === 'auto' && sale && r.eventName === sale.eventName && r.eventDate === sale.eventDate);
+                if (String(r.saleId) === String(id)) return true;
+                if (saleSourceId && String(r.saleId) === saleSourceId) return true;
+                if (saleSourceId && String(r.sourceId) === saleSourceId) return true;
+                if (r.sourceType === 'auto' && sale && r.eventName === sale.eventName && r.eventDate === sale.eventDate) return true;
+                return false;
             });
             const linkedCXP = allPayables.filter(function (p) {
-                return String(p.saleId) === String(id) ||
-                    (p.sourceType === 'auto' && sale && p.eventName === sale.eventName && p.eventDate === sale.eventDate);
+                if (String(p.saleId) === String(id)) return true;
+                if (saleSourceId && String(p.saleId) === saleSourceId) return true;
+                if (saleSourceId && String(p.eventId) === saleSourceId) return true;
+                if (p.sourceType === 'auto' && sale && p.eventName === sale.eventName && p.eventDate === sale.eventDate) return true;
+                return false;
             });
 
             // Build warning message

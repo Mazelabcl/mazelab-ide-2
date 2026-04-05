@@ -1001,6 +1001,16 @@ window.Mazelab.Modules.KanbanModule = (function () {
                 (di.label ? '<span style="font-size:11px;font-weight:600;color:' + di.color + '">\u23f1 ' + di.label + '</span>' : '') +
             '</div>' +
             '<div class="kanban-card-client">' + (sale.clientName || '-') + '</div>' +
+            (function () {
+                var tr = sale.traspaso || {};
+                var cName = tr.contactoNombre || '';
+                var cTel = tr.contactoTel || '';
+                if (!cName && !cTel) return '';
+                var parts = [];
+                if (cName) parts.push(cName);
+                if (cTel) parts.push('<a href="tel:' + cTel + '" style="color:var(--accent);text-decoration:none;" onclick="event.stopPropagation()">' + cTel + '</a>');
+                return '<div style="font-size:11px;color:var(--text-secondary);margin:2px 0;display:flex;gap:6px;align-items:center;flex-wrap:wrap;">' + parts.join(' \u00b7 ') + '</div>';
+            })() +
             '<div class="kanban-card-title">' + (sale.eventName || '-') + '</div>' +
             '<div class="kanban-card-date" style="font-size:12px;color:var(--text-muted);margin-bottom:4px">' + formatDate(sale.eventDate) + '</div>' +
             svcTags +

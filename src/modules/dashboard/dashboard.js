@@ -621,12 +621,18 @@ window.Mazelab.Modules.DashboardModule = (function () {
             html += '<div style="text-align:right;"><div style="font-size:11px;color:var(--text-secondary);">' + lastYear + '</div><div style="font-size:14px;font-weight:600;color:var(--text-secondary);">' + formatCLPShort(prev.total) + '</div><div style="font-size:11px;color:var(--text-secondary);">' + prev.count + ' ventas</div></div>';
             html += '</div>';
 
-            // Top 3 events of current year quarter
-            var top = curr.topEvents.slice(0, 3);
-            if (top.length > 0) {
+            // Top events from LAST YEAR for this quarter (re-contact opportunities)
+            var prevTop = prev.topEvents.slice(0, 5);
+            if (prevTop.length > 0) {
+                var bigThreshold = prev.total * 0.15; // events that were >15% of the Q
                 html += '<div style="border-top:1px solid var(--border-color);padding-top:6px;margin-top:4px;">';
-                top.forEach(function (ev) {
-                    html += '<div style="font-size:11px;display:flex;justify-content:space-between;padding:2px 0;"><span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:65%;">' + escapeHtml(ev.name) + '</span><span style="font-weight:600;font-variant-numeric:tabular-nums;">' + formatCLPShort(ev.amount) + '</span></div>';
+                html += '<div style="font-size:10px;font-weight:600;color:var(--accent);margin-bottom:4px;">Top ' + lastYear + ' \u2014 re-contactar:</div>';
+                prevTop.forEach(function (ev) {
+                    var isBig = ev.amount >= bigThreshold;
+                    html += '<div style="font-size:11px;display:flex;justify-content:space-between;padding:2px 0;' + (isBig ? 'background:rgba(139,92,246,0.08);border-radius:4px;padding:3px 4px;' : '') + '">' +
+                        '<span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:60%;">' + (isBig ? '\u26a1 ' : '') + escapeHtml(ev.name) + '</span>' +
+                        '<span style="font-weight:600;font-variant-numeric:tabular-nums;' + (isBig ? 'color:var(--accent);' : '') + '">' + formatCLPShort(ev.amount) + '</span>' +
+                    '</div>';
                 });
                 html += '</div>';
             }
