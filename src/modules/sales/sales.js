@@ -288,6 +288,10 @@ window.Mazelab.Modules.SalesModule = (function () {
                             <label for="sale-amount">Monto</label>
                             <input type="number" id="sale-amount" class="form-control" min="0" step="1" placeholder="0" />
                         </div>
+                        <div class="form-group" style="flex:0 0 100px;">
+                            <label for="sale-comision">% Comisi&oacute;n</label>
+                            <input type="number" id="sale-comision" class="form-control" min="0" max="100" step="0.5" placeholder="0" />
+                        </div>
                     </div>
 
                     <div class="form-group">
@@ -660,6 +664,7 @@ window.Mazelab.Modules.SalesModule = (function () {
             document.getElementById('sale-closing-date').value = closingVal;
             document.getElementById('sale-jornadas').value = sale.jornadas != null ? sale.jornadas : '';
             document.getElementById('sale-amount').value = sale.amount != null ? sale.amount : '';
+            document.getElementById('sale-comision').value = sale.comisionPct != null ? sale.comisionPct : '';
 
             // Staff — prefer staffId; fallback to name-match for imported records
             var staffSelEl = document.getElementById('sale-staff');
@@ -838,6 +843,7 @@ window.Mazelab.Modules.SalesModule = (function () {
             comments: document.getElementById('sale-comments').value,
             hasIssue: document.getElementById('sale-has-issue').checked,
             refundAmount: document.getElementById('sale-refund-amount').value ? Number(document.getElementById('sale-refund-amount').value) : 0,
+            comisionPct: document.getElementById('sale-comision').value ? Number(document.getElementById('sale-comision').value) : 0,
             traspaso: buildTraspasoObject()
         };
     }

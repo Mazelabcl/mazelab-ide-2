@@ -197,9 +197,15 @@ window.Mazelab.Modules.DashboardModule = (function () {
         var totalVentas = 0;
         var countVentas = sales.length;
         var totalRefunds = 0;
+        var now = new Date();
+        var thisMonthKey = now.getFullYear() + '-' + String(now.getMonth() + 1).padStart(2, '0');
+        var monthVentas = 0, monthCount = 0;
         sales.forEach(function (s) {
-            totalVentas += Number(s.amount || s.monto_venta || 0);
+            var amt = Number(s.amount || s.monto_venta || 0);
+            totalVentas += amt;
             totalRefunds += Number(s.refundAmount || s.monto_devolucion || 0);
+            var ed = getSaleDate(s);
+            if (ed && ed.substring(0, 7) === thisMonthKey) { monthVentas += amt; monthCount++; }
         });
 
         // CXC — delegate to FinanceModule for consistent calculation
@@ -270,6 +276,11 @@ window.Mazelab.Modules.DashboardModule = (function () {
                     '<div class="kpi-label">Margen Hist\u00f3rico</div>' +
                     '<div class="kpi-value ' + (margen >= 0 ? 'text-success' : 'text-danger') + '">' + formatCLP(margen) + '</div>' +
                     '<div class="kpi-sub">Ventas - costos directos</div>' +
+                '</div>' +
+                '<div class="kpi-card">' +
+                    '<div class="kpi-label">Ventas del Mes</div>' +
+                    '<div class="kpi-value">' + formatCLP(monthVentas) + '</div>' +
+                    '<div class="kpi-sub">' + monthCount + ' ventas este mes</div>' +
                 '</div>' +
             '</div>';
 
@@ -389,7 +400,9 @@ window.Mazelab.Modules.DashboardModule = (function () {
         return parseLocalDate(str);
     }
 
-    // --- Reusable: YoY Chart ---
+    // --- Reusable: YoY Chart (Chart.js canvas) ---
+    var _yoyChartInstance = null;
+
     function buildYoYChart(sales) {
         var now = new Date();
         var thisYear = now.getFullYear();
@@ -408,61 +421,6 @@ window.Mazelab.Modules.DashboardModule = (function () {
             if (yoyData[y]) yoyData[y][m] += Number(s.amount || s.monto_venta || 0);
         });
 
-        // Audit: compare against user's known IDs per month
-        console.log('[Dashboard YoY] Totales:');
-        [thisYear, lastYear, twoYearsAgo].forEach(function (y) {
-            console.log('  ' + y + ':', months.map(function (m, i) { return m + ': ' + formatCLPShort(yoyData[y][i]); }).join(' | '));
-        });
-        var expectedIds = {
-            '01': ['827','828','829','830','831','832','833','834','835','836','841','883'],
-            '02': ['837','838','839','840','842','843','844','845','846','847','848','849','850','851','852','853','854','855','856','857','858','859','860'],
-            '03': ['861','862','863','864','865','866','867','868','869','870','871','872','873','874','875','876','877','878','879','880','881','882']
-        };
-        var dashMonth = { '01': [], '02': [], '03': [] };
-        sales.forEach(function (s) {
-            var ed = getSaleDate(s);
-            var d = parseFuzzyDate(ed);
-            if (!d || d.getFullYear() !== thisYear) return;
-            var mm = String(d.getMonth() + 1).padStart(2, '0');
-            if (dashMonth[mm]) dashMonth[mm].push(String(s.sourceId || s.id));
-        });
-        // Check for sales with NO date at all
-        var noDate = [];
-        ['863','864','865','866','867','868','869','870','871','872','873','874','875','876','877','878','879','880','881','882','883'].forEach(function (id) {
-            var s = sales.find(function (x) { return String(x.sourceId || x.id) === id; });
-            if (s) noDate.push({ id: id, closing: s.closingDate || '-', event: s.eventDate || s.event_date || '-', amt: Number(s.amount || 0) });
-            else noDate.push({ id: id, closing: 'NOT FOUND', event: 'NOT FOUND', amt: 0 });
-        });
-        console.log('[AUDIT] Ventas 863-883 sin fecha:');
-        console.table(noDate);
-        ['01','02','03'].forEach(function (mm) {
-            var expected = expectedIds[mm];
-            var got = dashMonth[mm];
-            var missing = expected.filter(function (id) { return got.indexOf(id) === -1; });
-            var extra = got.filter(function (id) { return expected.indexOf(id) === -1; });
-            var total = 0;
-            got.forEach(function (id) {
-                var s = sales.find(function (x) { return String(x.sourceId || x.id) === id; });
-                if (s) total += Number(s.amount || 0);
-            });
-            console.log('[AUDIT ' + months[Number(mm) - 1] + ' ' + thisYear + '] Esperados: ' + expected.length + ' | Dashboard: ' + got.length + ' | Total: ' + formatCLPShort(total));
-            if (missing.length) console.log('  FALTAN en dashboard:', missing.join(', '));
-            if (extra.length) console.log('  EXTRA en dashboard:', extra.join(', '));
-            // Show each sale with date used
-            got.forEach(function (id) {
-                var s = sales.find(function (x) { return String(x.sourceId || x.id) === id; });
-                if (s) console.log('    ' + id + ' | ' + (s.clientName || '').substring(0, 15) + ' | $' + (Number(s.amount || 0) / 1000000).toFixed(1) + 'M | closing:' + (s.closingDate || '-') + ' | event:' + (s.eventDate || '-'));
-            });
-        });
-        var maxYoY = 1;
-        [thisYear, lastYear, twoYearsAgo].forEach(function (y) {
-            yoyData[y].forEach(function (v) { if (v > maxYoY) maxYoY = v; });
-        });
-        var colors = {};
-        colors[thisYear] = '#00e676';
-        colors[lastYear] = '#fbbf24';
-        colors[twoYearsAgo] = '#334155';
-
         // Store sales by year-month for click detail
         var salesByYM = {};
         sales.forEach(function (s) {
@@ -475,31 +433,12 @@ window.Mazelab.Modules.DashboardModule = (function () {
             salesByYM[key].push({ id: s.sourceId || s.id, client: s.clientName || '', event: s.eventName || '', amt: Number(s.amount || 0), date: ed });
         });
         window._yoySalesByMonth = salesByYM;
+        window._yoyData = yoyData;
+        window._yoyYears = [thisYear, lastYear, twoYearsAgo];
 
-        var yoyBars = '';
-        for (var mi = 0; mi < 12; mi++) {
-            var bars = '';
-            [twoYearsAgo, lastYear, thisYear].forEach(function (y) {
-                var val = yoyData[y][mi];
-                var pct = Math.round((val / maxYoY) * 100);
-                bars += '<div style="flex:1;background:' + colors[y] + ';height:' + Math.max(pct, 2) + '%;border-radius:2px 2px 0 0;" title="' + y + ': ' + formatCLP(val) + '"></div>';
-            });
-            var isCurrentMonth = mi === now.getMonth();
-            var monthKey = thisYear + '-' + String(mi + 1).padStart(2, '0');
-            yoyBars += '<div class="yoy-month-col" data-month="' + monthKey + '" style="display:flex;flex-direction:column;align-items:center;flex:1;gap:6px;cursor:pointer;">' +
-                '<div style="font-size:13px;font-weight:700;color:var(--text-primary);">' + formatCLPShort(yoyData[thisYear][mi]) + '</div>' +
-                '<div style="width:100%;height:220px;display:flex;align-items:flex-end;gap:3px;">' + bars + '</div>' +
-                '<span style="font-size:12px;color:' + (isCurrentMonth ? 'var(--accent-primary)' : 'var(--text-secondary)') + ';font-weight:' + (isCurrentMonth ? '700' : '400') + ';">' + months[mi] + '</span>' +
-            '</div>';
-        }
-        var yoyLegend = '<div style="display:flex;gap:20px;justify-content:center;margin-top:12px;font-size:13px;font-weight:600;">';
-        [thisYear, lastYear, twoYearsAgo].forEach(function (y) {
-            yoyLegend += '<span><span style="display:inline-block;width:12px;height:12px;border-radius:2px;background:' + colors[y] + ';vertical-align:middle;margin-right:4px;"></span>' + y + ' (' + formatCLPShort(yoyData[y].reduce(function (a, b) { return a + b; }, 0)) + ')</span>';
-        });
-        yoyLegend += '</div>';
         // YoY summary table
         var yoyTable = '<table style="width:100%;border-collapse:collapse;font-size:13px;margin-top:12px;">';
-        yoyTable += '<thead><tr><th style="text-align:left;padding:3px 6px;color:var(--text-secondary);font-size:11px;">Año</th>';
+        yoyTable += '<thead><tr><th style="text-align:left;padding:3px 6px;color:var(--text-secondary);font-size:11px;">Ano</th>';
         months.forEach(function (m) { yoyTable += '<th style="text-align:right;padding:3px 4px;color:var(--text-secondary);font-size:11px;">' + m + '</th>'; });
         yoyTable += '<th style="text-align:right;padding:3px 6px;color:var(--text-secondary);font-size:11px;font-weight:700;">Total</th></tr></thead><tbody>';
         [thisYear, lastYear, twoYearsAgo].forEach(function (y) {
@@ -513,11 +452,113 @@ window.Mazelab.Modules.DashboardModule = (function () {
         yoyTable += '</tbody></table>';
 
         return '<div class="card" style="margin-bottom:var(--space-md);">' +
-            '<div class="card-header"><span class="card-title">Ventas por Mes — Comparativa Anual</span><span style="font-size:11px;color:var(--text-muted);">Click en un mes para ver detalle</span></div>' +
-            '<div style="display:flex;gap:8px;align-items:flex-end;padding:var(--space-lg) var(--space-sm);">' + yoyBars + '</div>' +
-            yoyLegend + yoyTable +
+            '<div class="card-header"><span class="card-title">Ventas por Mes \u2014 Comparativa Anual</span><span style="font-size:11px;color:var(--text-muted);">Click en barra para ver detalle</span></div>' +
+            '<div style="position:relative;height:320px;padding:var(--space-sm);"><canvas id="yoy-chart-canvas"></canvas></div>' +
+            yoyTable +
             '<div id="yoy-month-detail" style="display:none;margin-top:12px;max-height:400px;overflow-y:auto;"></div>' +
             '</div>';
+    }
+
+    function renderYoYChartCanvas() {
+        var canvas = document.getElementById('yoy-chart-canvas');
+        if (!canvas || typeof Chart === 'undefined' || !window._yoyData) return;
+        var yoyData = window._yoyData;
+        var years = window._yoyYears;
+        var thisYear = years[0], lastYear = years[1], twoYearsAgo = years[2];
+        var months = ['Ene','Feb','Mar','Abr','May','Jun','Jul','Ago','Sep','Oct','Nov','Dic'];
+
+        if (_yoyChartInstance) { _yoyChartInstance.destroy(); _yoyChartInstance = null; }
+
+        _yoyChartInstance = new Chart(canvas, {
+            type: 'bar',
+            data: {
+                labels: months,
+                datasets: [
+                    {
+                        label: String(thisYear),
+                        data: yoyData[thisYear],
+                        backgroundColor: 'rgba(0, 230, 118, 0.7)',
+                        borderColor: '#00e676',
+                        borderWidth: 1,
+                        borderRadius: 3,
+                        order: 1
+                    },
+                    {
+                        label: String(lastYear),
+                        data: yoyData[lastYear],
+                        backgroundColor: 'rgba(251, 191, 36, 0.5)',
+                        borderColor: '#fbbf24',
+                        borderWidth: 1,
+                        borderRadius: 3,
+                        order: 2
+                    },
+                    {
+                        label: String(twoYearsAgo),
+                        data: yoyData[twoYearsAgo],
+                        backgroundColor: 'rgba(51, 65, 85, 0.5)',
+                        borderColor: '#475569',
+                        borderWidth: 1,
+                        borderRadius: 3,
+                        order: 3
+                    }
+                ]
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                interaction: { mode: 'index', intersect: false },
+                plugins: {
+                    legend: {
+                        position: 'top',
+                        labels: { color: '#cbd5e1', font: { size: 12 }, usePointStyle: true, pointStyle: 'rectRounded' }
+                    },
+                    tooltip: {
+                        callbacks: {
+                            label: function (ctx) {
+                                return ctx.dataset.label + ': ' + formatCLP(ctx.parsed.y);
+                            }
+                        }
+                    }
+                },
+                scales: {
+                    x: {
+                        ticks: { color: '#94a3b8', font: { size: 11 } },
+                        grid: { color: 'rgba(255,255,255,0.05)' }
+                    },
+                    y: {
+                        ticks: {
+                            color: '#94a3b8',
+                            font: { size: 11 },
+                            callback: function (v) { return formatCLPShort(v); }
+                        },
+                        grid: { color: 'rgba(255,255,255,0.06)' }
+                    }
+                },
+                onClick: function (evt, elements) {
+                    if (!elements.length) return;
+                    var idx = elements[0].index;
+                    var yr = years[0]; // default to this year
+                    var monthKey = yr + '-' + String(idx + 1).padStart(2, '0');
+                    var detailEl = document.getElementById('yoy-month-detail');
+                    if (!detailEl || !window._yoySalesByMonth) return;
+                    if (detailEl.dataset.open === monthKey) { detailEl.style.display = 'none'; detailEl.dataset.open = ''; return; }
+                    detailEl.dataset.open = monthKey;
+                    var items = window._yoySalesByMonth[monthKey] || [];
+                    var total = items.reduce(function (a, b) { return a + b.amt; }, 0);
+                    var h = '<div style="padding:10px;border-top:1px solid var(--border-color);">';
+                    h += '<h4 style="margin:0 0 8px;color:var(--accent-primary);">' + monthKey + ' \u2014 ' + formatCLP(total) + ' (' + items.length + ' ventas)</h4>';
+                    h += '<table style="width:100%;border-collapse:collapse;font-size:12px;">';
+                    h += '<thead><tr><th style="text-align:left;padding:4px;">ID</th><th style="text-align:left;padding:4px;">Cliente</th><th style="text-align:left;padding:4px;">Evento</th><th style="text-align:right;padding:4px;">Monto</th><th style="text-align:left;padding:4px;">Fecha</th></tr></thead><tbody>';
+                    items.sort(function (a, b) { return b.amt - a.amt; });
+                    items.forEach(function (it) {
+                        h += '<tr style="border-bottom:1px solid var(--border-subtle);"><td style="padding:3px 4px;">' + it.id + '</td><td style="padding:3px 4px;">' + escapeHtml(it.client) + '</td><td style="padding:3px 4px;">' + escapeHtml(it.event) + '</td><td style="padding:3px 4px;text-align:right;font-variant-numeric:tabular-nums;font-weight:600;">' + formatCLP(it.amt) + '</td><td style="padding:3px 4px;">' + it.date + '</td></tr>';
+                    });
+                    h += '</tbody></table></div>';
+                    detailEl.innerHTML = h;
+                    detailEl.style.display = 'block';
+                }
+            }
+        });
     }
 
     // --- Quarterly comparison with top events ---
@@ -754,7 +795,110 @@ window.Mazelab.Modules.DashboardModule = (function () {
             '<table class="data-table"><thead><tr><th>Cliente</th><th class="text-right">Eventos</th><th class="text-right">Monto</th></tr></thead><tbody>' + clientRows + '</tbody>' +
             '<tbody id="dash-cli-full" style="display:none;">' + clientFullRows + '</tbody></table>' + clientVerMas + '</div>';
 
-        return '<div class="kpi-grid-2">' + svcCardHTML + clientCardHTML + '</div>' + execCardHTML;
+        // Commission card
+        var commHTML = buildCommissionCard(sales, staffMap);
+
+        return '<div class="kpi-grid-2">' + svcCardHTML + clientCardHTML + '</div>' + execCardHTML + commHTML;
+    }
+
+    // Store staffMap for commission chart
+    var _cachedStaffMap = {};
+
+    function buildCommissionCard(sales, staffMap) {
+        _cachedStaffMap = staffMap || {};
+        var now = new Date();
+        var thisYear = now.getFullYear();
+        var commByExec = {};
+        var totalComm = 0;
+
+        sales.forEach(function (s) {
+            var ed = s.eventDate || s.event_date || '';
+            var y = ed ? new Date(ed).getFullYear() : 0;
+            if (y !== thisYear) return;
+            var pct = Number(s.comisionPct || 0);
+            if (pct <= 0) return;
+            var amt = Number(s.amount || s.monto_venta || 0);
+            var comm = Math.round(amt * pct / 100);
+            var exec = s.staffName || s.ejecutivo || s.vendedor || 'Sin asignar';
+            if (!commByExec[exec]) commByExec[exec] = { name: exec, total: 0, sales: 0, commTotal: 0 };
+            commByExec[exec].sales++;
+            commByExec[exec].total += amt;
+            commByExec[exec].commTotal += comm;
+            totalComm += comm;
+        });
+
+        var execList = Object.values(commByExec).sort(function (a, b) { return b.commTotal - a.commTotal; });
+        // Store for chart
+        window._commByExec = execList;
+
+        if (execList.length === 0) {
+            return '<div class="card" style="margin-bottom:var(--space-md);">' +
+                '<div class="card-header"><span class="card-title">Comisiones</span><span class="badge badge-info">' + thisYear + '</span></div>' +
+                '<div style="padding:20px;text-align:center;color:var(--text-muted);font-size:13px;">Sin comisiones registradas. Agrega % comision al crear ventas.</div>' +
+                '</div>';
+        }
+
+        var rows = execList.map(function (ex) {
+            var avgPct = ex.total > 0 ? (ex.commTotal / ex.total * 100).toFixed(1) : '0';
+            return '<tr>' +
+                '<td style="padding:6px 8px;"><strong>' + escapeHtml(ex.name) + '</strong></td>' +
+                '<td style="padding:6px 8px;text-align:right;">' + ex.sales + '</td>' +
+                '<td style="padding:6px 8px;text-align:right;">' + formatCLP(ex.total) + '</td>' +
+                '<td style="padding:6px 8px;text-align:right;">' + avgPct + '%</td>' +
+                '<td style="padding:6px 8px;text-align:right;font-weight:700;color:var(--accent-primary);">' + formatCLP(ex.commTotal) + '</td>' +
+            '</tr>';
+        }).join('');
+
+        return '<div class="card" style="margin-bottom:var(--space-md);">' +
+            '<div class="card-header" style="display:flex;justify-content:space-between;align-items:center;">' +
+                '<span class="card-title">Comisiones por Ejecutivo</span>' +
+                '<span class="badge badge-success">Total: ' + formatCLP(totalComm) + '</span>' +
+            '</div>' +
+            '<div style="display:flex;gap:var(--space-md);flex-wrap:wrap;">' +
+                '<div style="flex:1;min-width:300px;">' +
+                    '<table class="data-table"><thead><tr>' +
+                        '<th style="padding:6px 8px;">Ejecutivo</th>' +
+                        '<th style="padding:6px 8px;text-align:right;">Ventas</th>' +
+                        '<th style="padding:6px 8px;text-align:right;">Monto</th>' +
+                        '<th style="padding:6px 8px;text-align:right;">% Prom</th>' +
+                        '<th style="padding:6px 8px;text-align:right;">Comision</th>' +
+                    '</tr></thead><tbody>' + rows + '</tbody></table>' +
+                '</div>' +
+                '<div style="flex:0 0 280px;height:220px;"><canvas id="commission-chart-canvas"></canvas></div>' +
+            '</div>' +
+            '</div>';
+    }
+
+    var _commChartInstance = null;
+    function renderCommissionChart() {
+        var canvas = document.getElementById('commission-chart-canvas');
+        if (!canvas || typeof Chart === 'undefined' || !window._commByExec || !window._commByExec.length) return;
+        if (_commChartInstance) { _commChartInstance.destroy(); _commChartInstance = null; }
+        var data = window._commByExec;
+        var colors = ['#8b5cf6','#06b6d4','#f59e0b','#ef4444','#10b981','#ec4899','#6366f1','#14b8a6'];
+        _commChartInstance = new Chart(canvas, {
+            type: 'doughnut',
+            data: {
+                labels: data.map(function (d) { return d.name; }),
+                datasets: [{
+                    data: data.map(function (d) { return d.commTotal; }),
+                    backgroundColor: data.map(function (_, i) { return colors[i % colors.length]; }),
+                    borderWidth: 0
+                }]
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                plugins: {
+                    legend: { position: 'right', labels: { color: '#cbd5e1', font: { size: 11 }, padding: 8 } },
+                    tooltip: {
+                        callbacks: {
+                            label: function (ctx) { return ctx.label + ': ' + formatCLP(ctx.parsed); }
+                        }
+                    }
+                }
+            }
+        });
     }
 
     // ================================================================
@@ -1270,30 +1414,12 @@ window.Mazelab.Modules.DashboardModule = (function () {
             var body = document.getElementById('dashboard-body');
             if (body) {
                 body.innerHTML = buildDashboard(sales, receivables, payables, services);
+                // Render Chart.js YoY chart after DOM is ready
+                renderYoYChartCanvas();
+                // Render commission chart
+                renderCommissionChart();
+
                 body.addEventListener('click', function (e) {
-                    // YoY month click → show sales detail
-                    var yoyCol = e.target.closest('.yoy-month-col');
-                    if (yoyCol) {
-                        var mk = yoyCol.dataset.month;
-                        var detailEl = document.getElementById('yoy-month-detail');
-                        if (detailEl && window._yoySalesByMonth) {
-                            if (detailEl.dataset.open === mk) { detailEl.style.display = 'none'; detailEl.dataset.open = ''; return; }
-                            detailEl.dataset.open = mk;
-                            var items = window._yoySalesByMonth[mk] || [];
-                            var total = items.reduce(function (a, b) { return a + b.amt; }, 0);
-                            var h = '<div style="padding:10px;border-top:1px solid var(--border-color);">';
-                            h += '<h4 style="margin:0 0 8px;color:var(--accent-primary);">' + mk + ' — ' + formatCLP(total) + ' (' + items.length + ' ventas)</h4>';
-                            h += '<table style="width:100%;border-collapse:collapse;font-size:12px;">';
-                            h += '<thead><tr><th style="text-align:left;padding:4px;">ID</th><th style="text-align:left;padding:4px;">Cliente</th><th style="text-align:left;padding:4px;">Evento</th><th style="text-align:right;padding:4px;">Monto</th><th style="text-align:left;padding:4px;">Fecha</th></tr></thead><tbody>';
-                            items.sort(function (a, b) { return b.amt - a.amt; });
-                            items.forEach(function (it) {
-                                h += '<tr style="border-bottom:1px solid var(--border-subtle);"><td style="padding:3px 4px;">' + it.id + '</td><td style="padding:3px 4px;">' + escapeHtml(it.client) + '</td><td style="padding:3px 4px;">' + escapeHtml(it.event) + '</td><td style="padding:3px 4px;text-align:right;font-variant-numeric:tabular-nums;font-weight:600;">' + formatCLP(it.amt) + '</td><td style="padding:3px 4px;">' + it.date + '</td></tr>';
-                            });
-                            h += '</tbody></table></div>';
-                            detailEl.innerHTML = h;
-                            detailEl.style.display = 'block';
-                        }
-                    }
                     // IVA detail toggle
                     var ivaBtn = e.target.closest('.dash-iva-toggle');
                     if (ivaBtn) {
