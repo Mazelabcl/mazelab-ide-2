@@ -796,16 +796,12 @@ window.Mazelab.Modules.DashboardModule = (function () {
             '<tbody id="dash-cli-full" style="display:none;">' + clientFullRows + '</tbody></table>' + clientVerMas + '</div>';
 
         // Commission card
-        var commHTML = buildCommissionCard(sales, staffMap);
+        var commHTML = buildCommissionCard(sales);
 
         return '<div class="kpi-grid-2">' + svcCardHTML + clientCardHTML + '</div>' + execCardHTML + commHTML;
     }
 
-    // Store staffMap for commission chart
-    var _cachedStaffMap = {};
-
-    function buildCommissionCard(sales, staffMap) {
-        _cachedStaffMap = staffMap || {};
+    function buildCommissionCard(sales) {
         var now = new Date();
         var thisYear = now.getFullYear();
         var commByExec = {};
