@@ -517,22 +517,22 @@ window.Mazelab.Modules.FinanceModule = (function () {
         html += preCount + ' pre-evento (' + formatCLP(preMonto) + ')';
         html += '</div>';
         html += '</div>';
-        html += '<div class="kpi-card info">';
+        html += '<div class="kpi-card info" id="kpi-en-plazo" style="cursor:pointer;" title="Click para ver detalle">';
         html += '  <div class="kpi-label">En Plazo</div>';
         html += '  <div class="kpi-value">' + kpis.data.facturadoEnPlazo.length + '</div>';
         html += '  <div class="kpi-sub">' + formatCLP(kpis.totalEnPlazo) + '</div>';
         html += '</div>';
-        html += '<div class="kpi-card warning">';
+        html += '<div class="kpi-card warning" id="kpi-vencida-30" style="cursor:pointer;" title="Click para ver detalle">';
         html += '  <div class="kpi-label">30+ D\u00edas</div>';
         html += '  <div class="kpi-value">' + kpis.data.facturadoVencido30.length + '</div>';
         html += '  <div class="kpi-sub">' + formatCLP(kpis.totalVencido30) + '</div>';
         html += '</div>';
-        html += '<div class="kpi-card danger">';
+        html += '<div class="kpi-card danger" id="kpi-vencida-60" style="cursor:pointer;" title="Click para ver detalle">';
         html += '  <div class="kpi-label">60+ D\u00edas</div>';
         html += '  <div class="kpi-value">' + kpis.data.facturadoVencido60.length + '</div>';
         html += '  <div class="kpi-sub">' + formatCLP(kpis.totalVencido60) + '</div>';
         html += '</div>';
-        html += '<div class="kpi-card danger">';
+        html += '<div class="kpi-card danger" id="kpi-vencida-90" style="cursor:pointer;" title="Click para ver detalle">';
         html += '  <div class="kpi-label">90+ D\u00edas</div>';
         html += '  <div class="kpi-value">' + kpis.data.facturadoVencido90.length + '</div>';
         html += '  <div class="kpi-sub">' + formatCLP(kpis.totalVencido90) + '</div>';
@@ -1098,6 +1098,61 @@ window.Mazelab.Modules.FinanceModule = (function () {
                 });
             });
         }
+
+        // KPI status cards click → show popup with receivables list
+        var kpiStatusCards = [
+            { id: 'kpi-en-plazo', label: 'En Plazo', dataKey: 'facturadoEnPlazo' },
+            { id: 'kpi-vencida-30', label: 'Vencidas 30+ d\u00edas', dataKey: 'facturadoVencido30' },
+            { id: 'kpi-vencida-60', label: 'Vencidas 60+ d\u00edas', dataKey: 'facturadoVencido60' },
+            { id: 'kpi-vencida-90', label: 'Vencidas 90+ d\u00edas', dataKey: 'facturadoVencido90' }
+        ];
+        kpiStatusCards.forEach(function (cfg) {
+            var el = document.getElementById(cfg.id);
+            if (!el) return;
+            el.addEventListener('click', function () {
+                var kpis = computeKPIs(allReceivables);
+                var items = kpis.data[cfg.dataKey] || [];
+                if (items.length === 0) { alert('No hay documentos en esta categor\u00eda.'); return; }
+                var modalContainer = document.getElementById('finance-modal-container');
+                if (!modalContainer) return;
+                var totalMonto = 0;
+                var rows = items.map(function (r) {
+                    var monto = getMonto(r);
+                    var montoIVA = Math.round(monto * 1.19);
+                    totalMonto += montoIVA;
+                    var pagado = getTotalPagado(r);
+                    var pendiente = Math.max(0, montoIVA - pagado);
+                    var evDate = getEffectiveEventDate(r);
+                    var overdue = 0;
+                    if (r.billingMonth || evDate) {
+                        var base = parseLocalDate(r.billingMonth || evDate);
+                        if (base) overdue = Math.max(0, Math.floor((new Date() - base) / 86400000) - (Number(r.paymentTerms) || 30));
+                    }
+                    return '<tr>' +
+                        '<td style="padding:4px 6px;font-size:12px;">' + (r.sourceId || r.id || '-') + '</td>' +
+                        '<td style="padding:4px 6px;font-size:12px;">' + escapeHtml(r.clientName || '') + '</td>' +
+                        '<td style="padding:4px 6px;font-size:12px;">' + escapeHtml(r.eventName || '') + '</td>' +
+                        '<td style="padding:4px 6px;font-size:12px;">' + (r.tipoDoc || '') + (r.numDoc || r.invoiceNumber ? ' #' + (r.numDoc || r.invoiceNumber) : '') + '</td>' +
+                        '<td style="padding:4px 6px;font-size:12px;text-align:right;">' + formatCLP(montoIVA) + '</td>' +
+                        '<td style="padding:4px 6px;font-size:12px;text-align:right;color:var(--success);">' + formatCLP(pagado) + '</td>' +
+                        '<td style="padding:4px 6px;font-size:12px;text-align:right;font-weight:600;color:' + (pendiente > 0 ? 'var(--warning)' : 'var(--success)') + ';">' + formatCLP(pendiente) + '</td>' +
+                        '<td style="padding:4px 6px;font-size:12px;text-align:center;' + (overdue > 30 ? 'color:var(--danger);font-weight:600;' : '') + '">' + (overdue > 0 ? overdue + 'd' : '-') + '</td>' +
+                    '</tr>';
+                }).join('');
+                var html = '<div class="modal-overlay active" id="kpi-status-overlay">' +
+                    '<div class="modal" style="max-width:900px;width:95%">' +
+                    '<div class="modal-header"><h3>' + cfg.label + ' (' + items.length + ') \u2014 ' + formatCLP(totalMonto) + '</h3><button class="modal-close" id="kpi-status-close">&times;</button></div>' +
+                    '<div style="overflow-x:auto;"><table class="data-table"><thead><tr>' +
+                        '<th>ID</th><th>Cliente</th><th>Evento</th><th>Documento</th><th class="text-right">Monto</th><th class="text-right">Pagado</th><th class="text-right">Pendiente</th><th class="text-center">Atraso</th>' +
+                    '</tr></thead><tbody>' + rows + '</tbody></table></div>' +
+                    '<div class="form-actions" style="margin-top:12px"><button class="btn btn-secondary" id="kpi-status-close-btn">Cerrar</button></div>' +
+                    '</div></div>';
+                modalContainer.innerHTML = html;
+                document.getElementById('kpi-status-close').addEventListener('click', function () { modalContainer.innerHTML = ''; });
+                document.getElementById('kpi-status-close-btn').addEventListener('click', function () { modalContainer.innerHTML = ''; });
+                document.getElementById('kpi-status-overlay').addEventListener('click', function (e) { if (e.target === this) modalContainer.innerHTML = ''; });
+            });
+        });
 
         // Abono buttons
         document.querySelectorAll('.btn-abono').forEach(function (btn) {
