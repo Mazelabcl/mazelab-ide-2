@@ -362,18 +362,21 @@ window.Mazelab.Modules.FinanceModule = (function () {
                 if (montoTotal > 0 && pagado < montoTotal) {
                     facturadoPendientes.push(r);
 
-                    // Sub-clasificar por días desde emisión de factura (billingMonth)
-                    var diffDays = 0;
+                    // Sub-clasificar por días de atraso (días desde emisión - paymentTerms)
+                    var daysOverdue = 0;
                     var baseDate = getVencimientoBaseDate(r);
                     if (baseDate) {
-                        diffDays = Math.floor((new Date() - baseDate) / (1000 * 60 * 60 * 24));
+                        var diffDays = Math.floor((new Date() - baseDate) / (1000 * 60 * 60 * 24));
+                        var terms = Number(r.paymentTerms) || 30;
+                        daysOverdue = Math.max(0, diffDays - terms);
                     }
+                    r._daysOverdue = daysOverdue;
 
-                    if (diffDays <= 30) {
+                    if (daysOverdue <= 0) {
                         facturadoEnPlazo.push(r);
-                    } else if (diffDays <= 60) {
+                    } else if (daysOverdue <= 30) {
                         facturadoVencido30.push(r);
-                    } else if (diffDays <= 90) {
+                    } else if (daysOverdue <= 60) {
                         facturadoVencido60.push(r);
                     } else {
                         facturadoVencido90.push(r);
@@ -1147,13 +1150,12 @@ window.Mazelab.Modules.FinanceModule = (function () {
                     var montoIVA = Math.round(monto * 1.19);
                     totalMonto += montoIVA;
                     var pagado = getTotalPagado(r);
-                    var pendiente = Math.max(0, montoIVA - pagado);
-                    var evDate = getEffectiveEventDate(r);
-                    var overdue = 0;
-                    if (r.billingMonth || evDate) {
-                        var base = parseLocalDate(r.billingMonth || evDate);
-                        if (base) overdue = Math.max(0, Math.floor((new Date() - base) / 86400000) - (Number(r.paymentTerms) || 30));
-                    }
+                    var ncOff = (r._ncOffset || 0) * 1.19;
+                    var pendiente = Math.max(0, montoIVA - pagado - ncOff);
+                    var overdue = r._daysOverdue || 0;
+                    var baseDate = getVencimientoBaseDate(r);
+                    var baseDateStr = baseDate ? baseDate.toLocaleDateString('es-CL', { day: '2-digit', month: 'short', year: '2-digit' }) : '-';
+                    var terms = Number(r.paymentTerms) || 30;
                     return '<tr>' +
                         '<td style="padding:4px 6px;font-size:12px;">' + (r.sourceId || '-') + '</td>' +
                         '<td style="padding:4px 6px;font-size:12px;">' + escapeHtml(r.clientName || '') + '</td>' +
@@ -1162,14 +1164,16 @@ window.Mazelab.Modules.FinanceModule = (function () {
                         '<td style="padding:4px 6px;font-size:12px;text-align:right;">' + formatCLP(montoIVA) + '</td>' +
                         '<td style="padding:4px 6px;font-size:12px;text-align:right;color:var(--success);">' + formatCLP(pagado) + '</td>' +
                         '<td style="padding:4px 6px;font-size:12px;text-align:right;font-weight:600;color:' + (pendiente > 0 ? 'var(--warning)' : 'var(--success)') + ';">' + formatCLP(pendiente) + '</td>' +
+                        '<td style="padding:4px 6px;font-size:12px;text-align:center;">' + baseDateStr + '</td>' +
+                        '<td style="padding:4px 6px;font-size:12px;text-align:center;">' + terms + 'd</td>' +
                         '<td style="padding:4px 6px;font-size:12px;text-align:center;' + (overdue > 30 ? 'color:var(--danger);font-weight:600;' : '') + '">' + (overdue > 0 ? overdue + 'd' : '-') + '</td>' +
                     '</tr>';
                 }).join('');
                 var html = '<div class="modal-overlay active" id="kpi-status-overlay">' +
-                    '<div class="modal" style="max-width:900px;width:95%">' +
+                    '<div class="modal" style="max-width:1000px;width:95%">' +
                     '<div class="modal-header"><h3>' + cfg.label + ' (' + items.length + ') \u2014 ' + formatCLP(totalMonto) + '</h3><button class="modal-close" id="kpi-status-close">&times;</button></div>' +
                     '<div style="overflow-x:auto;"><table class="data-table"><thead><tr>' +
-                        '<th>ID</th><th>Cliente</th><th>Evento</th><th>Documento</th><th class="text-right">Monto</th><th class="text-right">Pagado</th><th class="text-right">Pendiente</th><th class="text-center">Atraso</th>' +
+                        '<th>ID</th><th>Cliente</th><th>Evento</th><th>Documento</th><th class="text-right">Monto</th><th class="text-right">Pagado</th><th class="text-right">Pendiente</th><th class="text-center">Fecha Base</th><th class="text-center">Plazo</th><th class="text-center">Atraso</th>' +
                     '</tr></thead><tbody>' + rows + '</tbody></table></div>' +
                     '<div class="form-actions" style="margin-top:12px"><button class="btn btn-secondary" id="kpi-status-close-btn">Cerrar</button></div>' +
                     '</div></div>';
