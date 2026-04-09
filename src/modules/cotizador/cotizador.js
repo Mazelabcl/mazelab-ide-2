@@ -127,6 +127,7 @@ window.Mazelab.Modules.CotizadorModule = (function () {
             descuento: 0,
             descuentoNota: '',
             notas: '',
+            cotMode: 'paquete', // 'paquete' | 'opciones'
             bloques: []
         };
     }
@@ -391,7 +392,18 @@ window.Mazelab.Modules.CotizadorModule = (function () {
         html += '  <button class="btn btn-secondary" id="cot-btn-add-service">+ Agregar</button>';
         html += '</div>';
 
-        // ── Descuento section
+        // ── Modo cotizacion toggle
+        html += '<h3 style="color:var(--text-primary);margin:1.5rem 0 0.5rem;">Modo de cotizacion</h3>';
+        html += '<div class="toggle-group" id="cot-mode-toggle" style="margin-bottom:1rem;">';
+        html += '  <button class="toggle-option' + (formState.cotMode === 'paquete' ? ' active' : '') + '" data-mode="paquete">Paquete</button>';
+        html += '  <button class="toggle-option' + (formState.cotMode === 'opciones' ? ' active' : '') + '" data-mode="opciones">Opciones</button>';
+        html += '</div>';
+        if (formState.cotMode === 'opciones') {
+            html += '<p style="color:var(--text-secondary);font-size:0.85rem;margin-top:-0.5rem;margin-bottom:1rem;">Cada servicio se presenta como opcion independiente. El cliente elige una.</p>';
+        }
+
+        // ── Descuento section (hidden in opciones mode)
+        if (formState.cotMode !== 'opciones') {
         html += '<h3 style="color:var(--text-primary);margin:1.5rem 0 0.5rem;">Descuento</h3>';
         html += '<div class="form-row" style="align-items:flex-end;">';
         html += '  <div class="form-group" style="flex:0 0 180px;">';
@@ -409,6 +421,7 @@ window.Mazelab.Modules.CotizadorModule = (function () {
         html += '    <input type="text" class="form-control" id="cot-descuento-nota" placeholder="Ej: Descuento por volumen" value="' + escapeHtml(formState.descuentoNota) + '" style="' + inputStyle + '">';
         html += '  </div>';
         html += '</div>';
+        } // end if not opciones (descuento section)
 
         // ── Condiciones / Validez / Notas
         html += '<div class="form-row" style="margin-top:1rem;">';
@@ -593,10 +606,20 @@ window.Mazelab.Modules.CotizadorModule = (function () {
     function renderFormSummary() {
         var t = calcTotals();
         var html = '';
+        if (formState.cotMode === 'opciones') {
+            // In opciones mode, show per-block subtotals instead of grand total
+            var cols = formState.bloques.length || 1;
+            html += '<div class="kpi-grid" id="cot-form-summary" style="margin-top:1.5rem;grid-template-columns:repeat(' + Math.min(cols, 4) + ',1fr);">';
+            for (var oi = 0; oi < formState.bloques.length; oi++) {
+                calcBloqueSubtotal(formState.bloques[oi]);
+                html += '  <div class="kpi-card"><div class="kpi-label">Opcion ' + (oi + 1) + ': ' + escapeHtml(formState.bloques[oi].serviceName) + '</div><div class="kpi-value">' + formatCLP(formState.bloques[oi].subtotalBloque) + '</div></div>';
+            }
+        } else {
         html += '<div class="kpi-grid" id="cot-form-summary" style="margin-top:1.5rem;grid-template-columns:repeat(3,1fr);">';
         html += '  <div class="kpi-card"><div class="kpi-label">Subtotal</div><div class="kpi-value" id="cot-kpi-subtotal">' + formatCLP(t.subtotal) + '</div></div>';
         html += '  <div class="kpi-card"><div class="kpi-label">Descuento</div><div class="kpi-value" id="cot-kpi-descuento" style="color:var(--danger);">-' + formatCLP(t.descuento) + '</div></div>';
         html += '  <div class="kpi-card" style="border:1px solid var(--accent-primary);"><div class="kpi-label">Total Neto</div><div class="kpi-value" id="cot-kpi-total" style="font-size:1.4rem;">' + formatCLP(t.totalNeto) + '</div></div>';
+        }
         html += '</div>';
         return html;
     }
@@ -657,11 +680,25 @@ window.Mazelab.Modules.CotizadorModule = (function () {
         html += '  <p style="margin:0.2rem 0;color:#444;"><strong>Validez:</strong> ' + (formState.validezDias || 7) + ' dias</p>';
         html += '</div>';
 
+        // Opciones mode header note
+        var isOpciones = formState.cotMode === 'opciones';
+        if (isOpciones) {
+            html += '<div style="margin-bottom:1.5rem;padding:0.75rem 1rem;background:#fff8e1;border-left:4px solid #f9a825;border-radius:4px;">';
+            html += '<p style="margin:0;color:#333;font-weight:600;">Seleccione una de las siguientes opciones:</p>';
+            html += '</div>';
+        }
+
         // Bloques
         for (var bi = 0; bi < formState.bloques.length; bi++) {
             var bloque = formState.bloques[bi];
-            html += '<div style="margin-bottom:1.5rem;">';
-            html += '<h3 style="margin:0 0 0.5rem;font-size:1.1rem;color:#00c853;text-transform:uppercase;">' + escapeHtml(bloque.serviceName) + '</h3>';
+            html += '<div style="margin-bottom:1.5rem;' + (isOpciones ? 'border:1px solid #e5e7eb;border-radius:8px;padding:1rem;' : '') + '">';
+
+            // In opciones mode, label as "Opcion N:"
+            if (isOpciones) {
+                html += '<h3 style="margin:0 0 0.5rem;font-size:1.1rem;color:#00c853;text-transform:uppercase;">Opcion ' + (bi + 1) + ': ' + escapeHtml(bloque.serviceName) + '</h3>';
+            } else {
+                html += '<h3 style="margin:0 0 0.5rem;font-size:1.1rem;color:#00c853;text-transform:uppercase;">' + escapeHtml(bloque.serviceName) + '</h3>';
+            }
             if (bloque.descripcion) {
                 html += '<p style="margin:0 0 0.5rem;font-size:0.85rem;color:#666;white-space:pre-line;">' + escapeHtml(bloque.descripcion) + '</p>';
             }
@@ -715,13 +752,19 @@ window.Mazelab.Modules.CotizadorModule = (function () {
 
             // Bloque subtotal
             calcBloqueSubtotal(bloque);
-            if (formState.bloques.length > 1) {
+            if (isOpciones) {
+                // In opciones mode, always show subtotal per option
+                html += '<div class="cot-price" style="text-align:right;margin-top:0.5rem;padding-top:0.5rem;border-top:2px solid #00c853;">';
+                html += '<span style="font-weight:800;font-size:1rem;color:#00c853;">Total Opcion ' + (bi + 1) + ': ' + formatCLP(bloque.subtotalBloque) + '</span>';
+                html += '</div>';
+            } else if (formState.bloques.length > 1) {
                 html += '<div class="cot-price" style="text-align:right;margin-top:0.3rem;padding-top:0.3rem;font-size:0.85rem;color:#666;">Subtotal ' + escapeHtml(bloque.serviceName) + ': <strong style="color:#333;">' + formatCLP(bloque.subtotalBloque) + '</strong></div>';
             }
             html += '</div>';
         }
 
-        // Grand totals
+        // Grand totals (only in paquete mode)
+        if (!isOpciones) {
         html += '<div class="cot-price" style="margin-top:1.5rem;border-top:2px solid #e5e7eb;padding-top:1rem;">';
         html += '<table style="width:300px;margin-left:auto;border-collapse:collapse;">';
         html += '<tr><td style="padding:0.3rem 0;color:#555;">Subtotal</td><td style="padding:0.3rem 0;text-align:right;color:#333;">' + formatCLP(t.subtotal) + '</td></tr>';
@@ -734,6 +777,12 @@ window.Mazelab.Modules.CotizadorModule = (function () {
         html += '</table>';
         html += '<p style="text-align:right;font-size:0.8rem;color:#999;margin-top:0.3rem;">*Valores no incluyen IVA</p>';
         html += '</div>';
+        } else {
+        // Opciones mode: no grand total, just a note
+        html += '<div style="margin-top:1.5rem;border-top:2px solid #e5e7eb;padding-top:1rem;text-align:center;">';
+        html += '<p style="color:#999;font-size:0.85rem;font-style:italic;">*Valores no incluyen IVA. Seleccione una de las opciones anteriores.</p>';
+        html += '</div>';
+        }
 
         // Condiciones
         html += '<div style="margin-top:1.5rem;padding-top:1rem;border-top:1px solid #e5e7eb;font-size:0.85rem;color:#666;">';
@@ -862,6 +911,7 @@ window.Mazelab.Modules.CotizadorModule = (function () {
             descuento: cot.descuento || 0,
             descuentoNota: cot.descuentoNota || '',
             notas: cot.notas || '',
+            cotMode: cot.cotMode || 'paquete',
             bloques: []
         };
         var bloques = cot.bloques || [];
@@ -953,7 +1003,8 @@ window.Mazelab.Modules.CotizadorModule = (function () {
             descuentoPct: t.descuentoPct,
             descuentoNota: formState.descuentoNota,
             totalNeto: t.totalNeto,
-            notas: formState.notas
+            notas: formState.notas,
+            cotMode: formState.cotMode || 'paquete'
         };
 
         var DS = window.Mazelab.DataService;
@@ -1412,6 +1463,26 @@ window.Mazelab.Modules.CotizadorModule = (function () {
                 editingId = null;
                 resetFormState();
                 showView('list');
+            });
+        }
+
+        // Mode toggle (Paquete / Opciones)
+        var modeToggle = document.getElementById('cot-mode-toggle');
+        if (modeToggle) {
+            modeToggle.addEventListener('click', function (e) {
+                var opt = e.target.closest('.toggle-option');
+                if (!opt) return;
+                var mode = opt.getAttribute('data-mode');
+                if (mode && mode !== formState.cotMode) {
+                    readFormState();
+                    formState.cotMode = mode;
+                    // Reset discount when switching to opciones
+                    if (mode === 'opciones') {
+                        formState.descuento = 0;
+                        formState.descuentoNota = '';
+                    }
+                    showView('form');
+                }
             });
         }
 

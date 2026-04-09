@@ -24,6 +24,13 @@ window.Mazelab.Modules.FinanceModule = (function () {
         return Number(r.montoNeto || r.monto_venta || r.invoicedAmount || r.amount) || 0;
     }
 
+    // Returns refund-adjusted base amount. If refundAmount >= monto, returns 0.
+    function getMontoAfterRefund(r) {
+        var base = getMonto(r);
+        var refund = Number(r._refundAmount) || 0;
+        return Math.max(0, base - refund);
+    }
+
     function getMontoFacturado(r) {
         // Solo leer monto facturado real — NO caer en getMonto/montoNeto.
         // Si no hay factura, devuelve 0 → getRealTimeStatus lo detecta como pendiente_factura.
@@ -43,15 +50,18 @@ window.Mazelab.Modules.FinanceModule = (function () {
 
     function getPendienteItem(r) {
         var pagado = getTotalPagado(r);
-        if (r.tipoDoc === 'E') return getMonto(r) - pagado;
-        return (getMontoFacturado(r) * 1.19) - pagado;
+        var refund = Number(r._refundAmount) || 0;
+        if (r.tipoDoc === 'E') return getMonto(r) - pagado - refund;
+        return (getMontoFacturado(r) * 1.19) - pagado - (refund * 1.19);
     }
 
     function getPendienteFacturado(r) {
         var pagado = getTotalPagado(r);
         var ncOffset = (r._ncOffset || 0) * 1.19; // NC is stored as neto, convert to IVA included
-        if (r.tipoDoc === 'E') return Math.max(0, getMontoFacturado(r) - pagado - (r._ncOffset || 0));
-        return Math.max(0, (getMontoFacturado(r) * 1.19) - pagado - ncOffset);
+        var refundOffset = Number(r._refundAmount) || 0;
+        if (r.tipoDoc === 'E') return Math.max(0, getMontoFacturado(r) - pagado - (r._ncOffset || 0) - refundOffset);
+        // For factura: refund is neto, convert to IVA included
+        return Math.max(0, (getMontoFacturado(r) * 1.19) - pagado - ncOffset - (refundOffset * 1.19));
     }
 
     function isIvaPaid(mesEmision) {
@@ -85,12 +95,14 @@ window.Mazelab.Modules.FinanceModule = (function () {
 
     function getPendienteMio(r) {
         var pagado = getTotalPagado(r);
-        var neto = getMonto(r);
+        var refund = Number(r._refundAmount) || 0;
+        var neto = Math.max(0, getMonto(r) - refund);
         if (r.tipoDoc === 'E') return Math.max(0, neto - pagado);
         if (r.tipoDoc === 'NC') return 0;
         var facturado = getMontoFacturado(r);
+        var facturadoAdj = Math.max(0, facturado - refund);
         if (!r.invoiceNumber && facturado <= 0) return Math.max(0, neto - pagado);
-        if (isIvaPaid(r.billingMonth)) return Math.max(0, (facturado * 1.19) - pagado);
+        if (isIvaPaid(r.billingMonth)) return Math.max(0, (facturadoAdj * 1.19) - pagado);
         // IVA aún no declarado: el pago recibido incluye IVA, extraer solo la parte neta
         return Math.max(0, neto - Math.round(pagado / 1.19));
     }
@@ -159,8 +171,9 @@ window.Mazelab.Modules.FinanceModule = (function () {
             r.status === 'vencida_30' || r.status === 'vencida_60' || r.status === 'vencida_90' ||
             r.status === 'por_vencer' || !r.status || r.status === '') {
             var pagado = getTotalPagado(r);
-            var montoTotal = r.tipoDoc === 'E' ? getMonto(r) : (getMontoFacturado(r) * 1.19);
-            if (pagado >= montoTotal) return 'pagada';
+            var refund = Number(r._refundAmount) || 0;
+            var montoTotal = r.tipoDoc === 'E' ? getMonto(r) - refund : ((getMontoFacturado(r) - refund) * 1.19);
+            if (montoTotal <= 0 || pagado >= montoTotal) return 'pagada';
             var baseDate = getVencimientoBaseDate(r);
             if (baseDate) {
                 var diffDays = Math.floor((new Date() - baseDate) / (1000 * 60 * 60 * 24));
@@ -358,7 +371,8 @@ window.Mazelab.Modules.FinanceModule = (function () {
             ) {
                 var pagado = getTotalPagado(r);
                 var ncOff = (r._ncOffset || 0);
-                var montoTotal = r.tipoDoc === 'E' ? getMonto(r) - ncOff : (getMontoFacturado(r) * 1.19) - (ncOff * 1.19);
+                var refOff = Number(r._refundAmount) || 0;
+                var montoTotal = r.tipoDoc === 'E' ? getMonto(r) - ncOff - refOff : (getMontoFacturado(r) * 1.19) - (ncOff * 1.19) - (refOff * 1.19);
                 if (montoTotal > 0 && pagado < montoTotal) {
                     facturadoPendientes.push(r);
 
@@ -649,10 +663,13 @@ window.Mazelab.Modules.FinanceModule = (function () {
             showing.forEach(function (r) {
                 var realStatus = r._realStatus || getRealTimeStatus(r);
                 var neto = getMonto(r);
+                var refund = Number(r._refundAmount) || 0;
                 // totalIva siempre se calcula sobre el neto completo (monto_venta) para no perder valor al facturar parcialmente
                 var totalIva = r.tipoDoc === 'E' ? neto : Math.round(neto * 1.19);
                 var pagado = getTotalPagado(r);
-                var restante = Math.max(0, totalIva - pagado);
+                var refundIva = r.tipoDoc === 'E' ? refund : Math.round(refund * 1.19);
+                var restante = Math.max(0, totalIva - pagado - refundIva);
+                var refundNote = refund > 0 ? '<br><small style="color:var(--warning,#e67e22)">(Dev: -' + formatCLP(refundIva) + ')</small>' : '';
                 // ID numérico: sourceId del registro CXC, o saleId si es numérico
                 var displayId = r.sourceId || (/^\d+$/.test(String(r.saleId || '')) ? r.saleId : '') || '-';
                 html += '<tr>';
@@ -662,7 +679,7 @@ window.Mazelab.Modules.FinanceModule = (function () {
                 html += '<td>' + formatCLP(neto) + '</td>';
                 html += '<td>' + formatCLP(totalIva) + '</td>';
                 html += '<td>' + formatCLP(pagado) + '</td>';
-                html += '<td>' + formatCLP(restante) + '</td>';
+                html += '<td>' + formatCLP(restante) + refundNote + '</td>';
                 html += '<td>' + formatDate(getEffectiveEventDate(r)) + '</td>';
                 html += '<td>' + getStatusBadge(realStatus, r) + '</td>';
                 html += '<td>';
@@ -721,15 +738,18 @@ window.Mazelab.Modules.FinanceModule = (function () {
             var rows = grp.items.map(function (r) {
                 var realStatus = r._realStatus || getRealTimeStatus(r);
                 var neto = getMonto(r);
+                var grpRefund = Number(r._refundAmount) || 0;
                 var totalIva = r.tipoDoc === 'E' ? neto : Math.round(neto * 1.19);
                 var pagado = getTotalPagado(r);
-                var restante = Math.max(0, totalIva - pagado);
+                var grpRefundIva = r.tipoDoc === 'E' ? grpRefund : Math.round(grpRefund * 1.19);
+                var restante = Math.max(0, totalIva - pagado - grpRefundIva);
+                var grpRefNote = grpRefund > 0 ? '<br><small style="color:var(--warning,#e67e22)">(Dev: -' + formatCLP(grpRefundIva) + ')</small>' : '';
                 var row = '<tr>';
                 row += '<td>' + (r.invoiceNumber || '-') + '</td>';
                 row += '<td>' + formatCLP(neto) + '</td>';
                 row += '<td>' + formatCLP(totalIva) + '</td>';
                 row += '<td>' + formatCLP(pagado) + '</td>';
-                row += '<td>' + formatCLP(restante) + '</td>';
+                row += '<td>' + formatCLP(restante) + grpRefNote + '</td>';
                 row += '<td>' + formatDate(r.eventDate) + '</td>';
                 row += '<td>' + getStatusBadge(realStatus, r) + '</td>';
                 row += '<td>';
@@ -965,6 +985,19 @@ window.Mazelab.Modules.FinanceModule = (function () {
             // getEffectiveEventDate() lo resuelve dinámicamente via saleId → ventas.
             // ESTADO: en branch pr-1, aún no mergeado a master.
             console.log('[CXC] Loaded', allReceivables.length, 'receivables,', cachedSales.length, 'sales. Using Supabase:', window.Mazelab.DataService.isUsingSupabase());
+
+            // Enrich receivables with _refundAmount from linked sale
+            allReceivables.forEach(function (r) {
+                r._refundAmount = 0;
+                if (r.saleId && cachedSales.length) {
+                    var sale = cachedSales.find(function (s) {
+                        return String(s.id) === String(r.saleId) || String(s.sourceId) === String(r.saleId);
+                    });
+                    if (sale && Number(sale.refundAmount) > 0) {
+                        r._refundAmount = Number(sale.refundAmount);
+                    }
+                }
+            });
 
             // Compute real-time status for all
             allReceivables.forEach(function (r) {
@@ -2112,10 +2145,13 @@ window.Mazelab.Modules.FinanceModule = (function () {
                     // Completamente facturado: eliminar la fila residual
                     await window.Mazelab.DataService.remove('receivables', rec.id);
                 } else {
-                    // Parcialmente facturado: reducir el monto restante
+                    // Parcialmente facturado: reducir el monto restante en TODOS los campos de monto
                     await window.Mazelab.DataService.update('receivables', rec.id, {
-                        monto_venta: netoRestante,
-                        status:      'sin_factura'
+                        monto_venta:    netoRestante,
+                        montoNeto:      netoRestante,
+                        invoicedAmount: netoRestante,
+                        amount:         netoRestante,
+                        status:         'sin_factura'
                     });
                 }
 
