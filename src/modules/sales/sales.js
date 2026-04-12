@@ -821,8 +821,11 @@ window.Mazelab.Modules.SalesModule = (function () {
 
     function getFormData() {
         const selectedServices = [];
+        var selectedServiceNames = [];
         document.querySelectorAll('.sale-service-cb:checked').forEach(cb => {
             selectedServices.push(cb.value);
+            var svc = services.find(function (s) { return String(s.id) === String(cb.value); });
+            if (svc) selectedServiceNames.push(svc.name || svc.nombre || '');
         });
 
         const clientNameVal = (document.getElementById('sale-clientName').value || '').trim();
@@ -836,6 +839,7 @@ window.Mazelab.Modules.SalesModule = (function () {
             eventDate: document.getElementById('sale-event-date').value,
             closingDate: document.getElementById('sale-closing-date').value || new Date().toISOString().split('T')[0],
             serviceIds: selectedServices,
+            serviceNames: selectedServiceNames.join(', '),
             jornadas: document.getElementById('sale-jornadas').value ? Number(document.getElementById('sale-jornadas').value) : null,
             amount: document.getElementById('sale-amount').value ? Number(document.getElementById('sale-amount').value) : 0,
             staffId: document.getElementById('sale-staff').value,
