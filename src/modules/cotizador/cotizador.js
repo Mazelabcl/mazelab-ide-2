@@ -34,7 +34,9 @@ window.Mazelab.Modules.CotizadorModule = (function () {
 
     function formatDateShort(dateStr) {
         if (!dateStr) return '-';
-        var parts = dateStr.split('-');
+        // Sanitize ISO datetime to YYYY-MM-DD
+        var clean = String(dateStr).substring(0, 10);
+        var parts = clean.split('-');
         if (parts.length !== 3) return dateStr;
         return parts[2] + '/' + parts[1] + '/' + parts[0];
     }
@@ -1211,7 +1213,10 @@ window.Mazelab.Modules.CotizadorModule = (function () {
         // Fill client/event if provided
         if (parsed.clientName) formState.clientName = parsed.clientName;
         if (parsed.eventName) formState.eventName = parsed.eventName;
-        if (parsed.eventDate) formState.eventDate = parsed.eventDate;
+        if (parsed.eventDate) {
+            // Sanitize: AI may return ISO datetime "2026-04-10T22:30:45Z" — keep only YYYY-MM-DD
+            formState.eventDate = String(parsed.eventDate).substring(0, 10);
+        }
         if (parsed.lugar) formState.lugar = parsed.lugar;
         if (parsed.contactName) formState.contactName = parsed.contactName;
 

@@ -687,10 +687,15 @@ window.Mazelab.Modules.SalesModule = (function () {
 
             // Check service checkboxes — prefer serviceIds; fallback to name-match for imported records
             const checkboxes = document.querySelectorAll('.sale-service-cb');
-            const sids = Array.isArray(sale.serviceIds) ? sale.serviceIds : [];
+            var rawSids = sale.serviceIds;
+            // Parse if stored as JSON string
+            if (typeof rawSids === 'string') {
+                try { rawSids = JSON.parse(rawSids); } catch (e) { rawSids = []; }
+            }
+            const sids = Array.isArray(rawSids) ? rawSids.map(String) : [];
             if (sids.length > 0) {
                 checkboxes.forEach(cb => {
-                    cb.checked = sids.includes(cb.value) || sids.includes(Number(cb.value));
+                    cb.checked = sids.includes(String(cb.value));
                 });
             } else if (sale.serviceNames) {
                 var svcNameList = sale.serviceNames.split(/[,;\/+]/).map(function(s) { return s.trim().toLowerCase(); }).filter(Boolean);
