@@ -39,8 +39,6 @@ window.Mazelab.Modules.NominasModule = (function () {
         var d = parseLocalDate(dateStr);
         if (!d || isNaN(d.getTime())) return null;
         d.setDate(d.getDate() + 30);
-        var dow = d.getDay();
-        if (dow !== 5) d.setDate(d.getDate() + ((5 - dow + 7) % 7));
         return d;
     }
 
