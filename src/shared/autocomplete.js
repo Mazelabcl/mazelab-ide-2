@@ -12,6 +12,45 @@ window.Mazelab.Autocomplete = (function () {
     // Invalidate cache when navigating (modules call init() on each navigation)
     function invalidateCache() { _clientsCache = null; }
 
+    // FA-009 fix: normalize keys for client/contact matching.
+    // Razones:
+    //  - typos historicos (ej. "Banco Chile  " con doble espacio interno)
+    //  - diferencias entre el texto que ve el usuario y el `name` almacenado
+    //  - case-insensitive matching
+    // Antes el match era exacto (===), lo que provocaba autocomplete
+    // intermitente reportado por el owner.
+    function normalizeKey(str) {
+        if (!str) return '';
+        return String(str)
+            .toLowerCase()
+            .replace(/\s+/g, ' ')   // colapsa multiples espacios internos
+            .trim();
+    }
+
+    // Helper para que otros modulos (sales, settings, cotizador) pueden hacer
+    // lookup normalizado contra el cache de autocomplete sin reimplementar.
+    function findClientByName(name) {
+        var key = normalizeKey(name);
+        if (!key || !_clientsCache) return null;
+        for (var i = 0; i < _clientsCache.length; i++) {
+            var c = _clientsCache[i];
+            var n = normalizeKey(c.name || c.nombre || c.clientName || '');
+            if (n === key) return c;
+        }
+        return null;
+    }
+
+    // Preload — llamado desde app.js#initApp() para garantizar que el cache
+    // este listo antes de que el usuario empiece a tipear en cualquier modulo.
+    // Antes el cache se cargaba dentro de cada `attachClientAutocomplete`,
+    // asincrono — keystrokes durante esa carga se perdian.
+    function preload() {
+        return loadClients().catch(function (err) {
+            console.warn('Autocomplete.preload: error cargando clients', err);
+            return [];
+        });
+    }
+
     // ---------------------------------------------------------------
     //  attachClientAutocomplete — datalist for client (company) name
     //  When a client is selected, shows a contact dropdown if contacts exist
@@ -33,11 +72,16 @@ window.Mazelab.Autocomplete = (function () {
             var datalist = document.createElement('datalist');
             datalist.id = listId;
 
-            // Build client map: name -> { contactos, phone, email }
+            // Build client map: normalizedKey -> { contactos, phone, email, displayName }
+            // FA-009 fix: clave normalizada en lugar de exacta. Esto soluciona
+            // los typos de espacios internos / case-insensitive que hacian
+            // que el autocomplete fallara intermitentemente.
             var clientMap = {};
             clients.forEach(function (c) {
                 var name = c.name || c.nombre || c.clientName || '';
                 if (!name) return;
+                var key = normalizeKey(name);
+                if (!key) return;
                 // Merge contacts: new contactos array, or legacy ejecutivos as names-only
                 var contactos = [];
                 if (Array.isArray(c.contactos) && c.contactos.length) {
@@ -45,8 +89,9 @@ window.Mazelab.Autocomplete = (function () {
                 } else if (Array.isArray(c.ejecutivos) && c.ejecutivos.length) {
                     contactos = c.ejecutivos.map(function (n) { return { nombre: n, telefono: '', email: '' }; });
                 }
-                if (!clientMap[name]) {
-                    clientMap[name] = {
+                if (!clientMap[key]) {
+                    clientMap[key] = {
+                        displayName: name,
                         contactos: contactos,
                         phone: c.phone || c.telefono || c.tel || '',
                         email: c.email || c.correo || ''
@@ -54,9 +99,12 @@ window.Mazelab.Autocomplete = (function () {
                 }
             });
 
-            Object.keys(clientMap).sort().forEach(function (name) {
+            // Datalist usa displayName para mostrar bien al usuario (con
+            // capitalizacion original), pero el lookup en onClientSelected
+            // es por clave normalizada.
+            Object.keys(clientMap).sort().forEach(function (key) {
                 var opt = document.createElement('option');
-                opt.value = name;
+                opt.value = clientMap[key].displayName;
                 datalist.appendChild(opt);
             });
 
@@ -65,8 +113,9 @@ window.Mazelab.Autocomplete = (function () {
 
             // On client selection, populate contacts
             function onClientSelected() {
-                var val = input.value.trim();
-                var client = clientMap[val];
+                var val = input.value;
+                var key = normalizeKey(val);
+                var client = clientMap[key];
                 if (!client) return;
 
                 var contactos = client.contactos;
@@ -115,8 +164,14 @@ window.Mazelab.Autocomplete = (function () {
 
             input.addEventListener('change', onClientSelected);
             input.addEventListener('input', function () {
-                // Only trigger on exact match (datalist selection)
-                if (clientMap[input.value.trim()]) onClientSelected();
+                // FA-009: trigger por match normalizado (no exacto)
+                if (clientMap[normalizeKey(input.value)]) onClientSelected();
+            });
+            // FA-009: fallback en blur — si el usuario tipea sin seleccionar
+            // del datalist y suelta el foco con un valor que matchea por
+            // normalizacion, igualmente disparar el autofill de contactos.
+            input.addEventListener('blur', function () {
+                if (clientMap[normalizeKey(input.value)]) onClientSelected();
             });
         });
     }
@@ -140,7 +195,8 @@ window.Mazelab.Autocomplete = (function () {
         contactos.forEach(function (ct) {
             var name = ct.nombre || '';
             if (name) {
-                contactMap[name] = { telefono: ct.telefono || '', email: ct.email || '' };
+                var key = normalizeKey(name);
+                contactMap[key] = { telefono: ct.telefono || '', email: ct.email || '' };
                 var opt = document.createElement('option');
                 opt.value = name;
                 datalist.appendChild(opt);
@@ -153,8 +209,8 @@ window.Mazelab.Autocomplete = (function () {
         if (input.parentNode) input.parentNode.appendChild(datalist);
 
         function onContactSelected() {
-            var val = input.value.trim();
-            var ct = contactMap[val];
+            var val = input.value;
+            var ct = contactMap[normalizeKey(val)];
             if (!ct) return;
             if (phoneFillId) {
                 var pEl = document.getElementById(phoneFillId);
@@ -168,7 +224,10 @@ window.Mazelab.Autocomplete = (function () {
 
         input.addEventListener('change', onContactSelected);
         input.addEventListener('input', function () {
-            if (contactMap[input.value.trim()]) onContactSelected();
+            if (contactMap[normalizeKey(input.value)]) onContactSelected();
+        });
+        input.addEventListener('blur', function () {
+            if (contactMap[normalizeKey(input.value)]) onContactSelected();
         });
     }
 
@@ -226,6 +285,9 @@ window.Mazelab.Autocomplete = (function () {
         attachClientAutocomplete: attachClientAutocomplete,
         buildContactDropdown: buildContactDropdown,
         showContactChips: showContactChips,
-        invalidateCache: invalidateCache
+        invalidateCache: invalidateCache,
+        preload: preload,
+        findClientByName: findClientByName,
+        normalizeKey: normalizeKey
     };
 })();

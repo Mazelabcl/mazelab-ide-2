@@ -124,6 +124,15 @@ window.Mazelab.Modules = window.Mazelab.Modules || {};
             }
         }
 
+        // FA-009 fix: precarga el cache de clientes para el autocomplete
+        // ANTES de que el usuario empiece a tipear en cualquier modulo.
+        // Antes el cache se cargaba dentro de cada attachClientAutocomplete
+        // de forma asincrona — keystrokes en mid-carga se perdian.
+        if (window.Mazelab.Autocomplete && window.Mazelab.Autocomplete.preload) {
+            try { await window.Mazelab.Autocomplete.preload(); }
+            catch (e) { console.warn('Autocomplete.preload failed:', e); }
+        }
+
         // Initialize alerts panel (bell + badge)
         if (window.Mazelab.AlertsPanel) {
             window.Mazelab.AlertsPanel.init();
