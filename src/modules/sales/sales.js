@@ -898,7 +898,12 @@ window.Mazelab.Modules.SalesModule = (function () {
             clientName: clientNameVal,
             eventName: document.getElementById('sale-event-name').value,
             eventDate: document.getElementById('sale-event-date').value,
-            closingDate: document.getElementById('sale-closing-date').value || new Date().toISOString().split('T')[0],
+            // B-014 fix: closingDate ya no defaultea a hoy si vacio.
+            // Fallback: usar eventDate si existe (decision comun: la
+            // venta se cierra el mismo dia del evento). Si tampoco
+            // hay eventDate, queda vacio — el listener de borde rojo
+            // en handleSave avisa al usuario.
+            closingDate: (document.getElementById('sale-closing-date').value || document.getElementById('sale-event-date').value || ''),
             serviceIds: selectedServices,
             serviceNames: selectedServiceNames.join(', '),
             jornadas: document.getElementById('sale-jornadas').value ? Number(document.getElementById('sale-jornadas').value) : null,
@@ -917,6 +922,35 @@ window.Mazelab.Modules.SalesModule = (function () {
         e.preventDefault();
         const data = getFormData();
         const DS = window.Mazelab.DataService;
+
+        // B-014 fix: closingDate ya NO se auto-rellena a hoy si esta
+        // vacio. Si tampoco hay eventDate, getFormData lo deja vacio.
+        // Aqui detectamos ese caso, marcamos borde rojo en el input y
+        // pedimos explicito al usuario que confirme o complete.
+        // Razon: el dashboard usa closingDate como fecha de referencia
+        // para KPIs (decision owner #25). Defaultear a hoy sesga el
+        // mes en que se contabiliza la venta (puede ser mes equivocado
+        // si el usuario olvido la fecha real).
+        var closingInput = document.getElementById('sale-closing-date');
+        if (closingInput && !data.closingDate) {
+            closingInput.style.borderColor = 'var(--danger)';
+            closingInput.style.borderWidth = '2px';
+            closingInput.focus();
+            alert(
+                'La venta no tiene fecha de cierre (closingDate).\n\n' +
+                'closingDate es la fecha en que se acepto la venta y se ' +
+                'usa para los KPIs del dashboard. Si la dejas vacia, ' +
+                'la venta no aparecera correctamente en el mes/anio ' +
+                'comercial.\n\nCompleta el campo "Fecha de cierre" antes ' +
+                'de guardar.'
+            );
+            return; // bloquea save
+        }
+        // Limpia bordes en caso de save valido tras error previo
+        if (closingInput) {
+            closingInput.style.borderColor = '';
+            closingInput.style.borderWidth = '';
+        }
 
         try {
             if (editingId) {
@@ -1184,50 +1218,16 @@ window.Mazelab.Modules.SalesModule = (function () {
         refreshTable();
 
         // Check for pending sale from cotizador
+        // FA-004 + FA-005 fix: delegamos el prefill a openModal(null, pendCot).
+        // Antes habia setTimeout(200) + setTimeout(100) anidado que generaba
+        // race condition con populateDropdowns y ademas referenciaba el ID
+        // viejo 'sale-client' (era <select>, hoy es <input id="sale-clientName">).
+        // El nuevo openModal hace populateDropdowns ANTES de setear valores,
+        // y acepta el prefill como segundo argumento — orden garantizado.
         var pendCot = window.Mazelab._pendingSaleFromCot;
         if (pendCot) {
             delete window.Mazelab._pendingSaleFromCot;
-            // Open new sale form pre-filled
-            setTimeout(function () {
-                openModal(null); // open blank form
-                setTimeout(function () {
-                    // Pre-fill fields
-                    var clientSel = document.getElementById('sale-client');
-                    if (clientSel) {
-                        // Try to match client by name
-                        for (var ci = 0; ci < clientSel.options.length; ci++) {
-                            if (clientSel.options[ci].text === pendCot.clientName) {
-                                clientSel.value = clientSel.options[ci].value;
-                                break;
-                            }
-                        }
-                    }
-                    var evName = document.getElementById('sale-event-name');
-                    if (evName) evName.value = pendCot.eventName || '';
-                    var evDate = document.getElementById('sale-event-date');
-                    if (evDate) evDate.value = pendCot.eventDate || '';
-                    var closDate = document.getElementById('sale-closing-date');
-                    if (closDate) closDate.value = pendCot.closingDate || '';
-                    var amtEl = document.getElementById('sale-amount');
-                    if (amtEl) amtEl.value = pendCot.amount || '';
-                    var jorEl = document.getElementById('sale-jornadas');
-                    if (jorEl) jorEl.value = pendCot.jornadas || 1;
-                    var commEl = document.getElementById('sale-comments');
-                    if (commEl) commEl.value = pendCot.comments || '';
-                    // Check service checkboxes
-                    if (pendCot.serviceIds && pendCot.serviceIds.length) {
-                        pendCot.serviceIds.forEach(function (sid) {
-                            var cb = document.querySelector('.sale-service-cb[value="' + sid + '"]');
-                            if (cb) cb.checked = true;
-                        });
-                    }
-                    // Highlight unfilled required fields
-                    ['sale-client', 'sale-staff', 'sale-event-date'].forEach(function (fid) {
-                        var el = document.getElementById(fid);
-                        if (el && !el.value) el.style.borderColor = 'var(--warning)';
-                    });
-                }, 100);
-            }, 200);
+            openModal(null, pendCot);
         }
 
         // Search
