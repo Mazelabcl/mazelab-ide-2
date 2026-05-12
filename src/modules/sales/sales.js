@@ -618,10 +618,14 @@ window.Mazelab.Modules.SalesModule = (function () {
         });
 
         // Bind column filter inputs
+        // B-007 fix: debounce 150ms para que el re-render full no se dispare
+        // por cada keystroke. Owner percibia lag "como query por cada letra"
+        // (en realidad re-render local pero similar de visible).
+        var debouncedColFilter = window.Mazelab.debounce(refreshTable, 150);
         document.querySelectorAll('#sales-table .col-filter').forEach(input => {
             input.addEventListener('input', function () {
                 columnFilters[this.dataset.col] = this.value;
-                refreshTable();
+                debouncedColFilter();
             });
         });
 
@@ -1175,11 +1179,14 @@ window.Mazelab.Modules.SalesModule = (function () {
         }
 
         // Search
+        // B-007 fix: debounce 300ms en search global (lag visible al tipear
+        // con cientos/miles de ventas).
         const searchInput = document.getElementById('sales-search');
         if (searchInput) {
+            var debouncedSearch = window.Mazelab.debounce(refreshTable, 300);
             searchInput.addEventListener('input', function () {
                 searchQuery = this.value.trim();
-                refreshTable();
+                debouncedSearch();
             });
         }
 
