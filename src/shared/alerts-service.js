@@ -18,9 +18,11 @@ window.Mazelab = window.Mazelab || {};
 
     // ── helpers ──────────────────────────────────────────────────────────
     function parseDate(str) {
+        // B-002 fix: parsear como fecha LOCAL (no UTC). new Date("YYYY-MM-DD")
+        // interpreta el string como UTC midnight; en Chile eso desplaza 1 dia.
         if (!str) return null;
-        var d = new Date(str);
-        return isNaN(d.getTime()) ? null : d;
+        var d = window.MazelabDates.parseLocalDate(str);
+        return d && !isNaN(d.getTime()) ? d : null;
     }
 
     function daysUntil(dateStr) {
