@@ -19,8 +19,11 @@ window.Mazelab.Modules.EventsModule = (function () {
 
     function formatDate(d) {
         if (!d) return '-';
-        var dt = new Date(d);
-        if (isNaN(dt)) return String(d);
+        // B-002 fix: parsear como fecha LOCAL (no UTC). new Date("YYYY-MM-DD")
+        // interpreta el string como UTC midnight, lo que en Chile se ve como
+        // el dia anterior. parseLocalDate respeta el dia escrito en el string.
+        var dt = window.MazelabDates.parseLocalDate(d);
+        if (!dt || isNaN(dt)) return String(d);
         return dt.toLocaleDateString('es-CL', { day: '2-digit', month: '2-digit', year: 'numeric' });
     }
 
