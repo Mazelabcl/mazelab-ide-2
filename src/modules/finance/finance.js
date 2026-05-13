@@ -1027,11 +1027,15 @@ window.Mazelab.Modules.FinanceModule = (function () {
 
     function attachTableListeners() {
         // Search
+        // B-007 fix: debounce 300ms — sin esto cada keystroke gatilla
+        // classifyData + computeKPIs + re-render full de tabla (~miles
+        // de CxC en produccion).
         var searchInput = document.getElementById('finance-search');
         if (searchInput) {
+            var debouncedSearch = window.Mazelab.debounce(refreshTable, 300);
             searchInput.addEventListener('input', function () {
                 searchQuery = this.value;
-                refreshTable();
+                debouncedSearch();
             });
         }
 
@@ -1057,10 +1061,12 @@ window.Mazelab.Modules.FinanceModule = (function () {
         });
 
         // Column filter inputs
+        // B-007 fix: debounce 150ms para filtros de columna.
+        var debouncedColFilter = window.Mazelab.debounce(refreshTable, 150);
         document.querySelectorAll('.fin-col-filter').forEach(function (input) {
             input.addEventListener('input', function () {
                 columnFilters[input.dataset.col] = input.value;
-                refreshTable();
+                debouncedColFilter();
             });
         });
 

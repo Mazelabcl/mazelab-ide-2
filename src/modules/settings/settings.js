@@ -1249,6 +1249,17 @@ window.Mazelab.Modules.SettingsModule = (function () {
             }
             const freshData = await DS.getAll(dsKey) || [];
             setDataArray(type, freshData);
+            // FA-009 fix: invalida el cache de Autocomplete cuando se edita
+            // un cliente — si no, el autocomplete sigue mostrando datos
+            // viejos hasta el proximo full reload del browser.
+            if (dsKey === 'clients' && window.Mazelab.Autocomplete && window.Mazelab.Autocomplete.invalidateCache) {
+                window.Mazelab.Autocomplete.invalidateCache();
+                // Re-precarga inmediatamente para que el proximo modulo no
+                // tenga que esperar la primera carga async.
+                if (window.Mazelab.Autocomplete.preload) {
+                    window.Mazelab.Autocomplete.preload();
+                }
+            }
             refreshTabContent();
             closeModal();
         } catch (err) {
@@ -1269,6 +1280,13 @@ window.Mazelab.Modules.SettingsModule = (function () {
             await DS.remove(dsKey, id);
             const freshData = await DS.getAll(dsKey) || [];
             setDataArray(type, freshData);
+            // FA-009 fix: invalida cache de Autocomplete tambien al borrar.
+            if (dsKey === 'clients' && window.Mazelab.Autocomplete && window.Mazelab.Autocomplete.invalidateCache) {
+                window.Mazelab.Autocomplete.invalidateCache();
+                if (window.Mazelab.Autocomplete.preload) {
+                    window.Mazelab.Autocomplete.preload();
+                }
+            }
             refreshTabContent();
         } catch (err) {
             console.error('Error eliminando ' + type + ':', err);

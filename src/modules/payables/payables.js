@@ -1066,11 +1066,15 @@ window.Mazelab.Modules.PayablesModule = (function () {
         var searchEl = document.getElementById('payables-search');
         if (searchEl && !searchEl._bound) {
             searchEl._bound = true;
-            searchEl.addEventListener('input', function () {
-                searchQuery = this.value.trim();
+            // B-007 fix: debounce 300ms en search global.
+            var debouncedSearch = window.Mazelab.debounce(function () {
                 refreshView();
                 var el = document.getElementById('payables-search');
                 if (el) { el.value = searchQuery; el.focus(); }
+            }, 300);
+            searchEl.addEventListener('input', function () {
+                searchQuery = this.value.trim();
+                debouncedSearch();
             });
         }
         document.querySelectorAll('#payables-list-table .payable-sort-th').forEach(function (th) {
@@ -1082,6 +1086,14 @@ window.Mazelab.Modules.PayablesModule = (function () {
             });
         });
         // Column filter inputs — restaurar foco después del re-render con setTimeout
+        // B-007 fix: debounce 150ms para filtros de columna.
+        var debouncedColFilter = window.Mazelab.debounce(function (col, cursor) {
+            refreshView();
+            setTimeout(function () {
+                var el = document.querySelector('#payables-list-table .pay-col-filter[data-col="' + col + '"]');
+                if (el) { el.focus(); try { el.setSelectionRange(cursor, cursor); } catch(e){} }
+            }, 0);
+        }, 150);
         document.querySelectorAll('#payables-list-table .pay-col-filter').forEach(function (input) {
             if (input._bound) return;
             input._bound = true;
@@ -1090,11 +1102,7 @@ window.Mazelab.Modules.PayablesModule = (function () {
                 var val    = this.value;
                 var cursor = this.selectionStart;
                 columnFilters[col] = val;
-                refreshView();
-                setTimeout(function () {
-                    var el = document.querySelector('#payables-list-table .pay-col-filter[data-col="' + col + '"]');
-                    if (el) { el.focus(); try { el.setSelectionRange(cursor, cursor); } catch(e){} }
-                }, 0);
+                debouncedColFilter(col, cursor);
             });
         });
 
