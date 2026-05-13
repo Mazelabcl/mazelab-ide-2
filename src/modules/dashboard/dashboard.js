@@ -537,7 +537,14 @@ window.Mazelab.Modules.DashboardModule = (function () {
                 onClick: function (evt, elements) {
                     if (!elements.length) return;
                     var idx = elements[0].index;
-                    var yr = years[0]; // default to this year
+                    // FB-dashboard-006 fix: usar datasetIndex de la barra clickeada
+                    // para resolver el a\u00f1o correcto. Antes siempre defaulteaba a
+                    // years[0] (a\u00f1o actual), por lo que clickear la barra de 2024
+                    // mostraba detalles de 2026. datasets se construyen en el
+                    // orden [thisYear, lastYear, twoYearsAgo] \u2192 years[datasetIndex]
+                    // mapea 1-a-1.
+                    var dsIdx = elements[0].datasetIndex;
+                    var yr = years[dsIdx] != null ? years[dsIdx] : years[0];
                     var monthKey = yr + '-' + String(idx + 1).padStart(2, '0');
                     var detailEl = document.getElementById('yoy-month-detail');
                     if (!detailEl || !window._yoySalesByMonth) return;
@@ -690,7 +697,11 @@ window.Mazelab.Modules.DashboardModule = (function () {
                 var avg = sv.count > 0 ? Math.round(sv.totalAmt / sv.count) : 0;
                 return '<tr><td>' + (i + 1) + '. ' + escapeHtml(sv.name) + '</td><td class="text-right"><span class="badge badge-success">' + sv.count + '</span></td><td class="text-right">' + formatCLP(avg) + '</td></tr>';
             }).join('');
-        var svcVerMas = allSvcs.length > 8 ? '<div style="text-align:center;padding:8px;"><button class="btn btn-secondary btn-sm dash-ver-mas" data-target="dash-svc-full" style="font-size:11px;">Ver todos (' + allSvcs.length + ')</button></div>' : '';
+        // FB-dashboard-005 fix: data-original-text guarda el texto canonico
+        // del boton para restaurarlo al colapsar (antes el texto quedaba
+        // pegado en 'Ver menos' tras toggle).
+        var svcVerMasText = 'Ver todos (' + allSvcs.length + ')';
+        var svcVerMas = allSvcs.length > 8 ? '<div style="text-align:center;padding:8px;"><button class="btn btn-secondary btn-sm dash-ver-mas" data-target="dash-svc-full" data-original-text="' + svcVerMasText + '" style="font-size:11px;">' + svcVerMasText + '</button></div>' : '';
         var svcFullRows = allSvcs.slice(8).map(function (sv, i) {
             var avg = sv.count > 0 ? Math.round(sv.totalAmt / sv.count) : 0;
             return '<tr><td>' + (i + 9) + '. ' + escapeHtml(sv.name) + '</td><td class="text-right"><span class="badge badge-success">' + sv.count + '</span></td><td class="text-right">' + formatCLP(avg) + '</td></tr>';
@@ -792,7 +803,9 @@ window.Mazelab.Modules.DashboardModule = (function () {
             : topClients.map(function (c, i) {
                 return '<tr><td>' + (i + 1) + '. ' + escapeHtml(c.name) + '</td><td class="text-right">' + c.count + ' eventos</td><td class="text-right">' + formatCLP(c.total) + '</td></tr>';
             }).join('');
-        var clientVerMas = allClients.length > 8 ? '<div style="text-align:center;padding:8px;"><button class="btn btn-secondary btn-sm dash-ver-mas" data-target="dash-cli-full" style="font-size:11px;">Ver todos (' + allClients.length + ')</button></div>' : '';
+        // FB-dashboard-005 fix: ver svcVerMas arriba.
+        var clientVerMasText = 'Ver todos (' + allClients.length + ')';
+        var clientVerMas = allClients.length > 8 ? '<div style="text-align:center;padding:8px;"><button class="btn btn-secondary btn-sm dash-ver-mas" data-target="dash-cli-full" data-original-text="' + clientVerMasText + '" style="font-size:11px;">' + clientVerMasText + '</button></div>' : '';
         var clientFullRows = allClients.slice(8).map(function (c, i) {
             return '<tr><td>' + (i + 9) + '. ' + escapeHtml(c.name) + '</td><td class="text-right">' + c.count + ' eventos</td><td class="text-right">' + formatCLP(c.total) + '</td></tr>';
         }).join('');
@@ -1436,9 +1449,21 @@ window.Mazelab.Modules.DashboardModule = (function () {
                     var btn = e.target.closest('#rankings-scope-toggle .toggle-option');
                     if (btn && btn.dataset.scope && btn.dataset.scope !== rankingsScope) {
                         rankingsScope = btn.dataset.scope;
+                        // FB-dashboard-004 fix: re-init de Chart.js instances
+                        // tras re-render del body. Antes el innerHTML reemplazaba
+                        // los <canvas> pero los Chart instances en window quedaban
+                        // apuntando a canvas removidos → charts no se mostraban.
+                        if (_yoyChartInstance) { _yoyChartInstance.destroy(); _yoyChartInstance = null; }
+                        if (_commChartInstance) { _commChartInstance.destroy(); _commChartInstance = null; }
                         body.innerHTML = buildDashboard(sales, receivables, payables, services);
+                        // Recrear los charts sobre los canvas frescos.
+                        renderYoYChartCanvas();
+                        renderCommissionChart();
                     }
                     // Ver más toggle
+                    // FB-dashboard-005 fix: restaura texto original al colapsar.
+                    // Antes hacia `textContent = isHidden ? 'Ver menos' : verMasBtn.textContent`
+                    // — la rama "colapsar" dejaba el texto pegado en 'Ver menos'.
                     var verMasBtn = e.target.closest('.dash-ver-mas');
                     if (verMasBtn) {
                         var targetId = verMasBtn.dataset.target;
@@ -1446,7 +1471,8 @@ window.Mazelab.Modules.DashboardModule = (function () {
                         if (targetEl) {
                             var isHidden = targetEl.style.display === 'none';
                             targetEl.style.display = isHidden ? '' : 'none';
-                            verMasBtn.textContent = isHidden ? 'Ver menos' : verMasBtn.textContent;
+                            var originalText = verMasBtn.dataset.originalText || verMasBtn.textContent;
+                            verMasBtn.textContent = isHidden ? 'Ver menos' : originalText;
                         }
                     }
                     // Ejecutivo drill-down
