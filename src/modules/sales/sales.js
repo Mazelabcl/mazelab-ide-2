@@ -618,10 +618,16 @@ window.Mazelab.Modules.SalesModule = (function () {
         });
 
         // Bind column filter inputs
-        // B-007 fix: debounce 150ms para que el re-render full no se dispare
+        // B-007 fix: debounce 300ms para que el re-render full no se dispare
         // por cada keystroke. Owner percibia lag "como query por cada letra"
         // (en realidad re-render local pero similar de visible).
-        var debouncedColFilter = window.Mazelab.debounce(refreshTable, 150);
+        //
+        // Issue-B fix (Sprint 2A.1, feedback bloque 2 test 3-4): subido de
+        // 150 a 300ms. Owner reporto que al tipear "PLAY" en filtro de
+        // columna se perdia la 'L' por lag — 150ms no era suficiente para
+        // dar tiempo al tipeo natural rapido. 300ms iguala el debounce del
+        // search global y elimina la perdida de keystrokes.
+        var debouncedColFilter = window.Mazelab.debounce(refreshTable, 300);
         document.querySelectorAll('#sales-table .col-filter').forEach(input => {
             input.addEventListener('input', function () {
                 columnFilters[this.dataset.col] = this.value;
