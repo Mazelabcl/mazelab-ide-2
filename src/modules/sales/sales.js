@@ -902,12 +902,17 @@ window.Mazelab.Modules.SalesModule = (function () {
             clientName: clientNameVal,
             eventName: document.getElementById('sale-event-name').value,
             eventDate: document.getElementById('sale-event-date').value,
-            // B-014 fix: closingDate ya no defaultea a hoy si vacio.
-            // Fallback: usar eventDate si existe (decision comun: la
-            // venta se cierra el mismo dia del evento). Si tampoco
-            // hay eventDate, queda vacio — el listener de borde rojo
-            // en handleSave avisa al usuario.
-            closingDate: (document.getElementById('sale-closing-date').value || document.getElementById('sale-event-date').value || ''),
+            // Issue-A fix (Sprint 2A.1): closingDate SIEMPRE explicito.
+            // Antes (commit fddd61d): si closingDate estaba vacio, se
+            // usaba eventDate como fallback. Owner reporto que ese
+            // comportamiento es contra-intuitivo:
+            //   "configure cualquier fecha evento y me tiro como cierre
+            //    la del evento" (feedback bloque 1 test 2-3).
+            // Ahora: si el usuario deja closingDate vacio, queda vacio
+            // y handleSave bloquea el guardado pidiendo fecha explicita.
+            // Esto vale incluso si eventDate esta lleno — no asumimos
+            // que sean iguales.
+            closingDate: document.getElementById('sale-closing-date').value || '',
             serviceIds: selectedServices,
             serviceNames: selectedServiceNames.join(', '),
             jornadas: document.getElementById('sale-jornadas').value ? Number(document.getElementById('sale-jornadas').value) : null,
@@ -927,26 +932,33 @@ window.Mazelab.Modules.SalesModule = (function () {
         const data = getFormData();
         const DS = window.Mazelab.DataService;
 
-        // B-014 fix: closingDate ya NO se auto-rellena a hoy si esta
-        // vacio. Si tampoco hay eventDate, getFormData lo deja vacio.
-        // Aqui detectamos ese caso, marcamos borde rojo en el input y
-        // pedimos explicito al usuario que confirme o complete.
+        // Issue-A fix (Sprint 2A.1): closingDate SIEMPRE explicito al
+        // crear o editar una venta. No hay fallback automatico a hoy
+        // ni a eventDate. Si el campo esta vacio, alertamos y bloqueamos
+        // el guardado.
+        //
         // Razon: el dashboard usa closingDate como fecha de referencia
-        // para KPIs (decision owner #25). Defaultear a hoy sesga el
-        // mes en que se contabiliza la venta (puede ser mes equivocado
-        // si el usuario olvido la fecha real).
+        // para KPIs (decision owner #25). El fallback previo a eventDate
+        // (commit fddd61d) era contra-intuitivo: owner reporto en
+        // bloque 1 test 2-3 que "configure cualquier fecha evento y me
+        // tiro como cierre la del evento", sin que esa fuera su intencion.
+        //
+        // Nota importante: este alert solo dispara en handleSave (submit
+        // del formulario crear/editar). NO afecta el render de ventas
+        // historicas importadas que tengan closingDate vacio — esas
+        // siguen apareciendo en la tabla, solo no se podran "editar y
+        // guardar" sin completar primero el campo.
         var closingInput = document.getElementById('sale-closing-date');
         if (closingInput && !data.closingDate) {
             closingInput.style.borderColor = 'var(--danger)';
             closingInput.style.borderWidth = '2px';
             closingInput.focus();
             alert(
-                'La venta no tiene fecha de cierre (closingDate).\n\n' +
+                'Falta la fecha de cierre (closingDate).\n\n' +
                 'closingDate es la fecha en que se acepto la venta y se ' +
-                'usa para los KPIs del dashboard. Si la dejas vacia, ' +
-                'la venta no aparecera correctamente en el mes/anio ' +
-                'comercial.\n\nCompleta el campo "Fecha de cierre" antes ' +
-                'de guardar.'
+                'usa para los KPIs del dashboard. NO se asume igual a la ' +
+                'fecha del evento — debe capturarse explicitamente.\n\n' +
+                'Completa el campo "Fecha de cierre" antes de guardar.'
             );
             return; // bloquea save
         }
