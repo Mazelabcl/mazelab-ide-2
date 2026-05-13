@@ -17,9 +17,38 @@ window.Mazelab = window.Mazelab || {};
 
     // ── In-memory cache ──────────────────────────────────────────────────
     // Avoids re-fetching the DB every vez que el usuario navega entre módulos.
-    // TTL: 45 segundos. Se invalida inmediatamente en cualquier write (create/update/remove/importMany).
+    //
+    // B-017 + FA-007 fix:
+    //   - TTL bajado de 45s a 8s para entidades transaccionales
+    //     (receivables, payables, sales, cotizaciones). Para entidades
+    //     ~estaticas (services, staff, clients, bodega) se mantiene 45s.
+    //   - BroadcastChannel('mazelab-data') notifica a otras pestañas
+    //     cuando hay write, e invalida el cache local de ellas
+    //     inmediatamente. Owner (Aldo) usa 1 sola pestaña hoy pero le
+    //     dio acceso a Manu — escenario multi-tab sera real pronto.
+    //
+    // Razon del split:
+    //   - 8s en transaccionales: balance entre frescura (vendedor edita
+    //     una venta en una tab, ve el cambio en otra tab al instante via
+    //     BroadcastChannel; si esa channel falla, cae al TTL corto y
+    //     refresca en max 8s) y carga al backend (cada navegacion entre
+    //     modulos no re-fetchea constantemente).
+    //   - 45s en estaticas: clients/services/staff cambian pocas veces
+    //     al dia. El BroadcastChannel cubre los casos de edicion.
     const _cache = {};
-    const CACHE_TTL = 45000;
+    const CACHE_TTL_TRANSACTIONAL = 8000;
+    const CACHE_TTL_STATIC        = 45000;
+    // Entidades que pueden cambiar frecuentemente (escrituras desde
+    // multiples modulos / multiples usuarios).
+    const TRANSACTIONAL_ENTITIES = new Set([
+        'sales', 'receivables', 'payables', 'cotizaciones'
+    ]);
+
+    function getCacheTtl(entityType) {
+        return TRANSACTIONAL_ENTITIES.has(entityType)
+            ? CACHE_TTL_TRANSACTIONAL
+            : CACHE_TTL_STATIC;
+    }
 
     function invalidateCache(entityType) {
         delete _cache[entityType];
@@ -27,6 +56,48 @@ window.Mazelab = window.Mazelab || {};
 
     function invalidateAll() {
         Object.keys(_cache).forEach(k => delete _cache[k]);
+    }
+
+    // BroadcastChannel cross-tab — fallback a no-op si el navegador no
+    // lo soporta (cubre Safari < 15.4). Sin esto el ERP sigue funcionando,
+    // solo pierde la sincronizacion inmediata cross-tab (queda con el
+    // TTL corto como fallback).
+    let _bc = null;
+    function initBroadcastChannel() {
+        if (typeof BroadcastChannel === 'undefined') return;
+        try {
+            _bc = new BroadcastChannel('mazelab-data');
+            _bc.onmessage = function (evt) {
+                if (!evt || !evt.data) return;
+                var msg = evt.data;
+                if (msg.type === 'invalidate' && msg.entityType) {
+                    // Otra tab escribio → invalida cache local.
+                    delete _cache[msg.entityType];
+                } else if (msg.type === 'invalidate-all') {
+                    invalidateAll();
+                }
+            };
+        } catch (e) {
+            console.warn('DataService: BroadcastChannel init failed:', e);
+            _bc = null;
+        }
+    }
+
+    // Inicializa la channel al cargar el modulo (sin esperar init()).
+    initBroadcastChannel();
+
+    function broadcastInvalidate(entityType) {
+        if (!_bc) return;
+        try {
+            _bc.postMessage({
+                type: 'invalidate',
+                entityType: entityType,
+                ts: Date.now()
+            });
+        } catch (e) {
+            // Channel cerrada o tab terminando. Sin retry — el TTL corto
+            // cubre el caso.
+        }
     }
 
     async function init() {
@@ -74,9 +145,11 @@ window.Mazelab = window.Mazelab || {};
     }
 
     async function getAll(entityType) {
-        // Serve from cache if fresh
+        // Serve from cache if fresh — TTL depende de tipo de entidad
+        // (transaccional 8s vs estatica 45s).
         const cached = _cache[entityType];
-        if (cached && (Date.now() - cached.ts) < CACHE_TTL) {
+        const ttl = getCacheTtl(entityType);
+        if (cached && (Date.now() - cached.ts) < ttl) {
             return cached.data;
         }
 
@@ -106,6 +179,7 @@ window.Mazelab = window.Mazelab || {};
 
     async function create(entityType, record) {
         invalidateCache(entityType);
+        broadcastInvalidate(entityType);
         if (useSupabase) {
             const table = TABLE_MAP[entityType];
             return await window.Mazelab.Supabase.insert(table, record);
@@ -116,6 +190,7 @@ window.Mazelab = window.Mazelab || {};
 
     async function update(entityType, id, updates) {
         invalidateCache(entityType);
+        broadcastInvalidate(entityType);
         if (useSupabase) {
             const table = TABLE_MAP[entityType];
             return await window.Mazelab.Supabase.update(table, id, updates);
@@ -126,6 +201,7 @@ window.Mazelab = window.Mazelab || {};
 
     async function remove(entityType, id) {
         invalidateCache(entityType);
+        broadcastInvalidate(entityType);
         if (useSupabase) {
             const table = TABLE_MAP[entityType];
             return await window.Mazelab.Supabase.remove(table, id);
@@ -136,6 +212,7 @@ window.Mazelab = window.Mazelab || {};
 
     async function importMany(entityType, records) {
         invalidateCache(entityType);
+        broadcastInvalidate(entityType);
         if (useSupabase) {
             const table = TABLE_MAP[entityType];
             return await window.Mazelab.Supabase.upsertMany(table, records);
