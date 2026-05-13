@@ -1061,8 +1061,12 @@ window.Mazelab.Modules.FinanceModule = (function () {
         });
 
         // Column filter inputs
-        // B-007 fix: debounce 150ms para filtros de columna.
-        var debouncedColFilter = window.Mazelab.debounce(refreshTable, 150);
+        // B-007 fix: debounce 300ms para filtros de columna.
+        // Issue-B fix (Sprint 2A.1, feedback bloque 2 test 3-4): subido
+        // de 150 a 300ms. Owner reporto perdida de keystrokes ("PLAY"
+        // se tipeaba como "PAY" al perderse la 'L') con tabla CxC
+        // grande. Igualar al debounce del search global elimina el lag.
+        var debouncedColFilter = window.Mazelab.debounce(refreshTable, 300);
         document.querySelectorAll('.fin-col-filter').forEach(function (input) {
             input.addEventListener('input', function () {
                 columnFilters[input.dataset.col] = input.value;

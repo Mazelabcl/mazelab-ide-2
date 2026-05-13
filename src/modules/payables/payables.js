@@ -1086,14 +1086,18 @@ window.Mazelab.Modules.PayablesModule = (function () {
             });
         });
         // Column filter inputs — restaurar foco después del re-render con setTimeout
-        // B-007 fix: debounce 150ms para filtros de columna.
+        // B-007 fix: debounce 300ms para filtros de columna.
+        // Issue-B fix (Sprint 2A.1, feedback bloque 2 test 3-4): subido
+        // de 150 a 300ms. Owner reporto perdida de keystrokes en tablas
+        // grandes; 150ms era insuficiente para tipeo natural. 300ms
+        // iguala el search global y elimina el lag percibido.
         var debouncedColFilter = window.Mazelab.debounce(function (col, cursor) {
             refreshView();
             setTimeout(function () {
                 var el = document.querySelector('#payables-list-table .pay-col-filter[data-col="' + col + '"]');
                 if (el) { el.focus(); try { el.setSelectionRange(cursor, cursor); } catch(e){} }
             }, 0);
-        }, 150);
+        }, 300);
         document.querySelectorAll('#payables-list-table .pay-col-filter').forEach(function (input) {
             if (input._bound) return;
             input._bound = true;
