@@ -112,7 +112,11 @@ window.Mazelab.Modules.KanbanModule = (function () {
     }
 
     function todayStr() {
-        return new Date().toISOString().slice(0, 10);
+        // B-002 fix: usar fecha LOCAL en vez de UTC. Antes esta función
+        // devolvía el día UTC, lo que adelantaba 1 día desde las ~21:00
+        // hora Chile y marcaba eventos del día como "realizados" antes de
+        // tiempo. Ver src/shared/dates.js.
+        return window.MazelabDates.getTodayLocalStr();
     }
 
     function isActivacion(sale) {
