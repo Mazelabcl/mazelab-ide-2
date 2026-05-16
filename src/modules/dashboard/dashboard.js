@@ -5,14 +5,6 @@ window.Mazelab.Modules.DashboardModule = (function () {
 
     // --------------- helpers ---------------
 
-    // Parse date string as LOCAL date (not UTC). "2026-03-19" → Mar 19 00:00 local time.
-    function parseLocalDate(str) {
-        if (!str) return null;
-        var parts = String(str).match(/^(\d{4})-(\d{2})-(\d{2})/);
-        if (parts) return new Date(Number(parts[1]), Number(parts[2]) - 1, Number(parts[3]));
-        return new Date(str);
-    }
-
     function formatCLP(n) {
         if (n == null || isNaN(n)) return '$0';
         var abs = Math.abs(Math.round(n));
@@ -397,7 +389,7 @@ window.Mazelab.Modules.DashboardModule = (function () {
         if (dmy) return new Date(Number(dmy[3]), Number(dmy[2]) - 1, Number(dmy[1]));
         var my = s.match(/^(\d{1,2})\/(\d{4})$/);
         if (my) return new Date(Number(my[2]), Number(my[1]) - 1, 15);
-        return parseLocalDate(str);
+        return window.MazelabDates.parseLocalDate(str);
     }
 
     // --- Reusable: YoY Chart (Chart.js canvas) ---
@@ -929,7 +921,7 @@ window.Mazelab.Modules.DashboardModule = (function () {
         sales.forEach(function (s) {
             var ed = s.eventDate || s.event_date || s.fecha_evento;
             if (!ed) return;
-            var d = parseLocalDate(ed);
+            var d = window.MazelabDates.parseLocalDate(ed);
             if (d && d >= now && d <= in30Days) upcomingCount++;
         });
 
@@ -945,7 +937,7 @@ window.Mazelab.Modules.DashboardModule = (function () {
         sales.forEach(function (s) {
             var ed = s.eventDate || s.event_date || s.fecha_evento;
             if (!ed) return;
-            var d = parseLocalDate(ed);
+            var d = window.MazelabDates.parseLocalDate(ed);
             var st = (s.kanbanCol || s.status || '').toLowerCase();
             if (d && d < now && st !== 'completado' && st !== 'finalizado' && st !== 'cerrado') {
                 overdueCount++;
@@ -1027,7 +1019,7 @@ window.Mazelab.Modules.DashboardModule = (function () {
         sales.forEach(function (s) {
             var ed = s.eventDate || s.event_date || s.fecha_evento;
             if (!ed) return;
-            var d = parseLocalDate(ed);
+            var d = window.MazelabDates.parseLocalDate(ed);
             if (!d) return;
             d.setHours(0, 0, 0, 0);
             for (var i = 0; i < weeks.length; i++) {
@@ -1103,7 +1095,7 @@ window.Mazelab.Modules.DashboardModule = (function () {
         sales.forEach(function (s) {
             var ed = s.eventDate || s.event_date || s.fecha_evento;
             if (!ed) return;
-            var d = parseLocalDate(ed);
+            var d = window.MazelabDates.parseLocalDate(ed);
             if (!d) return;
             var client = s.clientName || s.client_name || 'Sin cliente';
             var dateStr = d.toLocaleDateString('es-CL', { day: 'numeric', month: 'short' });
