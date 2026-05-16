@@ -24,7 +24,7 @@ window.Mazelab.Modules.NominasModule = (function () {
         return (num < 0 ? '-' : '') + '$' + parts.join('.');
     }
 
-    function todayStr() { return new Date().toISOString().substring(0, 10); }
+    function todayStr() { return window.MazelabDates.getTodayLocalStr(); }
 
     function calcDueDate(dateStr) {
         if (!dateStr) return null;
@@ -78,8 +78,8 @@ window.Mazelab.Modules.NominasModule = (function () {
     // Use nominaDate override if set, otherwise calculate from eventDate
     function getEffectiveDueDate(p) {
         if (p.nominaDate) {
-            var d = new Date(p.nominaDate);
-            if (!isNaN(d.getTime())) return d;
+            var d = window.MazelabDates.parseLocalDate(p.nominaDate);
+            if (d && !isNaN(d.getTime())) return d;
         }
         return calcDueDate(p.eventDate);
     }
@@ -87,7 +87,8 @@ window.Mazelab.Modules.NominasModule = (function () {
     // ── Filtros de elegibilidad ────────────────────────────────────────
 
     function getCutoff() {
-        var d = new Date(cutoffDate || todayStr());
+        var d = window.MazelabDates.parseLocalDate(cutoffDate || todayStr());
+        if (!d) d = new Date();
         d.setHours(23, 59, 59, 999);
         return d;
     }
