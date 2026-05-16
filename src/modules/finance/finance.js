@@ -145,7 +145,7 @@ window.Mazelab.Modules.FinanceModule = (function () {
         }
         // Fallback: fecha del evento (uses linked sale date if available)
         var effDate = getEffectiveEventDate(r);
-        if (effDate) return parseLocalDate(effDate);
+        if (effDate) return window.MazelabDates.parseLocalDate(effDate);
         return null;
     }
 
@@ -207,18 +207,10 @@ window.Mazelab.Modules.FinanceModule = (function () {
         return (negative ? '-$' : '$') + str;
     }
 
-    // Parse date string as LOCAL (not UTC)
-    function parseLocalDate(str) {
-        if (!str) return null;
-        var parts = String(str).match(/^(\d{4})-(\d{2})-(\d{2})/);
-        if (parts) return new Date(Number(parts[1]), Number(parts[2]) - 1, Number(parts[3]));
-        return new Date(str);
-    }
-
     function formatDate(dateStr) {
         if (!dateStr) return '-';
         try {
-            var d = parseLocalDate(dateStr);
+            var d = window.MazelabDates.parseLocalDate(dateStr);
             if (!d || isNaN(d.getTime())) return dateStr;
             var dd = String(d.getDate()).padStart(2, '0');
             var mm = String(d.getMonth() + 1).padStart(2, '0');
@@ -841,8 +833,8 @@ window.Mazelab.Modules.FinanceModule = (function () {
             var pa = priorityMap[a._realStatus] !== undefined ? priorityMap[a._realStatus] : 5;
             var pb = priorityMap[b._realStatus] !== undefined ? priorityMap[b._realStatus] : 5;
             if (pa !== pb) return pa - pb;
-            var da = a.eventDate ? parseLocalDate(a.eventDate).getTime() : 0;
-            var db = b.eventDate ? parseLocalDate(b.eventDate).getTime() : 0;
+            var da = a.eventDate ? window.MazelabDates.parseLocalDate(a.eventDate).getTime() : 0;
+            var db = b.eventDate ? window.MazelabDates.parseLocalDate(b.eventDate).getTime() : 0;
             return db - da;
         });
 
@@ -1139,7 +1131,7 @@ window.Mazelab.Modules.FinanceModule = (function () {
                 if (!modalContainer) return;
                 var rows = postEvento.map(function (r) {
                     var evDate = getEffectiveEventDate(r);
-                    var diasSinFactura = evDate ? Math.floor((new Date() - parseLocalDate(evDate)) / 86400000) : 0;
+                    var diasSinFactura = evDate ? Math.floor((new Date() - window.MazelabDates.parseLocalDate(evDate)) / 86400000) : 0;
                     var avisos = Array.isArray(r.avisos_factura) ? r.avisos_factura.length : 0;
                     return '<tr>' +
                         '<td style="padding:4px 6px;font-size:12px;">' + (r.sourceId || '-') + '</td>' +
