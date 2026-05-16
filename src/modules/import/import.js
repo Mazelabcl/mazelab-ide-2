@@ -206,7 +206,7 @@ window.Mazelab.Modules.ImportModule = (function () {
         if (paid >= invoiced) return 'pagada';
 
         // Vencimiento desde mes de emisión de factura (billingMonth), no desde eventDate
-        var baseDate = parseBillingMonthToDate(row.billingMonth) || (row.eventDate ? new Date(parseDate(row.eventDate)) : null);
+        var baseDate = parseBillingMonthToDate(row.billingMonth) || (row.eventDate ? window.MazelabDates.parseLocalDate(parseDate(row.eventDate)) : null);
         if (baseDate) {
             var diffDays = (Date.now() - baseDate.getTime()) / (1000 * 60 * 60 * 24);
             if (diffDays > 90) return 'vencida_90';
@@ -311,7 +311,7 @@ window.Mazelab.Modules.ImportModule = (function () {
             rec.payments = [{
                 id: generateId(),
                 amount: paid,
-                date: parseDate(row.eventDate) || new Date().toISOString().substring(0, 10),
+                date: parseDate(row.eventDate) || window.MazelabDates.getTodayLocalStr(),
                 method: 'importado'
             }];
         }
@@ -373,7 +373,7 @@ window.Mazelab.Modules.ImportModule = (function () {
             rec.payments = [{
                 id: generateId(),
                 amount: amountPaid,
-                date: parseDate(row.paymentDate || row.eventDate) || new Date().toISOString().substring(0, 10),
+                date: parseDate(row.paymentDate || row.eventDate) || window.MazelabDates.getTodayLocalStr(),
                 method: 'importado'
             }];
         } else if (isPaid && amount > 0) {
@@ -381,7 +381,7 @@ window.Mazelab.Modules.ImportModule = (function () {
             rec.payments = [{
                 id: generateId(),
                 amount: amount,
-                date: new Date().toISOString().substring(0, 10),
+                date: window.MazelabDates.getTodayLocalStr(),
                 method: 'importado'
             }];
         }
