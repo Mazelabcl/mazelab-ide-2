@@ -39,7 +39,7 @@ window.Mazelab.Modules.SalesModule = (function () {
         if (sale.status === 'realizada' || sale.status === 'anulada' || sale.status === 'cancelada') {
             return sale.status;
         }
-        if (sale.eventDate && new Date(sale.eventDate) < new Date()) {
+        if (sale.eventDate && window.MazelabDates.parseLocalDate(sale.eventDate) < new Date()) {
             return 'realizada';
         }
         // 'confirmada' tratada como 'pendiente' (estado eliminado)
