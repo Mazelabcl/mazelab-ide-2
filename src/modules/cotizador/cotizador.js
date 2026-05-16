@@ -29,7 +29,7 @@ window.Mazelab.Modules.CotizadorModule = (function () {
     }
 
     function todayStr() {
-        return new Date().toISOString().substring(0, 10);
+        return window.MazelabDates.getTodayLocalStr();
     }
 
     function formatDateShort(dateStr) {
