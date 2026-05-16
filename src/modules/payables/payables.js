@@ -34,7 +34,8 @@ window.Mazelab.Modules.PayablesModule = (function () {
     // Retención BH configurable por año (SII Chile)
     function getBHRetentionRate(dateStr) {
         if (!dateStr) return 0.1525;
-        var year = new Date(dateStr).getFullYear();
+        var parsed = window.MazelabDates.parseLocalDate(dateStr);
+        var year = parsed ? parsed.getFullYear() : new Date(dateStr).getFullYear();
         return year <= 2024 ? 0.145 : 0.1525; // 14.5% ≤2024, 15.25% 2025+
     }
 
@@ -64,7 +65,7 @@ window.Mazelab.Modules.PayablesModule = (function () {
                d.getFullYear();
     }
 
-    function todayStr() { return new Date().toISOString().substring(0, 10); }
+    function todayStr() { return window.MazelabDates.getTodayLocalStr(); }
 
     function generateId() { return Date.now().toString(36) + '-' + Math.random().toString(36).substring(2, 9); }
 
@@ -658,7 +659,7 @@ window.Mazelab.Modules.PayablesModule = (function () {
         }
 
         // Show info based on override date or calculated date
-        var selectedDate = (nominaInput && nominaInput.value) ? new Date(nominaInput.value) : dueDate;
+        var selectedDate = (nominaInput && nominaInput.value) ? window.MazelabDates.parseLocalDate(nominaInput.value) : dueDate;
         if (!selectedDate || isNaN(selectedDate.getTime())) { display.textContent = ''; return; }
         var today = new Date(); today.setHours(0, 0, 0, 0);
         var diff = Math.floor((selectedDate - today) / 86400000);
