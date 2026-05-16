@@ -12,26 +12,32 @@ window.Mazelab.Modules.DashboardModule = (function () {
         return (n < 0 ? '-$' : '$') + formatted;
     }
 
+    // Coerce a Date or YYYY-MM-DD string to a local Date.
+    function toLocalDate(date) {
+        if (date instanceof Date) return date;
+        return window.MazelabDates.parseLocalDate(date) || new Date(date);
+    }
+
     function getMonthLabel(date) {
         var months = ['Ene', 'Feb', 'Mar', 'Abr', 'May', 'Jun',
                       'Jul', 'Ago', 'Sep', 'Oct', 'Nov', 'Dic'];
-        var d = new Date(date);
+        var d = toLocalDate(date);
         return months[d.getMonth()] + ' ' + d.getFullYear();
     }
 
     function getMonthKey(date) {
-        var d = new Date(date);
+        var d = toLocalDate(date);
         var y = d.getFullYear();
         var m = (d.getMonth() + 1).toString().padStart(2, '0');
         return y + '-' + m;
     }
 
     function getWeekKey(date) {
-        var d = new Date(date);
+        var d = toLocalDate(date);
         // ISO week start (Monday)
         var day = d.getDay() || 7;
         d.setDate(d.getDate() - day + 1); // Monday
-        return d.toISOString().substring(0, 10);
+        return window.MazelabDates.formatLocalDate(d);
     }
 
     function getLast6Months() {
@@ -656,7 +662,7 @@ window.Mazelab.Modules.DashboardModule = (function () {
         var svcStats = {};
         sales.forEach(function (s) {
             var ed = s.eventDate || s.event_date || '';
-            var y = ed ? new Date(ed).getFullYear() : 0;
+            var y = ed ? (window.MazelabDates.parseLocalDate(ed) || new Date(0)).getFullYear() : 0;
             if (y !== thisYear && y !== lastYear) return;
             var amt = Number(s.amount || s.monto_venta || 0);
             var jornadas = Math.max(Number(s.jornadas) || 1, 1);
@@ -708,7 +714,7 @@ window.Mazelab.Modules.DashboardModule = (function () {
         var salesById = {};
         sales.forEach(function (s) {
             var ed = s.eventDate || s.event_date || '';
-            var y = ed ? new Date(ed).getFullYear() : 0;
+            var y = ed ? (window.MazelabDates.parseLocalDate(ed) || new Date(0)).getFullYear() : 0;
             if (y !== thisYear) return;
             var exec = s.staffName || s.ejecutivo || s.vendedor || s.salesperson || s.createdBy || 'Sin asignar';
             if (!execData[exec]) execData[exec] = { name: exec, count: 0, total: 0, cobrado: 0 };
@@ -741,7 +747,7 @@ window.Mazelab.Modules.DashboardModule = (function () {
         });
         sales.forEach(function (s) {
             var ed = s.eventDate || s.event_date || '';
-            var y = ed ? new Date(ed).getFullYear() : 0;
+            var y = ed ? (window.MazelabDates.parseLocalDate(ed) || new Date(0)).getFullYear() : 0;
             if (y !== thisYear) return;
             var exec = s.staffName || s.ejecutivo || s.vendedor || s.salesperson || s.createdBy || 'Sin asignar';
             if (!execSales[exec]) execSales[exec] = [];
@@ -782,7 +788,7 @@ window.Mazelab.Modules.DashboardModule = (function () {
         var clientStats = {};
         sales.forEach(function (s) {
             var ed = s.eventDate || s.event_date || '';
-            var y = ed ? new Date(ed).getFullYear() : 0;
+            var y = ed ? (window.MazelabDates.parseLocalDate(ed) || new Date(0)).getFullYear() : 0;
             if (y !== thisYear && y !== lastYear) return;
             var name = s.clientName || s.client_name || 'Sin cliente';
             if (!clientStats[name]) clientStats[name] = { name: name, count: 0, total: 0 };
@@ -820,7 +826,7 @@ window.Mazelab.Modules.DashboardModule = (function () {
 
         sales.forEach(function (s) {
             var ed = s.eventDate || s.event_date || '';
-            var y = ed ? new Date(ed).getFullYear() : 0;
+            var y = ed ? (window.MazelabDates.parseLocalDate(ed) || new Date(0)).getFullYear() : 0;
             if (y !== thisYear) return;
             var pct = Number(s.comisionPct || 0);
             if (pct <= 0) return;
@@ -1053,9 +1059,13 @@ window.Mazelab.Modules.DashboardModule = (function () {
                 evList = '<p style="color:var(--text-secondary);font-size:12px;padding:8px 0;">Sin eventos</p>';
             } else {
                 // Sort by date
-                w.events.sort(function (a, b) { return new Date(a.date) - new Date(b.date); });
+                w.events.sort(function (a, b) {
+                    var da = window.MazelabDates.parseLocalDate(a.date) || new Date(0);
+                    var db = window.MazelabDates.parseLocalDate(b.date) || new Date(0);
+                    return da - db;
+                });
                 w.events.slice(0, 5).forEach(function (ev) {
-                    var dateStr = new Date(ev.date).toLocaleDateString('es-CL', { weekday: 'short', day: 'numeric', month: 'short' });
+                    var dateStr = (window.MazelabDates.parseLocalDate(ev.date) || new Date(ev.date)).toLocaleDateString('es-CL', { weekday: 'short', day: 'numeric', month: 'short' });
                     var svcs = ev.services.length > 0 ? ev.services.join(', ') : 'Sin servicio';
                     var issueFlag = ev.hasIssue ? ' <span class="badge badge-danger" style="font-size:9px;">Problema</span>' : '';
                     evList += '<div style="padding:6px 0;border-bottom:1px solid var(--border-color);font-size:12px;">' +
@@ -1196,7 +1206,7 @@ window.Mazelab.Modules.DashboardModule = (function () {
         var salesForRankings = rankingsScope === 'year'
             ? sales.filter(function (s) {
                 var d = s.eventDate || s.event_date;
-                return d && new Date(d) >= oneYearAgo;
+                return d && window.MazelabDates.parseLocalDate(d) >= oneYearAgo;
             })
             : sales;
 
@@ -1291,7 +1301,8 @@ window.Mazelab.Modules.DashboardModule = (function () {
 
     function getBHRetentionRate(dateStr) {
         if (!dateStr) return 0.1525;
-        var year = new Date(dateStr).getFullYear();
+        var parsed = window.MazelabDates.parseLocalDate(dateStr);
+        var year = parsed ? parsed.getFullYear() : new Date(dateStr).getFullYear();
         return year <= 2024 ? 0.145 : 0.1525;
     }
 
