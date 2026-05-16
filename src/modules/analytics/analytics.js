@@ -32,7 +32,7 @@ window.Mazelab.Modules.AnalyticsModule = (function () {
         var cutoff = new Date();
         cutoff.setFullYear(cutoff.getFullYear() - 1);
         return sales.filter(function (s) {
-            return s.eventDate && new Date(s.eventDate) >= cutoff;
+            return s.eventDate && window.MazelabDates.parseLocalDate(s.eventDate) >= cutoff;
         });
     }
 

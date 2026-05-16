@@ -34,7 +34,8 @@ window.Mazelab.Modules.PayablesModule = (function () {
     // Retención BH configurable por año (SII Chile)
     function getBHRetentionRate(dateStr) {
         if (!dateStr) return 0.1525;
-        var year = new Date(dateStr).getFullYear();
+        var parsed = window.MazelabDates.parseLocalDate(dateStr);
+        var year = parsed ? parsed.getFullYear() : new Date(dateStr).getFullYear();
         return year <= 2024 ? 0.145 : 0.1525; // 14.5% ≤2024, 15.25% 2025+
     }
 
@@ -46,18 +47,10 @@ window.Mazelab.Modules.PayablesModule = (function () {
     function isBH(p)      { return (p.docType || '').toLowerCase() === 'bh'; }
     function isFactura(p) { return (p.docType || '').toLowerCase() === 'factura'; }
 
-    // Parse as LOCAL date to avoid UTC timezone shift
-    function parseLocalDate(str) {
-        if (!str) return null;
-        var parts = String(str).match(/^(\d{4})-(\d{2})-(\d{2})/);
-        if (parts) return new Date(Number(parts[1]), Number(parts[2]) - 1, Number(parts[3]));
-        return new Date(str);
-    }
-
     // Primer viernes >= eventDate + 30 días
     function calcDueDate(dateStr) {
         if (!dateStr) return null;
-        var d = parseLocalDate(dateStr);
+        var d = window.MazelabDates.parseLocalDate(dateStr);
         if (!d || isNaN(d.getTime())) return null;
         d.setDate(d.getDate() + 30);
         var dow = d.getDay();
@@ -72,7 +65,7 @@ window.Mazelab.Modules.PayablesModule = (function () {
                d.getFullYear();
     }
 
-    function todayStr() { return new Date().toISOString().substring(0, 10); }
+    function todayStr() { return window.MazelabDates.getTodayLocalStr(); }
 
     function generateId() { return Date.now().toString(36) + '-' + Math.random().toString(36).substring(2, 9); }
 
@@ -666,7 +659,7 @@ window.Mazelab.Modules.PayablesModule = (function () {
         }
 
         // Show info based on override date or calculated date
-        var selectedDate = (nominaInput && nominaInput.value) ? new Date(nominaInput.value) : dueDate;
+        var selectedDate = (nominaInput && nominaInput.value) ? window.MazelabDates.parseLocalDate(nominaInput.value) : dueDate;
         if (!selectedDate || isNaN(selectedDate.getTime())) { display.textContent = ''; return; }
         var today = new Date(); today.setHours(0, 0, 0, 0);
         var diff = Math.floor((selectedDate - today) / 86400000);

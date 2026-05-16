@@ -24,19 +24,11 @@ window.Mazelab.Modules.NominasModule = (function () {
         return (num < 0 ? '-' : '') + '$' + parts.join('.');
     }
 
-    function todayStr() { return new Date().toISOString().substring(0, 10); }
-
-    // Parse as LOCAL date to avoid UTC timezone shift
-    function parseLocalDate(str) {
-        if (!str) return null;
-        var parts = String(str).match(/^(\d{4})-(\d{2})-(\d{2})/);
-        if (parts) return new Date(Number(parts[1]), Number(parts[2]) - 1, Number(parts[3]));
-        return new Date(str);
-    }
+    function todayStr() { return window.MazelabDates.getTodayLocalStr(); }
 
     function calcDueDate(dateStr) {
         if (!dateStr) return null;
-        var d = parseLocalDate(dateStr);
+        var d = window.MazelabDates.parseLocalDate(dateStr);
         if (!d || isNaN(d.getTime())) return null;
         d.setDate(d.getDate() + 30);
         return d;
@@ -86,8 +78,8 @@ window.Mazelab.Modules.NominasModule = (function () {
     // Use nominaDate override if set, otherwise calculate from eventDate
     function getEffectiveDueDate(p) {
         if (p.nominaDate) {
-            var d = new Date(p.nominaDate);
-            if (!isNaN(d.getTime())) return d;
+            var d = window.MazelabDates.parseLocalDate(p.nominaDate);
+            if (d && !isNaN(d.getTime())) return d;
         }
         return calcDueDate(p.eventDate);
     }
@@ -95,7 +87,8 @@ window.Mazelab.Modules.NominasModule = (function () {
     // ── Filtros de elegibilidad ────────────────────────────────────────
 
     function getCutoff() {
-        var d = new Date(cutoffDate || todayStr());
+        var d = window.MazelabDates.parseLocalDate(cutoffDate || todayStr());
+        if (!d) d = new Date();
         d.setHours(23, 59, 59, 999);
         return d;
     }

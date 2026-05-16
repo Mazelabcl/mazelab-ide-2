@@ -36,8 +36,8 @@ window.Mazelab.Modules.CxcKanbanModule = (function () {
 
     function parseDate(str) {
         if (!str) return null;
-        var d = new Date(str);
-        return isNaN(d.getTime()) ? null : d;
+        var d = window.MazelabDates.parseLocalDate(str);
+        return d && !isNaN(d.getTime()) ? d : null;
     }
 
     function formatDate(str) {
@@ -151,7 +151,11 @@ window.Mazelab.Modules.CxcKanbanModule = (function () {
 
         // Sort: vencida by overdue desc, others by date
         cols.vencida.sort(function (a, b) { return b._overdueDays - a._overdueDays; });
-        cols.por_cobrar.sort(function (a, b) { return new Date(a._eventDate || 0) - new Date(b._eventDate || 0); });
+        cols.por_cobrar.sort(function (a, b) {
+            var da = a._eventDate ? window.MazelabDates.parseLocalDate(a._eventDate) : new Date(0);
+            var db = b._eventDate ? window.MazelabDates.parseLocalDate(b._eventDate) : new Date(0);
+            return da - db;
+        });
 
         // Build HTML
         var html = '<div class="kanban-board cxc-kanban-board">';

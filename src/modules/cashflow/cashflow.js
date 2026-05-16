@@ -12,16 +12,9 @@ window.Mazelab.Modules.CashflowModule = (function () {
         return (n < 0 ? '-$' : '$') + s;
     }
 
-    function parseLocalDate(str) {
-        if (!str) return null;
-        var parts = String(str).match(/^(\d{4})-(\d{2})-(\d{2})/);
-        if (parts) return new Date(Number(parts[1]), Number(parts[2]) - 1, Number(parts[3]));
-        return new Date(str);
-    }
-
     function addDays(dateStr, days) {
         if (!dateStr) return null;
-        var d = parseLocalDate(dateStr);
+        var d = window.MazelabDates.parseLocalDate(dateStr);
         if (!d || isNaN(d)) return null;
         d.setDate(d.getDate() + days);
         return d;
@@ -45,8 +38,8 @@ window.Mazelab.Modules.CashflowModule = (function () {
     //   - Históricos importados: eventDate + 30 días
     function resolveDate(record) {
         if (record.payments && record.payments.length > 0 && record.payments[0].date) {
-            var d = new Date(record.payments[0].date);
-            if (!isNaN(d)) return d;
+            var d = window.MazelabDates.parseLocalDate(record.payments[0].date);
+            if (d && !isNaN(d)) return d;
         }
         return addDays(record.eventDate || record.billingDate, 30);
     }
@@ -55,8 +48,8 @@ window.Mazelab.Modules.CashflowModule = (function () {
     // CXP: prefiere paymentDate (fecha_probable_pago_cxp), luego fallback.
     function resolveExpectedDate(record, type) {
         if (type === 'cxp' && record.paymentDate) {
-            var d = new Date(record.paymentDate);
-            if (!isNaN(d)) return d;
+            var d = window.MazelabDates.parseLocalDate(record.paymentDate);
+            if (d && !isNaN(d)) return d;
         }
         return addDays(record.billingDate || record.eventDate, 30);
     }

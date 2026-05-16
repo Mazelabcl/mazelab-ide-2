@@ -145,7 +145,7 @@ window.Mazelab.Modules.FinanceModule = (function () {
         }
         // Fallback: fecha del evento (uses linked sale date if available)
         var effDate = getEffectiveEventDate(r);
-        if (effDate) return parseLocalDate(effDate);
+        if (effDate) return window.MazelabDates.parseLocalDate(effDate);
         return null;
     }
 
@@ -161,7 +161,7 @@ window.Mazelab.Modules.FinanceModule = (function () {
         // 4. Pendiente factura by status — differentiate pre/post evento
         if (r.status === 'pendiente_factura' || r.status === 'sin_factura' || getMontoFacturado(r) <= 0) {
             var evDate = getEffectiveEventDate(r);
-            if (evDate && new Date(evDate) < new Date()) {
+            if (evDate && window.MazelabDates.parseLocalDate(evDate) < new Date()) {
                 return 'post_evento_sin_factura';
             }
             return 'pendiente_factura';
@@ -207,18 +207,10 @@ window.Mazelab.Modules.FinanceModule = (function () {
         return (negative ? '-$' : '$') + str;
     }
 
-    // Parse date string as LOCAL (not UTC)
-    function parseLocalDate(str) {
-        if (!str) return null;
-        var parts = String(str).match(/^(\d{4})-(\d{2})-(\d{2})/);
-        if (parts) return new Date(Number(parts[1]), Number(parts[2]) - 1, Number(parts[3]));
-        return new Date(str);
-    }
-
     function formatDate(dateStr) {
         if (!dateStr) return '-';
         try {
-            var d = parseLocalDate(dateStr);
+            var d = window.MazelabDates.parseLocalDate(dateStr);
             if (!d || isNaN(d.getTime())) return dateStr;
             var dd = String(d.getDate()).padStart(2, '0');
             var mm = String(d.getMonth() + 1).padStart(2, '0');
@@ -446,9 +438,9 @@ window.Mazelab.Modules.FinanceModule = (function () {
             if (r.payments && Array.isArray(r.payments)) {
                 r.payments.forEach(function (p) {
                     if (p.date) {
-                        var pDate = new Date(p.date);
+                        var pDate = window.MazelabDates.parseLocalDate(p.date);
                         var now = new Date();
-                        if (pDate.getMonth() === now.getMonth() && pDate.getFullYear() === now.getFullYear()) {
+                        if (pDate && pDate.getMonth() === now.getMonth() && pDate.getFullYear() === now.getFullYear()) {
                             pagadoMes += Number(p.amount) || 0;
                         }
                     }
@@ -841,8 +833,8 @@ window.Mazelab.Modules.FinanceModule = (function () {
             var pa = priorityMap[a._realStatus] !== undefined ? priorityMap[a._realStatus] : 5;
             var pb = priorityMap[b._realStatus] !== undefined ? priorityMap[b._realStatus] : 5;
             if (pa !== pb) return pa - pb;
-            var da = a.eventDate ? parseLocalDate(a.eventDate).getTime() : 0;
-            var db = b.eventDate ? parseLocalDate(b.eventDate).getTime() : 0;
+            var da = a.eventDate ? window.MazelabDates.parseLocalDate(a.eventDate).getTime() : 0;
+            var db = b.eventDate ? window.MazelabDates.parseLocalDate(b.eventDate).getTime() : 0;
             return db - da;
         });
 
@@ -891,7 +883,7 @@ window.Mazelab.Modules.FinanceModule = (function () {
         var totalIva = receivable.tipoDoc === 'E' ? neto : (getMontoFacturado(receivable) * 1.19);
         var pagado = getTotalPagado(receivable);
         var restante = totalIva - pagado;
-        var today = new Date().toISOString().split('T')[0];
+        var today = window.MazelabDates.getTodayLocalStr();
         var payments = Array.isArray(receivable.payments) ? receivable.payments : [];
 
         var html = '';
@@ -1139,7 +1131,7 @@ window.Mazelab.Modules.FinanceModule = (function () {
                 if (!modalContainer) return;
                 var rows = postEvento.map(function (r) {
                     var evDate = getEffectiveEventDate(r);
-                    var diasSinFactura = evDate ? Math.floor((new Date() - parseLocalDate(evDate)) / 86400000) : 0;
+                    var diasSinFactura = evDate ? Math.floor((new Date() - window.MazelabDates.parseLocalDate(evDate)) / 86400000) : 0;
                     var avisos = Array.isArray(r.avisos_factura) ? r.avisos_factura.length : 0;
                     return '<tr>' +
                         '<td style="padding:4px 6px;font-size:12px;">' + (r.sourceId || '-') + '</td>' +
@@ -1631,7 +1623,7 @@ window.Mazelab.Modules.FinanceModule = (function () {
             var textInput = document.getElementById('cobrar-nota-text');
             var text = textInput ? textInput.value.trim() : '';
             if (!text) return;
-            var today = new Date().toISOString().split('T')[0];
+            var today = window.MazelabDates.getTodayLocalStr();
             var existingNotas = Array.isArray(rec.notas_cobranza) ? rec.notas_cobranza : [];
             var updatedNotas = existingNotas.concat([{ date: today, text: text }]);
             try {
@@ -1703,7 +1695,7 @@ window.Mazelab.Modules.FinanceModule = (function () {
         // Mark as sent button
         document.getElementById('cobrar-save-btn').addEventListener('click', async function () {
             var userContext = document.getElementById('cobrar-context').value.trim();
-            var today = new Date().toISOString().split('T')[0];
+            var today = window.MazelabDates.getTodayLocalStr();
             var newCobro = {
                 id:      Date.now().toString(),
                 date:    today,
@@ -1839,7 +1831,7 @@ window.Mazelab.Modules.FinanceModule = (function () {
                     if (amount <= 0) { alert('Ingrese un monto v\u00e1lido'); return; }
                     try {
                         var payments = Array.isArray(rec.payments) ? rec.payments.slice() : [];
-                        payments.push({ id: Date.now().toString(), amount: amount, date: date || new Date().toISOString().split('T')[0] });
+                        payments.push({ id: Date.now().toString(), amount: amount, date: date || window.MazelabDates.getTodayLocalStr() });
                         await window.Mazelab.DataService.update('receivables', rec.id, { payments: payments });
                         closeModal();
                         await loadAndRender();
@@ -2273,7 +2265,7 @@ window.Mazelab.Modules.FinanceModule = (function () {
 
         document.getElementById('oc-save').addEventListener('click', async function () {
             var ctx = (document.getElementById('oc-context').value || '').trim();
-            var today = new Date().toISOString().split('T')[0];
+            var today = window.MazelabDates.getTodayLocalStr();
             var newAviso = { date: today, num: avisoNum, context: ctx };
             var updated = avisos.concat([newAviso]);
             try {
@@ -2304,7 +2296,7 @@ window.Mazelab.Modules.FinanceModule = (function () {
                 payments.push({
                     id: Date.now().toString(),
                     amount: restante,
-                    date: new Date().toISOString().split('T')[0]
+                    date: window.MazelabDates.getTodayLocalStr()
                 });
                 await window.Mazelab.DataService.update('receivables', rec.id, {
                     payments: payments,
