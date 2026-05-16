@@ -124,7 +124,11 @@ window.Mazelab.Modules.KanbanModule = (function () {
     }
 
     function getBoardForSale(sale) {
-        return (sale.eventDate || '') > todayStr() ? 'pre' : 'post';
+        // B-002 iter 2: usar >= para que eventos del MISMO dia (HOY) queden
+        // en columna 'pre', no 'post'. Antes ('>') marcaba eventos de hoy
+        // como post. Inconsistente con linea 1739 que usaba '<' (correcta).
+        // Ahora ambas alineadas: HOY o futuro = 'pre', pasado = 'post'.
+        return (sale.eventDate || '') >= todayStr() ? 'pre' : 'post';
     }
 
     function getColumnInfo(colId) {
