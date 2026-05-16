@@ -161,7 +161,10 @@ window.Mazelab.Modules.FinanceModule = (function () {
         // 4. Pendiente factura by status — differentiate pre/post evento
         if (r.status === 'pendiente_factura' || r.status === 'sin_factura' || getMontoFacturado(r) <= 0) {
             var evDate = getEffectiveEventDate(r);
-            if (evDate && window.MazelabDates.parseLocalDate(evDate) < new Date()) {
+            // B-002 iter 2: comparar DIA, no timestamp. Antes una factura cuyo
+            // evento es HOY (sin facturar todavia) caia como 'post_evento_sin_factura'
+            // entrada la tarde, cuando aun NO es post-evento. Fix: comparar strings.
+            if (evDate && evDate < window.MazelabDates.getTodayLocalStr()) {
                 return 'post_evento_sin_factura';
             }
             return 'pendiente_factura';
