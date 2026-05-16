@@ -39,7 +39,11 @@ window.Mazelab.Modules.SalesModule = (function () {
         if (sale.status === 'realizada' || sale.status === 'anulada' || sale.status === 'cancelada') {
             return sale.status;
         }
-        if (sale.eventDate && window.MazelabDates.parseLocalDate(sale.eventDate) < new Date()) {
+        // B-002 iter 2: comparar DIA, no timestamp. parseLocalDate(eventDate)
+        // < new Date() comparaba 00:00 del dia del evento contra HORA actual,
+        // marcando 'realizada' eventos del MISMO dia ya entrada la tarde.
+        // Fix: comparar strings YYYY-MM-DD (lexicograficamente ordenables).
+        if (sale.eventDate && sale.eventDate < window.MazelabDates.getTodayLocalStr()) {
             return 'realizada';
         }
         // 'confirmada' tratada como 'pendiente' (estado eliminado)
