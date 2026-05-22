@@ -2002,6 +2002,41 @@ window.Mazelab.Modules.FinanceModule = (function () {
                     sourceId:       sale ? (sale.sourceId || String(sale.id) || '') : '',
                     payments:       []
                 });
+
+                // 11.F: limpiar CxC residual auto del mismo saleId. Replica la
+                // logica de openFacturarModal:2151-2164. Antes: si la vendedora
+                // facturaba por este modal (boton "+Nueva factura" arriba) en vez
+                // del boton "Facturar" de la CxC autogenerada, quedaba zombie la
+                // CxC original + la factura nueva -> doble cobranza.
+                if (saleId) {
+                    var allReceivables = await window.Mazelab.DataService.getAll('receivables') || [];
+                    var residualesAuto = allReceivables.filter(function (r) {
+                        var matchSale = String(r.saleId) === String(saleId) ||
+                                        (sale && sale.sourceId && String(r.sourceId) === String(sale.sourceId));
+                        return matchSale && r.sourceType === 'auto' && (!r.invoiceNumber || r.invoiceNumber === '');
+                    });
+                    if (residualesAuto.length === 1) {
+                        var rec = residualesAuto[0];
+                        var netoRec = Number(rec.montoNeto || rec.monto_venta || 0);
+                        var netoRestante = Math.max(0, netoRec - invoicedAmount);
+                        if (netoRestante <= 0) {
+                            await window.Mazelab.DataService.remove('receivables', rec.id);
+                        } else {
+                            await window.Mazelab.DataService.update('receivables', rec.id, {
+                                monto_venta:    netoRestante,
+                                montoNeto:      netoRestante,
+                                invoicedAmount: netoRestante,
+                                amount:         netoRestante,
+                                status:         'sin_factura'
+                            });
+                        }
+                    } else if (residualesAuto.length > 1) {
+                        // Edge case: multiples residuales. Decision owner: warning
+                        // console + no tocar. Revision manual requerida.
+                        console.warn('[finance] 11.F: ' + residualesAuto.length + ' CxC residuales auto para saleId=' + saleId + '. Revision manual requerida.');
+                    }
+                }
+
                 closeModal();
                 await loadAndRender();
             } catch (err) { alert('Error al guardar: ' + err.message); }
