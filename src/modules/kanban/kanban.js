@@ -404,18 +404,24 @@ window.Mazelab.Modules.KanbanModule = (function () {
     function getBoardSales() {
         var today = todayStr();
         if (activeBoard === 'pre') {
+            // B-002 iter 3: usar >= para incluir eventos del MISMO dia (HOY).
+            // Antes ('>') eventos de hoy quedaban en LIMBO: boardColumn=1 (pre)
+            // pero excluidos del filtro PRE — y tampoco aparecían en POST porque
+            // boardColumn no estaba en 4-6. Owner reportó esto con la venta 949.
             return sales.filter(function (s) {
                 var col = Number(s.boardColumn);
-                return col >= 1 && col <= 3 && (s.eventDate || '') > today;
+                return col >= 1 && col <= 3 && (s.eventDate || '') >= today;
             });
         } else {
+            // B-002 iter 3: simétrico — eventos de HOY no deben aparecer en POST
+            // (van a PRE). Cambio '>' a '>=' para excluir HOY del post.
             var minDate = postYearMin ? (postYearMin + '-01-01') : '';
             return sales.filter(function (s) {
                 var col = Number(s.boardColumn);
                 if (col === 99) return false;
                 var ed = s.eventDate || '';
                 if (col < 4 || col > 6) return false;
-                if (ed > today) return false;
+                if (ed >= today) return false;
                 if (minDate && ed < minDate) return false;
                 return hasPendingItems(s);
             });
