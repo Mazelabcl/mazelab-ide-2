@@ -980,6 +980,28 @@ window.Mazelab.Modules.SalesModule = (function () {
 
         try {
             if (editingId) {
+                // 10.4: si bajas el monto por debajo de lo ya facturado, mostrar
+                // warning visible. Decision owner: permitir + warning, no bloquear.
+                var existingSale = (sales || []).find(function (s) { return String(s.id) === String(editingId); });
+                if (existingSale && data.amount < (existingSale.amount || 0)) {
+                    var receivablesPre = await DS.getAll('receivables') || [];
+                    var linkedCxcsPre = receivablesPre.filter(function (r) {
+                        var rid = String(r.saleId || r.eventId || r.sourceId || '');
+                        return rid === String(editingId) || rid === String(existingSale.sourceId || '');
+                    });
+                    var totalInvoicedPre = linkedCxcsPre.reduce(function (s, r) {
+                        var hasInv = r.invoiceNumber && r.invoiceNumber !== '' && r.tipoDoc !== 'NC';
+                        return hasInv ? s + Number(r.montoNeto || r.invoicedAmount || r.monto_venta || 0) : s;
+                    }, 0);
+                    if (totalInvoicedPre > data.amount) {
+                        var msg = 'ADVERTENCIA: Bajaste el monto de la venta a ' + formatCLP(data.amount) +
+                                  ' pero ya hay ' + formatCLP(totalInvoicedPre) + ' facturado.\n\n' +
+                                  'Hay una diferencia de ' + formatCLP(totalInvoicedPre - data.amount) +
+                                  ' que debes resolver emitiendo una Nota de Credito.\n\n' +
+                                  'Continuar igual?';
+                        if (!confirm(msg)) return;
+                    }
+                }
                 await DS.update('sales', editingId, data);
                 // Sincronizar la CXC auto-generada con los datos actualizados de la venta
                 // Sync ALL linked CXC — match by multiple IDs
