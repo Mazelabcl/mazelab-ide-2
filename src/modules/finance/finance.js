@@ -2355,6 +2355,13 @@ window.Mazelab.Modules.FinanceModule = (function () {
 
             if (ncAmount <= 0) { alert('Ingresa el monto neto de la NC.'); return; }
 
+            // 10.2: validar que la NC no exceda el monto facturado de la factura original
+            var montoFacturadoOriginal = getMontoFacturado(rec);
+            if (ncAmount > montoFacturadoOriginal) {
+                alert('La NC no puede ser mayor al monto facturado (' + formatCLP(montoFacturadoOriginal) + ').');
+                return;
+            }
+
             try {
                 // Create NC record linked to original invoice
                 await window.Mazelab.DataService.create('receivables', {
@@ -2373,6 +2380,14 @@ window.Mazelab.Modules.FinanceModule = (function () {
                     saleId: rec.saleId || '',
                     ncAsociada: rec.invoiceNumber || '',
                     comments: ncMotivo
+                });
+
+                // 10.2: marcar la factura original con ncAsociada (B-001).
+                // Si la NC cubre el monto facturado completo, status pasa a 'anulada'.
+                var nuevoStatus = (ncAmount >= montoFacturadoOriginal) ? 'anulada' : rec.status;
+                await window.Mazelab.DataService.update('receivables', rec.id, {
+                    ncAsociada: ncNumber,
+                    status: nuevoStatus
                 });
 
                 // 10.1: NC NO incrementa refundAmount. La NC vive sola en su fila
