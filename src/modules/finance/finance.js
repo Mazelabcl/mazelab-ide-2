@@ -1988,6 +1988,9 @@ window.Mazelab.Modules.FinanceModule = (function () {
                     tipoDoc:        tipoDoc,
                     status:         'pendiente_pago',
                     saleId:         saleId,
+                    // 10.6: heredar sourceId de la venta para cruzar con otros modulos
+                    // (kanban, cashflow). Fallback a sale.id si la venta no tiene sourceId.
+                    sourceId:       sale ? (sale.sourceId || String(sale.id) || '') : '',
                     payments:       []
                 });
                 closeModal();
