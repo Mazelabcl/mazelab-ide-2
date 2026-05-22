@@ -249,6 +249,15 @@ window.Mazelab.Modules.FinanceModule = (function () {
         var targetMonth = Number(targetKey.split('-')[1]);
         if (billingMonth.includes('-')) {
             var parts = billingMonth.split('-').map(Number);
+            // 11.D: detectar orden DD-MM-YYYY (formato es-CL legacy) vs
+            // YYYY-MM-DD canonico por magnitud de los segmentos. NCs ya
+            // guardadas en DB con toLocaleDateString('es-CL') siguen siendo
+            // detectadas correctamente para no romper el historico.
+            if (parts.length === 3 && parts[2] > 1000) {
+                // DD-MM-YYYY (string proveniente de toLocaleDateString es-CL)
+                return parts[2] === targetYear && parts[1] === targetMonth;
+            }
+            // YYYY-MM o YYYY-MM-DD (formato canonico)
             return parts[0] === targetYear && parts[1] === targetMonth;
         } else if (billingMonth.includes('/')) {
             var p = billingMonth.split('/');
@@ -2378,7 +2387,13 @@ window.Mazelab.Modules.FinanceModule = (function () {
                     montoNeto: ncAmount,
                     invoicedAmount: ncAmount,
                     montoFacturado: ncAmount,
-                    billingMonth: new Date().toLocaleDateString('es-CL', { day: '2-digit', month: '2-digit', year: 'numeric' }),
+                    // 11.D: usar formato YYYY-MM-DD para compatibilidad con
+                    // matchesBillingMonth. Antes: toLocaleDateString('es-CL')
+                    // retornaba "22-05-2026" (DD-MM-YYYY) y el parser lo
+                    // interpretaba como year=22 -> NC no matcheaba el mes
+                    // y "facturado este mes" mostraba bruto en vez de neto.
+                    // Bug contable critico: IVA sobreestimado.
+                    billingMonth: window.MazelabDates.getTodayLocalStr(),
                     status: 'nc',
                     saleId: rec.saleId || '',
                     ncAsociada: rec.invoiceNumber || '',
