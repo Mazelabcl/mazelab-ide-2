@@ -1988,6 +1988,9 @@ window.Mazelab.Modules.FinanceModule = (function () {
                     tipoDoc:        tipoDoc,
                     status:         'pendiente_pago',
                     saleId:         saleId,
+                    // 10.6: heredar sourceId de la venta para cruzar con otros modulos
+                    // (kanban, cashflow). Fallback a sale.id si la venta no tiene sourceId.
+                    sourceId:       sale ? (sale.sourceId || String(sale.id) || '') : '',
                     payments:       []
                 });
                 closeModal();
@@ -2355,6 +2358,13 @@ window.Mazelab.Modules.FinanceModule = (function () {
 
             if (ncAmount <= 0) { alert('Ingresa el monto neto de la NC.'); return; }
 
+            // 10.2: validar que la NC no exceda el monto facturado de la factura original
+            var montoFacturadoOriginal = getMontoFacturado(rec);
+            if (ncAmount > montoFacturadoOriginal) {
+                alert('La NC no puede ser mayor al monto facturado (' + formatCLP(montoFacturadoOriginal) + ').');
+                return;
+            }
+
             try {
                 // Create NC record linked to original invoice
                 await window.Mazelab.DataService.create('receivables', {
@@ -2375,13 +2385,22 @@ window.Mazelab.Modules.FinanceModule = (function () {
                     comments: ncMotivo
                 });
 
-                // Also update the sale's refundAmount if linked
+                // 10.2: marcar la factura original con ncAsociada (B-001).
+                // Si la NC cubre el monto facturado completo, status pasa a 'anulada'.
+                var nuevoStatus = (ncAmount >= montoFacturadoOriginal) ? 'anulada' : rec.status;
+                await window.Mazelab.DataService.update('receivables', rec.id, {
+                    ncAsociada: ncNumber,
+                    status: nuevoStatus
+                });
+
+                // 10.1: NC NO incrementa refundAmount. La NC vive sola en su fila
+                // de receivables. refundAmount queda exclusivo para devoluciones
+                // operativas sin documento tributario. Solo marcamos hasIssue=true
+                // para visibilidad de que hubo un problema en la venta.
                 if (rec.saleId) {
                     var linkedSale = (cachedSales || []).find(function (s) { return String(s.id) === String(rec.saleId); });
-                    if (linkedSale) {
-                        var currentRefund = Number(linkedSale.refundAmount || 0);
+                    if (linkedSale && !linkedSale.hasIssue) {
                         await window.Mazelab.DataService.update('sales', linkedSale.id, {
-                            refundAmount: currentRefund + ncAmount,
                             hasIssue: true
                         });
                     }
