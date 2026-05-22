@@ -2375,13 +2375,14 @@ window.Mazelab.Modules.FinanceModule = (function () {
                     comments: ncMotivo
                 });
 
-                // Also update the sale's refundAmount if linked
+                // 10.1: NC NO incrementa refundAmount. La NC vive sola en su fila
+                // de receivables. refundAmount queda exclusivo para devoluciones
+                // operativas sin documento tributario. Solo marcamos hasIssue=true
+                // para visibilidad de que hubo un problema en la venta.
                 if (rec.saleId) {
                     var linkedSale = (cachedSales || []).find(function (s) { return String(s.id) === String(rec.saleId); });
-                    if (linkedSale) {
-                        var currentRefund = Number(linkedSale.refundAmount || 0);
+                    if (linkedSale && !linkedSale.hasIssue) {
                         await window.Mazelab.DataService.update('sales', linkedSale.id, {
-                            refundAmount: currentRefund + ncAmount,
                             hasIssue: true
                         });
                     }
