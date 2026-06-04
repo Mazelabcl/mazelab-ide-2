@@ -1,14 +1,26 @@
-// Modulo Caja Chica V1
+// Modulo Caja Chica V2
 //
 // Flujo de negocio:
 //   1. Aldo (admin) registra una transferencia de caja chica a David.
-//   2. David (rol "operaciones") rinde gastos: sube foto de boleta + audio
-//      opcional. El backend (endpoint /api/caja-chica/extract) llama a
-//      GPT-4o Vision + Whisper para extraer monto/fecha/proveedor y
-//      transcribir el audio. El frontend muestra preview editable.
+//   2. David (rol "operaciones") rinde gastos: sube una o varias fotos de
+//      boletas + audio opcional grabado in-app. El backend (endpoint
+//      /api/caja-chica/extract) llama a GPT-4o Vision + Whisper para extraer
+//      monto/fecha/proveedor/categoria y transcribir el audio. El frontend
+//      muestra preview editable.
 //   3. El gasto se descuenta del balance disponible.
 //   4. Aldo aprueba la asociacion del gasto a un evento (venta) para mapear
 //      costos por evento.
+//
+// Novedades V2 (vs V1):
+//   - FEATURE 1: el audio ahora se graba dentro de la app con MediaRecorder
+//     (microfono del navegador). Reemplaza el file picker de audio. Si el
+//     navegador no soporta MediaRecorder o el usuario niega el permiso, se
+//     degrada al input de archivo viejo.
+//   - FEATURE 2: David puede subir varias fotos a la vez. Cada boleta se
+//     procesa con IA EN PARALELO y se arma una lista de gastos editables. Si
+//     sube una sola foto el flujo sigue siendo el simple de V1.
+//   - Categoria editable: el GPT sugiere una categoria; ahora es un campo
+//     editable tanto en el flujo de una boleta como en cada gasto de la lista.
 //
 // Decisiones de arquitectura del frontend:
 //   - Las tablas caja_chica_transferencias y caja_chica_gastos NO estan en el
@@ -17,10 +29,13 @@
 //     nombre de tabla literal a /api/db/<tabla>. Asi no hay que tocar el
 //     DataService compartido ni arriesgar romper otros modulos.
 //   - El procesamiento de IA corre en el backend (OpenAI key del servidor). El
-//     frontend asume que POST /api/caja-chica/extract existe. Si falla o no esta
-//     desplegado todavia, el modulo degrada a entrada manual.
+//     frontend asume que POST /api/caja-chica/extract existe y acepta tres
+//     formas de payload: { imageBase64 }, { audioBase64 } o { imageBase64,
+//     audioBase64 }. Si falla o no esta desplegado todavia, el modulo degrada a
+//     entrada manual.
 //
-// Idioma: espanol neutro. Sin emojis en codigo/comentarios.
+// Idioma: espanol neutro. Sin emojis literales en codigo/comentarios (se usan
+// entidades HTML para iconos).
 
 window.Mazelab = window.Mazelab || {};
 window.Mazelab.Modules = window.Mazelab.Modules || {};
@@ -37,14 +52,33 @@ window.Mazelab.Modules.CajaChicaModule = (function () {
     var gastos = [];
     var ventas = [];
 
-    // Estado de la vista David (flujo de captura)
-    var captura = {
-        fotoBase64: null,
-        audioBase64: null,
-        notasDavid: '',
-        procesando: false,
-        extracted: null,   // resultado de GPT (o manual)
-        errorExtract: null // mensaje de fallback si /extract fallo
+    // Estado de la vista David (flujo de captura).
+    //
+    // Modelo de datos del flujo de captura V2:
+    //   - captura.fotos: array de strings base64 (cada foto ya comprimida).
+    //     Vacio = sin fotos todavia. 1 = flujo simple. 2+ = flujo lista.
+    //   - captura.audioBase64: data URI del audio grabado in-app (o subido por
+    //     fallback). Es UN solo audio (contexto general de la rendicion).
+    //   - captura.gastos: array de gastos editables (resultado de procesar las
+    //     fotos). Cada item: { id, fotoBase64, monto, proveedor, fechaBoleta,
+    //     categoria, items, gptRaw, error }. En flujo simple tiene 1 item.
+    //   - captura.audioContext: { audioTranscripcion, eventoSugerido } extraido
+    //     de la llamada audio-solo al endpoint. Se muestra como contexto general
+    //     arriba de la lista y se replica en cada gasto al enviar.
+    var captura = null;
+
+    // Estado de la grabacion de audio (MediaRecorder). Vive fuera de "captura"
+    // porque maneja objetos vivos (stream, recorder, timer) que no deben
+    // serializarse ni perderse en cada rerender.
+    var grabacion = {
+        recorder: null,
+        stream: null,
+        chunks: [],
+        activa: false,
+        timer: null,
+        segundos: 0,
+        mimeType: null,
+        soportado: null // null = sin chequear, true/false despues
     };
 
     // ---- helpers ----
@@ -451,17 +485,25 @@ window.Mazelab.Modules.CajaChicaModule = (function () {
         '</div>';
     }
 
-    // ---- modal flujo de captura (David) ----
+    // =====================================================================
+    // FLUJO DE CAPTURA (David) — V2 con multi-boleta + audio in-app
+    // =====================================================================
 
     function resetCaptura() {
         captura = {
-            fotoBase64: null,
-            audioBase64: null,
+            fotos: [],          // array de base64 (cada foto comprimida)
+            audioBase64: null,  // un solo audio (data URI)
             notasDavid: '',
-            procesando: false,
-            extracted: null,
-            errorExtract: null
+            procesando: false,  // true mientras corre /extract en lote
+            gastos: null,       // array de gastos editables (post-IA); null = no procesado
+            audioContext: null, // { audioTranscripcion, eventoSugerido }
+            errorExtract: null, // aviso global (fallback manual, etc.)
+            enviando: false,    // true mientras corre el guardado en BD
+            progresoEnvio: '',  // texto "Enviando 3 de 10..."
+            resumenEnvio: null  // { ok, fail } al terminar
         };
+        // Asegura que cualquier grabacion vieja quede liberada.
+        cancelarGrabacion();
     }
 
     function openRendirModal() {
@@ -471,7 +513,7 @@ window.Mazelab.Modules.CajaChicaModule = (function () {
 
     function renderRendirModal() {
         var html = '<div class="modal-overlay active" id="cc-rendir-modal">' +
-            '<div class="modal" style="max-width:480px">' +
+            '<div class="modal" style="max-width:520px">' +
                 '<div class="modal-header">' +
                     '<h3>Rendir gasto</h3>' +
                     '<button class="modal-close" id="cc-rendir-close">&times;</button>' +
@@ -483,68 +525,215 @@ window.Mazelab.Modules.CajaChicaModule = (function () {
         attachRendirListeners();
     }
 
-    function renderRendirBody() {
-        // Paso 1: captura de foto/audio (siempre visible)
-        var fotoPreview = captura.fotoBase64
-            ? '<img src="' + escapeHtml(captura.fotoBase64) + '" alt="boleta" style="width:100%;max-height:240px;object-fit:contain;border-radius:8px;border:1px solid var(--border-color);margin-top:8px" />'
+    // ---- bloque de captura (fotos + audio + notas) ----
+
+    function renderFotosBlock() {
+        var previews = '';
+        if (captura.fotos.length > 0) {
+            previews = '<div style="display:flex;flex-wrap:wrap;gap:8px;margin-top:8px">' +
+                captura.fotos.map(function (f, idx) {
+                    return '<div style="position:relative;width:84px;height:84px">' +
+                        '<img src="' + escapeHtml(f) + '" alt="boleta ' + (idx + 1) + '" style="width:84px;height:84px;object-fit:cover;border-radius:8px;border:1px solid var(--border-color)" />' +
+                        '<button class="cc-foto-del" data-idx="' + idx + '" title="Quitar foto" ' +
+                            'style="position:absolute;top:-6px;right:-6px;width:22px;height:22px;border-radius:50%;border:none;background:var(--danger,#ef4444);color:#fff;cursor:pointer;font-size:14px;line-height:1;display:flex;align-items:center;justify-content:center">&times;</button>' +
+                    '</div>';
+                }).join('') +
+            '</div>';
+        }
+
+        var contador = captura.fotos.length > 0
+            ? '<div style="font-size:12px;color:var(--text-secondary);margin-top:6px">' + captura.fotos.length + (captura.fotos.length === 1 ? ' boleta cargada.' : ' boletas cargadas. Cada una sera un gasto.') + '</div>'
             : '';
 
-        var audioOk = captura.audioBase64
-            ? '<div style="font-size:12px;color:var(--text-success,#4ade80);margin-top:4px">Audio cargado.</div>'
+        // DECISION: el input es "multiple" SIN "capture". En moviles, combinar
+        // "capture" con "multiple" obliga la camara y bloquea la seleccion de
+        // varias fotos de la galeria. Quitando "capture" David puede elegir
+        // varias de la galeria; si quiere usar la camara, el sistema operativo
+        // igual ofrece la camara como una de las fuentes en la mayoria de los
+        // celulares. Asi cubrimos foto unica y multi-boleta con un solo input.
+        return '<div class="form-group">' +
+                '<label>Fotos de boletas</label>' +
+                '<input type="file" accept="image/*" multiple class="form-control" id="cc-foto-input" />' +
+                '<small style="color:var(--text-secondary)">Puedes seleccionar varias boletas a la vez.</small>' +
+                contador + previews +
+            '</div>';
+    }
+
+    function renderAudioBlock() {
+        // Si ya hay audio grabado/cargado: mini reproductor + volver a grabar.
+        if (captura.audioBase64) {
+            return '<div class="form-group">' +
+                    '<label>Audio del gasto</label>' +
+                    '<audio controls src="' + escapeHtml(captura.audioBase64) + '" style="width:100%;margin-top:4px"></audio>' +
+                    '<div style="margin-top:8px">' +
+                        '<button class="btn btn-sm btn-secondary" id="cc-audio-regrabar" type="button">&#x21bb; Volver a grabar</button>' +
+                    '</div>' +
+                '</div>';
+        }
+
+        // Si esta grabando: indicador + boton detener + contador.
+        if (grabacion.activa) {
+            return '<div class="form-group">' +
+                    '<label>Audio explicando el gasto (opcional)</label>' +
+                    '<div style="display:flex;align-items:center;gap:10px;margin-top:4px">' +
+                        '<button class="btn btn-sm btn-danger" id="cc-audio-detener" type="button">&#9632; Detener</button>' +
+                        '<span style="display:inline-flex;align-items:center;gap:6px;color:var(--danger,#ef4444);font-size:13px">' +
+                            '<span style="width:10px;height:10px;border-radius:50%;background:var(--danger,#ef4444);display:inline-block;animation:cc-blink 1s infinite"></span>' +
+                            'Grabando... <span id="cc-audio-timer">' + formatSegundos(grabacion.segundos) + '</span>' +
+                        '</span>' +
+                    '</div>' +
+                '</div>';
+        }
+
+        // Estado inicial: boton grabar (microfono). Fallback al file input si el
+        // navegador no soporta MediaRecorder.
+        var soportaGrabar = mediaRecorderSoportado();
+        var botonGrabar = soportaGrabar
+            ? '<button class="btn btn-sm btn-secondary" id="cc-audio-grabar" type="button">&#127908; Grabar audio</button>'
+            : '';
+        var avisoNoSoporte = soportaGrabar
+            ? ''
+            : '<div style="font-size:12px;color:var(--text-muted);margin-top:4px">Tu navegador no permite grabar audio. Sube un archivo de audio si quieres.</div>';
+        var fallbackFile = soportaGrabar
+            ? ''
+            : '<input type="file" accept="audio/*" class="form-control" id="cc-audio-input" style="margin-top:6px" />';
+        var errorPermiso = grabacion.errorMsg
+            ? '<div style="font-size:12px;color:var(--danger,#ef4444);margin-top:6px">' + escapeHtml(grabacion.errorMsg) + '</div>' +
+              '<input type="file" accept="audio/*" class="form-control" id="cc-audio-input" style="margin-top:6px" />'
             : '';
 
-        var captureBlock = '<div class="form-group">' +
-                '<label>Foto de la boleta</label>' +
-                '<input type="file" accept="image/*" capture="environment" class="form-control" id="cc-foto-input" />' +
-                fotoPreview +
-            '</div>' +
-            '<div class="form-group">' +
+        return '<div class="form-group">' +
                 '<label>Audio explicando el gasto (opcional)</label>' +
-                '<input type="file" accept="audio/*" capture class="form-control" id="cc-audio-input" />' +
-                audioOk +
-            '</div>' +
+                '<div style="margin-top:4px">' + botonGrabar + '</div>' +
+                avisoNoSoporte + fallbackFile + errorPermiso +
+            '</div>';
+    }
+
+    function renderCaptureBlock() {
+        return renderFotosBlock() +
+            renderAudioBlock() +
             '<div class="form-group">' +
                 '<label>De que es? Que evento? (opcional)</label>' +
                 '<textarea class="form-control" id="cc-notas-input" rows="2" placeholder="Ej: bencina para el evento Lupa">' + escapeHtml(captura.notasDavid) + '</textarea>' +
             '</div>';
+    }
 
-        // Estado: procesando
-        if (captura.procesando) {
-            return captureBlock +
-                '<div style="text-align:center;padding:16px;color:var(--text-secondary)">Procesando boleta con IA, espera un momento...</div>';
+    // ---- contexto general del audio (transcripcion + evento sugerido) ----
+
+    function renderAudioContext() {
+        var c = captura.audioContext;
+        if (!c || (!c.audioTranscripcion && !c.eventoSugerido)) return '';
+        var trans = c.audioTranscripcion
+            ? '<div style="font-size:12px;color:var(--text-secondary);font-style:italic">Audio: "' + escapeHtml(c.audioTranscripcion) + '"</div>'
+            : '';
+        var sug = c.eventoSugerido
+            ? '<div style="font-size:12px;color:var(--text-muted);margin-top:4px">Evento sugerido: <strong>' + escapeHtml(c.eventoSugerido) + '</strong></div>'
+            : '';
+        return '<div style="background:var(--bg-secondary,rgba(255,255,255,0.04));border:1px solid var(--border-color);border-radius:8px;padding:10px;margin-bottom:12px">' +
+            '<div style="font-size:12px;font-weight:600;color:var(--text-secondary);margin-bottom:4px">Contexto del audio (aplica a todas las boletas)</div>' +
+            trans + sug +
+        '</div>';
+    }
+
+    // ---- formulario editable de un gasto (reusable: simple y lista) ----
+
+    function renderGastoEditable(g, idx, mostrarHeader) {
+        var err = g.error
+            ? '<div style="font-size:12px;color:#facc15;margin-bottom:6px">No se pudo leer esta boleta automaticamente. Completa los datos a mano.</div>'
+            : '';
+        var thumb = g.fotoBase64
+            ? '<img src="' + escapeHtml(g.fotoBase64) + '" alt="boleta" style="width:64px;height:64px;object-fit:cover;border-radius:8px;border:1px solid var(--border-color)" />'
+            : '';
+        var header = mostrarHeader
+            ? '<div style="display:flex;justify-content:space-between;align-items:center;gap:8px;margin-bottom:8px">' +
+                '<div style="display:flex;align-items:center;gap:8px">' + thumb +
+                    '<strong style="font-size:14px">Boleta ' + (idx + 1) + '</strong></div>' +
+                '<button class="btn btn-sm btn-danger cc-gasto-del" data-idx="' + idx + '" type="button">Quitar</button>' +
+            '</div>'
+            : '';
+
+        var wrapStyle = mostrarHeader
+            ? 'border:1px solid var(--border-color);border-radius:10px;padding:12px;margin-bottom:12px'
+            : '';
+
+        return '<div class="cc-gasto-item" data-idx="' + idx + '" style="' + wrapStyle + '">' +
+            header + err +
+            '<div class="form-group" style="margin-bottom:8px">' +
+                '<label>Monto</label>' +
+                '<input type="number" class="form-control cc-g-monto" data-idx="' + idx + '" value="' + (g.monto != null ? Number(g.monto) : '') + '" min="0" step="1" />' +
+            '</div>' +
+            '<div class="form-group" style="margin-bottom:8px">' +
+                '<label>Proveedor</label>' +
+                '<input type="text" class="form-control cc-g-proveedor" data-idx="' + idx + '" value="' + escapeHtml(g.proveedor || '') + '" />' +
+            '</div>' +
+            '<div class="form-group" style="margin-bottom:8px">' +
+                '<label>Fecha de la boleta</label>' +
+                '<input type="date" class="form-control cc-g-fecha" data-idx="' + idx + '" value="' + escapeHtml(g.fechaBoleta || todayStr()) + '" />' +
+            '</div>' +
+            '<div class="form-group" style="margin-bottom:0">' +
+                '<label>Categoria</label>' +
+                '<input type="text" class="form-control cc-g-categoria" data-idx="' + idx + '" value="' + escapeHtml(g.categoria || '') + '" placeholder="Ej: transporte, insumos" />' +
+            '</div>' +
+        '</div>';
+    }
+
+    // ---- cuerpo del modal segun estado ----
+
+    function renderRendirBody() {
+        var captureBlock = renderCaptureBlock();
+
+        // Estado: enviando a BD
+        if (captura.enviando) {
+            return '<div style="text-align:center;padding:24px;color:var(--text-secondary)">' +
+                'Guardando gastos...<br/><strong>' + escapeHtml(captura.progresoEnvio) + '</strong></div>';
         }
 
-        // Estado: tenemos extracted (de IA o manual) -> preview editable + enviar
-        if (captura.extracted) {
-            var e = captura.extracted;
+        // Estado: resumen post-envio
+        if (captura.resumenEnvio) {
+            var r = captura.resumenEnvio;
+            var msg = r.ok + (r.ok === 1 ? ' gasto enviado' : ' gastos enviados');
+            if (r.fail > 0) msg += ', ' + r.fail + (r.fail === 1 ? ' fallo' : ' fallaron');
+            msg += '.';
+            return '<div style="text-align:center;padding:24px">' +
+                '<div style="font-size:16px;font-weight:600;margin-bottom:12px">' + escapeHtml(msg) + '</div>' +
+                '<button class="btn btn-primary" id="cc-rendir-cerrar-ok" type="button">Listo</button>' +
+            '</div>';
+        }
+
+        // Estado: procesando con IA
+        if (captura.procesando) {
+            return captureBlock +
+                '<div style="text-align:center;padding:16px;color:var(--text-secondary)">Procesando ' +
+                (captura.fotos.length > 1 ? (captura.fotos.length + ' boletas') : 'la boleta') +
+                ' con IA, espera un momento...</div>';
+        }
+
+        // Estado: ya tenemos gastos editables (post-IA o manual)
+        if (captura.gastos && captura.gastos.length > 0) {
             var aviso = captura.errorExtract
                 ? '<div style="background:rgba(250,204,21,0.12);border:1px solid rgba(250,204,21,0.4);color:#facc15;padding:10px;border-radius:8px;margin-bottom:12px;font-size:13px">' + escapeHtml(captura.errorExtract) + '</div>'
                 : '<div style="font-size:12px;color:var(--text-secondary);margin-bottom:12px">Revisa lo que extrajo la IA y corrige si hace falta.</div>';
-            var transcripcion = e.audioTranscripcion
-                ? '<div style="font-size:12px;color:var(--text-secondary);font-style:italic;margin-bottom:8px">Audio: "' + escapeHtml(e.audioTranscripcion) + '"</div>'
+
+            var esMulti = captura.gastos.length > 1;
+            var lista = captura.gastos.map(function (g, idx) {
+                return renderGastoEditable(g, idx, esMulti);
+            }).join('');
+
+            var totalLinea = esMulti
+                ? '<div style="text-align:right;font-size:13px;color:var(--text-secondary);margin:4px 0 12px">Total: <strong>' + formatCLP(sumarGastos()) + '</strong> en ' + captura.gastos.length + ' boletas</div>'
                 : '';
-            var sugerido = e.eventoSugerido
-                ? '<div style="font-size:12px;color:var(--text-muted);margin-bottom:8px">Evento sugerido: <strong>' + escapeHtml(e.eventoSugerido) + '</strong></div>'
-                : '';
+
+            var btnEnviar = esMulti ? 'Enviar todo' : 'Enviar';
 
             return captureBlock +
                 '<hr style="border:none;border-top:1px solid var(--border-color);margin:16px 0" />' +
-                aviso + transcripcion + sugerido +
-                '<div class="form-group">' +
-                    '<label>Monto</label>' +
-                    '<input type="number" class="form-control" id="cc-ext-monto" value="' + (e.monto != null ? Number(e.monto) : '') + '" min="0" step="1" />' +
-                '</div>' +
-                '<div class="form-group">' +
-                    '<label>Proveedor</label>' +
-                    '<input type="text" class="form-control" id="cc-ext-proveedor" value="' + escapeHtml(e.proveedor || '') + '" />' +
-                '</div>' +
-                '<div class="form-group">' +
-                    '<label>Fecha de la boleta</label>' +
-                    '<input type="date" class="form-control" id="cc-ext-fecha" value="' + escapeHtml(e.fechaBoleta || todayStr()) + '" />' +
-                '</div>' +
+                aviso +
+                renderAudioContext() +
+                lista +
+                totalLinea +
                 '<div class="modal-footer" style="padding:0;margin-top:8px">' +
                     '<button class="btn btn-secondary" id="cc-rendir-cancel">Cancelar</button>' +
-                    '<button class="btn btn-primary" id="cc-rendir-enviar">Enviar</button>' +
+                    '<button class="btn btn-primary" id="cc-rendir-enviar">' + btnEnviar + '</button>' +
                 '</div>';
         }
 
@@ -565,41 +754,276 @@ window.Mazelab.Modules.CajaChicaModule = (function () {
         }
     }
 
+    function sumarGastos() {
+        if (!captura.gastos) return 0;
+        return captura.gastos.reduce(function (acc, g) {
+            return acc + (Number(g.monto) || 0);
+        }, 0);
+    }
+
+    // ---- listeners del modal de rendicion ----
+
     function attachRendirListeners() {
         var closeBtn = document.getElementById('cc-rendir-close');
-        if (closeBtn) closeBtn.addEventListener('click', closeModal);
+        if (closeBtn) closeBtn.addEventListener('click', cerrarRendir);
         var overlay = document.getElementById('cc-rendir-modal');
         if (overlay) overlay.addEventListener('click', function (e) {
-            if (e.target.id === 'cc-rendir-modal') closeModal();
+            if (e.target.id === 'cc-rendir-modal') cerrarRendir();
         });
 
         var cancelBtn = document.getElementById('cc-rendir-cancel');
-        if (cancelBtn) cancelBtn.addEventListener('click', closeModal);
+        if (cancelBtn) cancelBtn.addEventListener('click', cerrarRendir);
+
+        var cerrarOk = document.getElementById('cc-rendir-cerrar-ok');
+        if (cerrarOk) cerrarOk.addEventListener('click', cerrarRendir);
 
         var notas = document.getElementById('cc-notas-input');
         if (notas) notas.addEventListener('input', function () { captura.notasDavid = this.value; });
 
         var fotoInput = document.getElementById('cc-foto-input');
-        if (fotoInput) fotoInput.addEventListener('change', onFotoSelected);
+        if (fotoInput) fotoInput.addEventListener('change', onFotosSelected);
 
+        // Borrar foto del preview (antes de procesar).
+        document.querySelectorAll('.cc-foto-del').forEach(function (btn) {
+            btn.addEventListener('click', function () {
+                var idx = Number(this.dataset.idx);
+                captura.fotos.splice(idx, 1);
+                rerenderRendirBody();
+            });
+        });
+
+        // Audio: grabar / detener / regrabar / fallback file.
+        var grabarBtn = document.getElementById('cc-audio-grabar');
+        if (grabarBtn) grabarBtn.addEventListener('click', iniciarGrabacion);
+        var detenerBtn = document.getElementById('cc-audio-detener');
+        if (detenerBtn) detenerBtn.addEventListener('click', detenerGrabacion);
+        var regrabarBtn = document.getElementById('cc-audio-regrabar');
+        if (regrabarBtn) regrabarBtn.addEventListener('click', function () {
+            captura.audioBase64 = null;
+            captura.audioContext = null;
+            rerenderRendirBody();
+        });
         var audioInput = document.getElementById('cc-audio-input');
-        if (audioInput) audioInput.addEventListener('change', onAudioSelected);
+        if (audioInput) audioInput.addEventListener('change', onAudioFileSelected);
 
         var procesarBtn = document.getElementById('cc-rendir-procesar');
         if (procesarBtn) procesarBtn.addEventListener('click', procesarConIA);
 
         var manualBtn = document.getElementById('cc-rendir-manual');
-        if (manualBtn) manualBtn.addEventListener('click', function () {
-            captura.extracted = {
-                monto: null, proveedor: '', fechaBoleta: todayStr(),
-                items: [], categoria: '', audioTranscripcion: '', eventoSugerido: ''
-            };
-            captura.errorExtract = 'Ingreso manual: completa los datos del gasto.';
-            rerenderRendirBody();
+        if (manualBtn) manualBtn.addEventListener('click', ingresarManual);
+
+        // Edicion en vivo de los campos de cada gasto editable.
+        attachGastoFieldListeners();
+
+        // Quitar un gasto de la lista (multi).
+        document.querySelectorAll('.cc-gasto-del').forEach(function (btn) {
+            btn.addEventListener('click', function () {
+                var idx = Number(this.dataset.idx);
+                captura.gastos.splice(idx, 1);
+                if (captura.gastos.length === 0) {
+                    // Si se queda sin gastos, vuelve al estado inicial de captura.
+                    captura.gastos = null;
+                    captura.errorExtract = null;
+                }
+                rerenderRendirBody();
+            });
         });
 
         var enviarBtn = document.getElementById('cc-rendir-enviar');
-        if (enviarBtn) enviarBtn.addEventListener('click', enviarGasto);
+        if (enviarBtn) enviarBtn.addEventListener('click', enviarGastos);
+    }
+
+    // Mantiene captura.gastos sincronizado con lo que el usuario edita, sin
+    // re-renderizar (evita perder foco mientras escribe).
+    function attachGastoFieldListeners() {
+        function bind(selector, key, asNumber) {
+            document.querySelectorAll(selector).forEach(function (el) {
+                el.addEventListener('input', function () {
+                    var idx = Number(this.dataset.idx);
+                    if (!captura.gastos || !captura.gastos[idx]) return;
+                    captura.gastos[idx][key] = asNumber ? Number(this.value) : this.value;
+                });
+            });
+        }
+        bind('.cc-g-monto', 'monto', true);
+        bind('.cc-g-proveedor', 'proveedor', false);
+        bind('.cc-g-fecha', 'fechaBoleta', false);
+        bind('.cc-g-categoria', 'categoria', false);
+    }
+
+    function cerrarRendir() {
+        cancelarGrabacion();
+        closeModal();
+    }
+
+    // ---- captura de fotos ----
+
+    async function onFotosSelected(e) {
+        var files = e.target.files ? Array.prototype.slice.call(e.target.files) : [];
+        if (files.length === 0) return;
+
+        // Comprime cada archivo. Las compresiones son independientes -> paralelo.
+        var comprimidas = await Promise.all(files.map(function (file) {
+            return comprimirImagen(file).catch(function (err) {
+                console.error('CajaChica: error comprimiendo imagen, fallback crudo', err);
+                return fileToBase64(file).catch(function () { return null; });
+            });
+        }));
+
+        comprimidas.forEach(function (b64) {
+            if (b64) captura.fotos.push(b64);
+        });
+        rerenderRendirBody();
+    }
+
+    // ---- captura de audio (FEATURE 1: MediaRecorder in-app) ----
+
+    function mediaRecorderSoportado() {
+        return !!(window.MediaRecorder &&
+            navigator.mediaDevices &&
+            navigator.mediaDevices.getUserMedia);
+    }
+
+    function elegirMimeType() {
+        // Probamos formatos comunes en orden de preferencia. isTypeSupported no
+        // existe en todos los navegadores; si no esta, devolvemos null y dejamos
+        // que MediaRecorder use su default.
+        if (!window.MediaRecorder || !window.MediaRecorder.isTypeSupported) return null;
+        var candidatos = ['audio/webm', 'audio/webm;codecs=opus', 'audio/mp4', 'audio/ogg'];
+        for (var i = 0; i < candidatos.length; i++) {
+            if (window.MediaRecorder.isTypeSupported(candidatos[i])) return candidatos[i];
+        }
+        return null;
+    }
+
+    function formatSegundos(s) {
+        var m = Math.floor(s / 60);
+        var sec = s % 60;
+        return (m < 10 ? '0' : '') + m + ':' + (sec < 10 ? '0' : '') + sec;
+    }
+
+    async function iniciarGrabacion() {
+        grabacion.errorMsg = null;
+        if (!mediaRecorderSoportado()) {
+            grabacion.errorMsg = 'Tu navegador no permite grabar audio.';
+            rerenderRendirBody();
+            return;
+        }
+        try {
+            var stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+            grabacion.stream = stream;
+            grabacion.chunks = [];
+            grabacion.segundos = 0;
+
+            var mime = elegirMimeType();
+            grabacion.mimeType = mime;
+            var opciones = mime ? { mimeType: mime } : undefined;
+            var recorder = new MediaRecorder(stream, opciones);
+            grabacion.recorder = recorder;
+
+            recorder.ondataavailable = function (ev) {
+                if (ev.data && ev.data.size > 0) grabacion.chunks.push(ev.data);
+            };
+            recorder.onstop = onGrabacionStop;
+
+            recorder.start();
+            grabacion.activa = true;
+
+            // Timer del contador (actualiza solo el span, no re-renderiza todo
+            // para no romper el MediaRecorder ni el stream).
+            grabacion.timer = setInterval(function () {
+                grabacion.segundos += 1;
+                var span = document.getElementById('cc-audio-timer');
+                if (span) span.textContent = formatSegundos(grabacion.segundos);
+            }, 1000);
+
+            rerenderRendirBody();
+        } catch (err) {
+            console.warn('CajaChica: no se pudo iniciar grabacion', err);
+            liberarStream();
+            // NotAllowedError / PermissionDeniedError = permiso negado.
+            if (err && (err.name === 'NotAllowedError' || err.name === 'PermissionDeniedError' || err.name === 'SecurityError')) {
+                grabacion.errorMsg = 'Necesitas dar permiso al microfono para grabar. Tambien puedes subir un archivo de audio.';
+            } else {
+                grabacion.errorMsg = 'No se pudo acceder al microfono. Puedes subir un archivo de audio.';
+            }
+            grabacion.activa = false;
+            rerenderRendirBody();
+        }
+    }
+
+    function detenerGrabacion() {
+        if (grabacion.timer) { clearInterval(grabacion.timer); grabacion.timer = null; }
+        if (grabacion.recorder && grabacion.recorder.state !== 'inactive') {
+            try { grabacion.recorder.stop(); } catch (e) {}
+        } else {
+            // Si por algun motivo no hay recorder activo, limpia igual.
+            liberarStream();
+            grabacion.activa = false;
+            rerenderRendirBody();
+        }
+    }
+
+    function onGrabacionStop() {
+        grabacion.activa = false;
+        if (grabacion.timer) { clearInterval(grabacion.timer); grabacion.timer = null; }
+
+        var tipo = grabacion.mimeType || (grabacion.chunks[0] && grabacion.chunks[0].type) || 'audio/webm';
+        var blob = new Blob(grabacion.chunks, { type: tipo });
+        liberarStream();
+
+        var reader = new FileReader();
+        reader.onload = function (ev) {
+            captura.audioBase64 = ev.target.result; // data URI con el tipo correcto
+            captura.audioContext = null; // se recalcula al procesar
+            rerenderRendirBody();
+        };
+        reader.onerror = function () {
+            console.error('CajaChica: error convirtiendo audio grabado a base64');
+            rerenderRendirBody();
+        };
+        reader.readAsDataURL(blob);
+    }
+
+    function liberarStream() {
+        if (grabacion.stream) {
+            try {
+                grabacion.stream.getTracks().forEach(function (t) { t.stop(); });
+            } catch (e) {}
+            grabacion.stream = null;
+        }
+        grabacion.recorder = null;
+    }
+
+    // Cancela cualquier grabacion en curso y libera recursos (al cerrar modal o
+    // resetear captura). No vuelca audio a captura.audioBase64.
+    function cancelarGrabacion() {
+        if (grabacion.timer) { clearInterval(grabacion.timer); grabacion.timer = null; }
+        if (grabacion.recorder && grabacion.recorder.state !== 'inactive') {
+            try {
+                grabacion.recorder.onstop = null; // evita volcar el audio cancelado
+                grabacion.recorder.stop();
+            } catch (e) {}
+        }
+        liberarStream();
+        grabacion.activa = false;
+        grabacion.chunks = [];
+        grabacion.segundos = 0;
+        grabacion.errorMsg = null;
+    }
+
+    // Fallback: subir audio como archivo (cuando MediaRecorder no esta o el
+    // permiso fue negado).
+    async function onAudioFileSelected(e) {
+        var file = e.target.files && e.target.files[0];
+        if (!file) return;
+        try {
+            captura.audioBase64 = await fileToBase64(file);
+            captura.audioContext = null;
+        } catch (err) {
+            console.error('CajaChica: error leyendo audio', err);
+        }
+        rerenderRendirBody();
     }
 
     // ---- compresion de imagen en el cliente ----
@@ -643,133 +1067,243 @@ window.Mazelab.Modules.CajaChicaModule = (function () {
         });
     }
 
-    async function onFotoSelected(e) {
-        var file = e.target.files && e.target.files[0];
-        if (!file) return;
-        try {
-            captura.fotoBase64 = await comprimirImagen(file);
-        } catch (err) {
-            console.error('CajaChica: error comprimiendo imagen', err);
-            // Fallback: base64 crudo si la compresion falla.
-            try { captura.fotoBase64 = await fileToBase64(file); } catch (e2) {}
-        }
+    // ---- ingreso manual (sin IA) ----
+
+    function ingresarManual() {
+        // Si hay fotos, una entrada por foto; si no hay fotos, una entrada vacia.
+        var base = captura.fotos.length > 0 ? captura.fotos : [null];
+        captura.gastos = base.map(function (foto) {
+            return gastoVacio(foto);
+        });
+        captura.errorExtract = 'Ingreso manual: completa los datos del gasto.';
         rerenderRendirBody();
     }
 
-    async function onAudioSelected(e) {
-        var file = e.target.files && e.target.files[0];
-        if (!file) return;
-        try {
-            captura.audioBase64 = await fileToBase64(file);
-        } catch (err) {
-            console.error('CajaChica: error leyendo audio', err);
-        }
-        rerenderRendirBody();
+    function gastoVacio(foto) {
+        return {
+            id: genId(),
+            fotoBase64: foto || null,
+            monto: null,
+            proveedor: '',
+            fechaBoleta: todayStr(),
+            categoria: '',
+            items: [],
+            gptRaw: null,
+            error: false
+        };
+    }
+
+    // ---- procesamiento con IA (FEATURE 2: N boletas en paralelo) ----
+
+    function llamarExtract(payload) {
+        return fetch(EXTRACT_ENDPOINT, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(payload)
+        }).then(function (res) {
+            return res.json().catch(function () { return null; }).then(function (data) {
+                return { res: res, data: data };
+            });
+        });
     }
 
     async function procesarConIA() {
-        if (!captura.fotoBase64) {
-            alert('Primero toma o sube la foto de la boleta.');
+        if (captura.fotos.length === 0) {
+            alert('Primero toma o sube al menos una foto de boleta.');
             return;
         }
         captura.procesando = true;
         captura.errorExtract = null;
         rerenderRendirBody();
 
-        try {
-            var res = await fetch(EXTRACT_ENDPOINT, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
-                    imageBase64: captura.fotoBase64,
-                    audioBase64: captura.audioBase64 || undefined
-                })
-            });
+        // 1) Una llamada /extract por foto, EN PARALELO. allSettled para que una
+        //    foto que falle no tumbe a las demas.
+        var fotoPromesas = captura.fotos.map(function (foto) {
+            return llamarExtract({ imageBase64: foto });
+        });
 
-            var data = null;
-            try { data = await res.json(); } catch (e) { data = null; }
+        // 2) Si hay audio, UNA llamada extra audio-solo para sacar transcripcion
+        //    + evento sugerido (contexto general). Corre en paralelo con las
+        //    fotos.
+        var audioPromesa = captura.audioBase64
+            ? llamarExtract({ audioBase64: captura.audioBase64 })
+            : Promise.resolve(null);
 
-            if (res.ok && data && data.ok && data.extracted) {
-                captura.extracted = {
-                    monto: data.extracted.monto != null ? Number(data.extracted.monto) : null,
-                    proveedor: data.extracted.proveedor || '',
-                    fechaBoleta: data.extracted.fechaBoleta || todayStr(),
-                    items: data.extracted.items || [],
-                    categoria: data.extracted.categoria || '',
-                    audioTranscripcion: data.extracted.audioTranscripcion || '',
-                    eventoSugerido: data.extracted.eventoSugerido || '',
-                    gptRaw: data.raw || null
+        var fotosResult = await Promise.allSettled(fotoPromesas);
+        var audioResult = await audioPromesa.then(
+            function (v) { return { status: 'fulfilled', value: v }; },
+            function (e) { return { status: 'rejected', reason: e }; }
+        );
+
+        // Mapea cada resultado de foto a un gasto editable.
+        var algunFallo = false;
+        captura.gastos = fotosResult.map(function (r, idx) {
+            var foto = captura.fotos[idx];
+            if (r.status === 'fulfilled' && r.value && r.value.res && r.value.res.ok &&
+                r.value.data && r.value.data.ok && r.value.data.extracted) {
+                var ex = r.value.data.extracted;
+                return {
+                    id: genId(),
+                    fotoBase64: foto,
+                    monto: ex.monto != null ? Number(ex.monto) : null,
+                    proveedor: ex.proveedor || '',
+                    fechaBoleta: ex.fechaBoleta || todayStr(),
+                    categoria: ex.categoria || '',
+                    items: ex.items || [],
+                    gptRaw: (r.value.data && r.value.data.raw) || null,
+                    error: false
                 };
-                captura.errorExtract = null;
-            } else {
-                throw new Error((data && data.error) || 'El servidor no devolvio datos.');
             }
-        } catch (err) {
-            console.warn('CajaChica: /extract no disponible, fallback manual.', err);
-            captura.extracted = {
-                monto: null, proveedor: '', fechaBoleta: todayStr(),
-                items: [], categoria: '', audioTranscripcion: '', eventoSugerido: ''
-            };
-            captura.errorExtract = 'El procesamiento automatico no esta disponible. Ingresa los datos manualmente.';
-        } finally {
-            captura.procesando = false;
-            rerenderRendirBody();
+            algunFallo = true;
+            var g = gastoVacio(foto);
+            g.error = true;
+            return g;
+        });
+
+        // Procesa el contexto del audio (si vino).
+        if (captura.audioBase64) {
+            var av = audioResult.value;
+            if (audioResult.status === 'fulfilled' && av && av.res && av.res.ok &&
+                av.data && av.data.ok && av.data.extracted) {
+                captura.audioContext = {
+                    audioTranscripcion: av.data.extracted.audioTranscripcion || '',
+                    eventoSugerido: av.data.extracted.eventoSugerido || ''
+                };
+            } else {
+                captura.audioContext = null;
+            }
         }
+
+        // Aviso global: si todo fallo, mensaje de fallback manual. Si fallo solo
+        // alguna, las que fallaron quedan marcadas con error y el usuario las
+        // completa a mano.
+        var todasFallaron = captura.gastos.every(function (g) { return g.error; });
+        if (todasFallaron) {
+            captura.errorExtract = 'El procesamiento automatico no esta disponible. Ingresa los datos manualmente.';
+        } else if (algunFallo) {
+            captura.errorExtract = 'Algunas boletas no se pudieron leer. Completa esas a mano.';
+        } else {
+            captura.errorExtract = null;
+        }
+
+        captura.procesando = false;
+        rerenderRendirBody();
     }
 
-    async function enviarGasto() {
-        var montoEl = document.getElementById('cc-ext-monto');
-        var provEl = document.getElementById('cc-ext-proveedor');
-        var fechaEl = document.getElementById('cc-ext-fecha');
+    // ---- envio a BD (FEATURE 2: N gastos en paralelo) ----
 
-        var monto = montoEl ? Number(montoEl.value || 0) : 0;
-        var proveedor = provEl ? (provEl.value || '').trim() : '';
-        var fechaBoleta = fechaEl ? (fechaEl.value || todayStr()) : todayStr();
+    function sincronizarGastosDesdeDOM() {
+        // Por si el ultimo input no disparo "input" antes de enviar, releemos los
+        // valores actuales del DOM hacia captura.gastos.
+        if (!captura.gastos) return;
+        document.querySelectorAll('.cc-gasto-item').forEach(function (item) {
+            var idx = Number(item.dataset.idx);
+            var g = captura.gastos[idx];
+            if (!g) return;
+            var monto = item.querySelector('.cc-g-monto');
+            var prov = item.querySelector('.cc-g-proveedor');
+            var fecha = item.querySelector('.cc-g-fecha');
+            var cat = item.querySelector('.cc-g-categoria');
+            if (monto) g.monto = Number(monto.value);
+            if (prov) g.proveedor = (prov.value || '').trim();
+            if (fecha) g.fechaBoleta = fecha.value || todayStr();
+            if (cat) g.categoria = (cat.value || '').trim();
+        });
+    }
 
-        if (!monto || monto <= 0) {
-            alert('Ingresa un monto valido para el gasto.');
-            return;
-        }
-        if (!captura.fotoBase64) {
-            alert('Falta la foto de la boleta.');
-            return;
-        }
-
-        var e = captura.extracted || {};
+    function construirRecord(g) {
         var user = currentUser();
-        var record = {
-            id: genId(),
+        var ctx = captura.audioContext || {};
+        return {
+            id: g.id || genId(),
             transferenciaId: null,
-            fechaBoleta: fechaBoleta,
-            proveedor: proveedor,
-            monto: monto,
-            items: e.items || [],
-            categoria: e.categoria || '',
-            fotoBase64: captura.fotoBase64,
-            audioTranscripcion: e.audioTranscripcion || '',
+            fechaBoleta: g.fechaBoleta || todayStr(),
+            proveedor: (g.proveedor || '').trim(),
+            monto: Number(g.monto) || 0,
+            items: g.items || [],
+            categoria: (g.categoria || '').trim(),
+            fotoBase64: g.fotoBase64 || null,
+            // DECISION: la transcripcion del audio es contexto general de la
+            // rendicion, asi que se guarda en TODOS los gastos del lote. Asi el
+            // admin ve el mismo contexto sin importar que boleta abra. El reparto
+            // fino (audio -> boleta especifica) queda como feature futura.
+            audioTranscripcion: ctx.audioTranscripcion || '',
             eventoId: null,
-            eventoSugerido: e.eventoSugerido || '',
+            eventoSugerido: ctx.eventoSugerido || '',
             eventoAprobado: false,
             notasDavid: captura.notasDavid || '',
-            gptRaw: e.gptRaw || null,
+            gptRaw: g.gptRaw || null,
             estado: 'pendiente_aprobacion',
             createdBy: user ? user.email : 'desconocido',
             createdAt: new Date().toISOString()
         };
+    }
 
-        var enviarBtn = document.getElementById('cc-rendir-enviar');
-        if (enviarBtn) { enviarBtn.disabled = true; enviarBtn.textContent = 'Enviando...'; }
-        try {
-            await SB().insert(TABLA_GASTOS, record);
-            if (window.Mazelab.DataService.invalidateCache) {
-                window.Mazelab.DataService.invalidateCache(TABLA_GASTOS);
-            }
-            closeModal();
-            await reload();
-        } catch (err) {
-            console.error('CajaChica: error al enviar gasto', err);
-            alert('No se pudo enviar el gasto. ' + (err && err.message ? err.message : ''));
-            if (enviarBtn) { enviarBtn.disabled = false; enviarBtn.textContent = 'Enviar'; }
+    async function enviarGastos() {
+        sincronizarGastosDesdeDOM();
+
+        if (!captura.gastos || captura.gastos.length === 0) {
+            alert('No hay gastos para enviar.');
+            return;
+        }
+
+        // Validacion: cada gasto necesita monto > 0. Listamos las boletas
+        // invalidas para que el usuario sepa cual corregir.
+        var invalidos = [];
+        captura.gastos.forEach(function (g, idx) {
+            if (!g.monto || Number(g.monto) <= 0) invalidos.push(idx + 1);
+        });
+        if (invalidos.length > 0) {
+            alert('Ingresa un monto valido (mayor a cero) en ' +
+                (captura.gastos.length > 1 ? ('la(s) boleta(s): ' + invalidos.join(', ')) : 'el gasto') + '.');
+            return;
+        }
+
+        var total = captura.gastos.length;
+        captura.enviando = true;
+        captura.progresoEnvio = 'Enviando 0 de ' + total + '...';
+        rerenderRendirBody();
+
+        // Inserta los N gastos en paralelo. allSettled para que un fallo no
+        // detenga al resto. Contamos el progreso a medida que resuelven.
+        var hechos = 0;
+        var promesas = captura.gastos.map(function (g) {
+            var record = construirRecord(g);
+            return SB().insert(TABLA_GASTOS, record).then(function () {
+                hechos += 1;
+                actualizarProgresoEnvio(hechos, total);
+                return true;
+            }, function (err) {
+                hechos += 1;
+                actualizarProgresoEnvio(hechos, total);
+                console.error('CajaChica: fallo al insertar gasto', err);
+                throw err;
+            });
+        });
+
+        var resultados = await Promise.allSettled(promesas);
+        var ok = resultados.filter(function (r) { return r.status === 'fulfilled'; }).length;
+        var fail = total - ok;
+
+        if (window.Mazelab.DataService.invalidateCache) {
+            window.Mazelab.DataService.invalidateCache(TABLA_GASTOS);
+        }
+
+        captura.enviando = false;
+        captura.resumenEnvio = { ok: ok, fail: fail };
+        rerenderRendirBody();
+
+        // Refresca los datos por detras (el resumen ya esta en pantalla).
+        reload();
+    }
+
+    function actualizarProgresoEnvio(hechos, total) {
+        captura.progresoEnvio = 'Enviando ' + hechos + ' de ' + total + '...';
+        var body = document.getElementById('cc-rendir-body');
+        if (body && captura.enviando) {
+            // Actualiza solo el texto de progreso sin re-render completo.
+            var strong = body.querySelector('strong');
+            if (strong) strong.textContent = captura.progresoEnvio;
         }
     }
 
@@ -809,6 +1343,9 @@ window.Mazelab.Modules.CajaChicaModule = (function () {
 
     function render() {
         return '<div class="content-header"><h2>Caja Chica</h2></div>' +
+            // Animacion del punto rojo de "grabando". Inyectada una vez aqui para
+            // no depender de tocar el CSS global del ERP.
+            '<style>@keyframes cc-blink{0%,100%{opacity:1}50%{opacity:0.25}}</style>' +
             '<div class="content-body" id="cc-content">' +
                 '<div class="empty-state"><p>Cargando caja chica...</p></div>' +
             '</div>';
