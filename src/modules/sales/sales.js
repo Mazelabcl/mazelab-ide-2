@@ -672,6 +672,14 @@ window.Mazelab.Modules.SalesModule = (function () {
             form.reset();
             document.getElementById('sale-id').value = '';
             document.getElementById('sale-refund-group').style.display = 'none';
+            // 11.A: limpiar explicitamente refund inputs por si form.reset()
+            // no los limpia (residuales en contenedores display:none). Sin
+            // esto el value heredado se filtra a getFormData y se persiste
+            // como refundAmount fantasma en la venta nueva.
+            var saleRefundEl = document.getElementById('sale-refund-amount');
+            var saleHasIssueEl = document.getElementById('sale-has-issue');
+            if (saleRefundEl) saleRefundEl.value = '';
+            if (saleHasIssueEl) saleHasIssueEl.checked = false;
             // Collapse traspaso section for new sales
             var traspasoFieldsDivBase = document.getElementById('traspaso-fields');
             var traspasoArrowBase = document.getElementById('traspaso-arrow');
@@ -931,7 +939,15 @@ window.Mazelab.Modules.SalesModule = (function () {
             status: document.getElementById('sale-status').value || 'pendiente',
             comments: document.getElementById('sale-comments').value,
             hasIssue: document.getElementById('sale-has-issue').checked,
-            refundAmount: document.getElementById('sale-refund-amount').value ? Number(document.getElementById('sale-refund-amount').value) : 0,
+            // 11.A: refundAmount solo se lee si hasIssue.checked === true.
+            // Antes: el value del input se leia siempre, asi el residual de
+            // un edit previo (form.reset no siempre limpia inputs en
+            // contenedores display:none) se persistia como refund fantasma
+            // en la venta nueva. Sintoma: descuento misterioso en KPIs
+            // "lo mio" y "por cobrar". Audit: bloque-11 sub-bloque 11.A.
+            refundAmount: (document.getElementById('sale-has-issue').checked && document.getElementById('sale-refund-amount').value)
+                ? Number(document.getElementById('sale-refund-amount').value)
+                : 0,
             comisionPct: document.getElementById('sale-comision').value ? Number(document.getElementById('sale-comision').value) : 0,
             traspaso: buildTraspasoObject()
         };

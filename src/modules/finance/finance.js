@@ -249,6 +249,15 @@ window.Mazelab.Modules.FinanceModule = (function () {
         var targetMonth = Number(targetKey.split('-')[1]);
         if (billingMonth.includes('-')) {
             var parts = billingMonth.split('-').map(Number);
+            // 11.D: detectar orden DD-MM-YYYY (formato es-CL legacy) vs
+            // YYYY-MM-DD canonico por magnitud de los segmentos. NCs ya
+            // guardadas en DB con toLocaleDateString('es-CL') siguen siendo
+            // detectadas correctamente para no romper el historico.
+            if (parts.length === 3 && parts[2] > 1000) {
+                // DD-MM-YYYY (string proveniente de toLocaleDateString es-CL)
+                return parts[2] === targetYear && parts[1] === targetMonth;
+            }
+            // YYYY-MM o YYYY-MM-DD (formato canonico)
             return parts[0] === targetYear && parts[1] === targetMonth;
         } else if (billingMonth.includes('/')) {
             var p = billingMonth.split('/');
@@ -1993,6 +2002,41 @@ window.Mazelab.Modules.FinanceModule = (function () {
                     sourceId:       sale ? (sale.sourceId || String(sale.id) || '') : '',
                     payments:       []
                 });
+
+                // 11.F: limpiar CxC residual auto del mismo saleId. Replica la
+                // logica de openFacturarModal:2151-2164. Antes: si la vendedora
+                // facturaba por este modal (boton "+Nueva factura" arriba) en vez
+                // del boton "Facturar" de la CxC autogenerada, quedaba zombie la
+                // CxC original + la factura nueva -> doble cobranza.
+                if (saleId) {
+                    var allReceivables = await window.Mazelab.DataService.getAll('receivables') || [];
+                    var residualesAuto = allReceivables.filter(function (r) {
+                        var matchSale = String(r.saleId) === String(saleId) ||
+                                        (sale && sale.sourceId && String(r.sourceId) === String(sale.sourceId));
+                        return matchSale && r.sourceType === 'auto' && (!r.invoiceNumber || r.invoiceNumber === '');
+                    });
+                    if (residualesAuto.length === 1) {
+                        var rec = residualesAuto[0];
+                        var netoRec = Number(rec.montoNeto || rec.monto_venta || 0);
+                        var netoRestante = Math.max(0, netoRec - invoicedAmount);
+                        if (netoRestante <= 0) {
+                            await window.Mazelab.DataService.remove('receivables', rec.id);
+                        } else {
+                            await window.Mazelab.DataService.update('receivables', rec.id, {
+                                monto_venta:    netoRestante,
+                                montoNeto:      netoRestante,
+                                invoicedAmount: netoRestante,
+                                amount:         netoRestante,
+                                status:         'sin_factura'
+                            });
+                        }
+                    } else if (residualesAuto.length > 1) {
+                        // Edge case: multiples residuales. Decision owner: warning
+                        // console + no tocar. Revision manual requerida.
+                        console.warn('[finance] 11.F: ' + residualesAuto.length + ' CxC residuales auto para saleId=' + saleId + '. Revision manual requerida.');
+                    }
+                }
+
                 closeModal();
                 await loadAndRender();
             } catch (err) { alert('Error al guardar: ' + err.message); }
@@ -2378,7 +2422,13 @@ window.Mazelab.Modules.FinanceModule = (function () {
                     montoNeto: ncAmount,
                     invoicedAmount: ncAmount,
                     montoFacturado: ncAmount,
-                    billingMonth: new Date().toLocaleDateString('es-CL', { day: '2-digit', month: '2-digit', year: 'numeric' }),
+                    // 11.D: usar formato YYYY-MM-DD para compatibilidad con
+                    // matchesBillingMonth. Antes: toLocaleDateString('es-CL')
+                    // retornaba "22-05-2026" (DD-MM-YYYY) y el parser lo
+                    // interpretaba como year=22 -> NC no matcheaba el mes
+                    // y "facturado este mes" mostraba bruto en vez de neto.
+                    // Bug contable critico: IVA sobreestimado.
+                    billingMonth: window.MazelabDates.getTodayLocalStr(),
                     status: 'nc',
                     saleId: rec.saleId || '',
                     ncAsociada: rec.invoiceNumber || '',
