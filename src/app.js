@@ -16,6 +16,7 @@ window.Mazelab.Modules = window.Mazelab.Modules || {};
         cashflow: 'CashflowModule',
         analytics: 'AnalyticsModule',
         'cxc-kanban': 'CxcKanbanModule',
+        'caja-chica': 'CajaChicaModule',
         settings: 'SettingsModule',
         import: 'ImportModule'
     };
