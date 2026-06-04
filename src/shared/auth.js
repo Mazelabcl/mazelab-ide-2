@@ -37,6 +37,7 @@ window.Mazelab = window.Mazelab || {};
         analytics: ['superadmin', 'socio'],
         cotizador: ['superadmin', 'socio', 'comercial'],
         'cxc-kanban': ['superadmin', 'socio', 'comercial'],
+        'caja-chica': ['superadmin', 'socio', 'operaciones'],
         import:    ['superadmin']
     };
     // Open to all: dashboard, kanban, bodega, events, settings
