@@ -1235,6 +1235,19 @@ window.Mazelab.Modules.SalesModule = (function () {
                 if (r.sourceType === 'auto' && sale && r.eventName === sale.eventName && r.eventDate === sale.eventDate) return true;
                 return false;
             });
+            // 11.E: segunda pasada — capturar NCs vinculadas por ncAsociada a las
+            // facturas que vamos a borrar (cubre NCs legacy con saleId vacio que de
+            // otro modo quedan huerfanas afectando KPIs por su offset).
+            var invoiceNumbers = linkedCXC
+                .map(function (r) { return r.invoiceNumber; })
+                .filter(Boolean);
+            var ncsAsociadas = allReceivables.filter(function (r) {
+                return r.tipoDoc === 'NC' && r.ncAsociada &&
+                       invoiceNumbers.indexOf(r.ncAsociada) !== -1;
+            });
+            ncsAsociadas.forEach(function (nc) {
+                if (linkedCXC.indexOf(nc) === -1) linkedCXC.push(nc);
+            });
             const linkedCXP = allPayables.filter(function (p) {
                 if (String(p.saleId) === String(id)) return true;
                 if (saleSourceId && String(p.saleId) === saleSourceId) return true;
