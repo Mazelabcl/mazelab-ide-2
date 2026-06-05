@@ -1023,30 +1023,49 @@ window.Mazelab.Modules.SalesModule = (function () {
                 // Sync ALL linked CXC — match by multiple IDs
                 var editedSale = sales.find(function (s) { return s.id === editingId; });
                 var sid = String(editingId);
-                var ssid = editedSale ? String(editedSale.sourceId || '') : '';
+                // 11.C: normalizar ssid para que nunca sea el string literal "null"/"undefined".
+                // String(null) === "null" rompia el filtro y disparaba orphan-recovery duplicado.
+                var ssid = (editedSale && editedSale.sourceId != null && editedSale.sourceId !== '')
+                    ? String(editedSale.sourceId) : '';
                 var allReceivables = await DS.getAll('receivables') || [];
                 var linkedCXCs = allReceivables.filter(function (r) {
                     var rSaleId = String(r.saleId || '');
                     var rEventId = String(r.eventId || '');
                     var rSourceId = String(r.sourceId || '');
-                    return rSaleId === sid || rEventId === sid || rSourceId === sid ||
+                    var idMatch = rSaleId === sid || rEventId === sid || rSourceId === sid ||
                            (ssid && (rSaleId === ssid || rEventId === ssid || rSourceId === ssid));
+                    // 11.C: fallback por evento (cubre facturas legacy con saleId vacio).
+                    // La guarda final evita matchear contra CxC con todos los campos vacios.
+                    var eventMatch = editedSale &&
+                        r.eventName === editedSale.eventName &&
+                        r.eventDate === editedSale.eventDate &&
+                        r.clientName === editedSale.clientName &&
+                        (editedSale.eventName || editedSale.clientName);
+                    return idMatch || eventMatch;
                 });
                 // If no CXC exists, create one (fixes orphaned sales)
                 if (linkedCXCs.length === 0 && data.amount > 0) {
-                    await DS.create('receivables', {
-                        id: window.Mazelab.Storage.generateId(),
-                        sourceId: ssid || sid,
-                        eventName: data.eventName || '',
-                        eventDate: data.eventDate || '',
-                        clientName: data.clientName || '',
-                        monto_venta: data.amount || 0,
-                        invoicedAmount: 0,
-                        amountPaid: 0,
-                        status: 'sin_factura',
-                        saleId: sid,
-                        sourceType: 'auto'
-                    });
+                    // 11.C: si la venta tiene sourceId valido pero no se encontro CxC,
+                    // es desincronia, no venta huerfana real. Crear una nueva duplicaria
+                    // la cuenta (fila fantasma "ID null PRE-EVENTO"). Mejor avisar y NO crear.
+                    if (ssid && ssid !== 'null' && ssid !== 'undefined') {
+                        console.warn('[sales] Edit: venta sourceId=' + ssid + ' sin CxC encontrada. Se omite orphan-recovery para evitar duplicado.');
+                    } else {
+                        // Venta legacy sin sourceId: orphan-recovery legitimo.
+                        await DS.create('receivables', {
+                            id: window.Mazelab.Storage.generateId(),
+                            sourceId: ssid || sid,
+                            eventName: data.eventName || '',
+                            eventDate: data.eventDate || '',
+                            clientName: data.clientName || '',
+                            monto_venta: data.amount || 0,
+                            invoicedAmount: 0,
+                            amountPaid: 0,
+                            status: 'sin_factura',
+                            saleId: sid,
+                            sourceType: 'auto'
+                        });
+                    }
                 }
                 // Separate invoiced CXCs from sinFactura (residual)
                 var totalAlreadyInvoiced = 0;
