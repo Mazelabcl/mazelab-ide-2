@@ -57,28 +57,42 @@ window.Mazelab = window.Mazelab || {};
     }
 
     async function update(table, id, updates) {
+        // Bug C-1: antes devolvia null en !res.ok o en excepcion, tragandose
+        // el fallo. Una factura podia "marcarse pagada" en la UI aunque el
+        // PATCH fallara contra el backend. Ahora LANZA igual que insert(),
+        // para que los try/catch de los flujos financieros (que ya existen)
+        // capturen el error y avisen al usuario.
         try {
             const res = await fetch(BASE + '/' + table + '/' + id, {
                 method: 'PATCH',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify(updates)
             });
-            if (!res.ok) { console.error('DB update ' + table + ':', res.status); return null; }
+            if (!res.ok) {
+                const errText = await res.text().catch(function () { return String(res.status); });
+                throw new Error('Error al actualizar en ' + table + ' (HTTP ' + res.status + '): ' + errText);
+            }
             return await res.json();
         } catch (e) {
             console.error('DB update ' + table + ':', e);
-            return null;
+            throw e;
         }
     }
 
     async function remove(table, id) {
+        // Bug C-1: antes devolvia false en fallo, tragandose el error.
+        // Ahora LANZA para que los callers (que envuelven en try/catch)
+        // detecten que el DELETE no se aplico en el backend.
         try {
             const res = await fetch(BASE + '/' + table + '/' + id, { method: 'DELETE' });
-            if (!res.ok) { console.error('DB delete ' + table + ':', res.status); return false; }
+            if (!res.ok) {
+                const errText = await res.text().catch(function () { return String(res.status); });
+                throw new Error('Error al eliminar en ' + table + ' (HTTP ' + res.status + '): ' + errText);
+            }
             return true;
         } catch (e) {
             console.error('DB delete ' + table + ':', e);
-            return false;
+            throw e;
         }
     }
 

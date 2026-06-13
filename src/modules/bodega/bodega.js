@@ -288,13 +288,22 @@ window.Mazelab.Modules.BodegaModule = (function () {
 
         var record = { nombre, categoria, estado, notas };
 
-        if (editingId) {
-            if (equipoIdInput) record.equipo_id = equipoIdInput;
-            await window.Mazelab.DataService.update('bodega', editingId, record);
-        } else {
-            record.equipo_id = equipoIdInput || generateEquipoId(categoria);
-            record.id = 'eq-' + Date.now();
-            await window.Mazelab.DataService.create('bodega', record);
+        // C-1: update/remove ahora LANZAN en fallo de red/DB. Envolvemos en
+        // try/catch para avisar al usuario y NO cerrar el modal ni asumir
+        // exito si el guardado fallo contra el backend.
+        try {
+            if (editingId) {
+                if (equipoIdInput) record.equipo_id = equipoIdInput;
+                await window.Mazelab.DataService.update('bodega', editingId, record);
+            } else {
+                record.equipo_id = equipoIdInput || generateEquipoId(categoria);
+                record.id = 'eq-' + Date.now();
+                await window.Mazelab.DataService.create('bodega', record);
+            }
+        } catch (e) {
+            console.error('Error al guardar el equipo:', e);
+            alert('No se pudo guardar el equipo. Revisa tu conexion e intenta de nuevo.');
+            return;
         }
 
         closeModal();
@@ -306,7 +315,15 @@ window.Mazelab.Modules.BodegaModule = (function () {
         var eq = equipos.find(function (e) { return String(e.id) === String(id); });
         if (!eq) return;
         if (!confirm('¿Eliminar "' + (eq.nombre || eq.equipo_id) + '"? Esta acción no se puede deshacer.')) return;
-        await window.Mazelab.DataService.remove('bodega', id);
+        // C-1: remove ahora LANZA en fallo. Avisamos al usuario y no
+        // refrescamos como si se hubiera eliminado si el DELETE fallo.
+        try {
+            await window.Mazelab.DataService.remove('bodega', id);
+        } catch (e) {
+            console.error('Error al eliminar el equipo:', e);
+            alert('No se pudo eliminar el equipo. Revisa tu conexion e intenta de nuevo.');
+            return;
+        }
         await loadData();
         refreshContent();
     }
