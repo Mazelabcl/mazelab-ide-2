@@ -3,6 +3,11 @@ window.Mazelab = window.Mazelab || {};
 (function () {
     let useSupabase = false;
     let initialized = false;
+    // Bug C-5: true cuando el ERP cayo a localStorage POR UN ERROR de
+    // conexion (no por config intencional ni por tabla vacia legitima).
+    // Cuando es true mostramos un banner rojo persistente avisando que los
+    // cambios no se estan guardando en el servidor.
+    let degradedMode = false;
 
     const TABLE_MAP = {
         services: 'servicios',
@@ -102,32 +107,117 @@ window.Mazelab = window.Mazelab || {};
 
     async function init() {
         if (initialized) return;
+        degradedMode = false;
         try {
             const connected = await window.Mazelab.Supabase.testConnection();
-            if (connected) {
-                const salesData = await window.Mazelab.Supabase.fetchAll('ventas');
-                if (salesData && salesData.length > 0) {
-                    useSupabase = true;
-                    console.log('DataService: Using Supabase (' + salesData.length + ' sales found)');
-                } else {
-                    const localSales = window.Mazelab.Storage.SalesService.getAll();
-                    if (localSales.length > 0) {
-                        useSupabase = false;
-                        console.log('DataService: Supabase empty, using localStorage (' + localSales.length + ' local sales)');
-                    } else {
-                        useSupabase = true;
-                        console.log('DataService: Both empty, defaulting to Supabase for new data');
-                    }
-                }
-            } else {
+            if (!connected) {
+                // No hay backend alcanzable. Puede ser config intencional
+                // (primer uso / demo sin datos) o un backend caido con datos
+                // previos (escenario peligroso de C-5). Distinguimos por la
+                // presencia de datos locales: si ya hay datos, el ERP estuvo
+                // en uso y la falta de conexion es sospechosa → banner. Si no
+                // hay datos, es arranque limpio sin backend → modo local
+                // silencioso (comportamiento previo).
                 useSupabase = false;
-                console.log('DataService: No Supabase connection, using localStorage');
+                const localSalesNC = window.Mazelab.Storage.SalesService.getAll();
+                if (localSalesNC && localSalesNC.length > 0) {
+                    degradedMode = true;
+                    console.error('DataService: Sin conexion pero hay datos locales previos, modo degradado');
+                    showOfflineBanner();
+                } else {
+                    console.log('DataService: No Supabase connection, using localStorage');
+                }
+                initialized = true;
+                return;
+            }
+
+            // testConnection dio OK. Ahora usamos fetchAllStrict para
+            // distinguir error real (lanza) de tabla vacia (array vacio).
+            // Antes fetchAll devolvia [] en ambos casos y el ERP caia a
+            // localStorage en silencio ante un hipo de red (bug C-5).
+            let salesData;
+            try {
+                salesData = await window.Mazelab.Supabase.fetchAllStrict('ventas');
+            } catch (fetchErr) {
+                // Caso (c): la conexion fallo de verdad despues de un
+                // testConnection OK (hipo de red entre el ping y la lectura,
+                // o error del backend en /ventas). NO es tabla vacia.
+                // Caemos a modo local PERO marcamos modo degradado y
+                // mostramos el banner: el owner debe saber que no se guarda.
+                useSupabase = false;
+                degradedMode = true;
+                console.error('DataService: Connection failed reading ventas, degraded localStorage mode:', fetchErr);
+                showOfflineBanner();
+                initialized = true;
+                return;
+            }
+
+            if (salesData && salesData.length > 0) {
+                // Caso (a): conexion OK + datos → produccion normal.
+                useSupabase = true;
+                console.log('DataService: Using Supabase (' + salesData.length + ' sales found)');
+            } else {
+                // Caso (b): conexion OK + tabla ventas vacia (array vacio
+                // valido). No es error. Comportamiento previo intacto, SIN
+                // banner de degradado.
+                const localSales = window.Mazelab.Storage.SalesService.getAll();
+                if (localSales.length > 0) {
+                    useSupabase = false;
+                    console.log('DataService: Supabase empty, using localStorage (' + localSales.length + ' local sales)');
+                } else {
+                    useSupabase = true;
+                    console.log('DataService: Both empty, defaulting to Supabase for new data');
+                }
             }
         } catch (e) {
+            // Red de seguridad: cualquier error inesperado fuera de las ramas
+            // anteriores. Lo tratamos como degradado para no fingir que
+            // guardamos en produccion cuando algo se rompio.
             useSupabase = false;
-            console.warn('DataService: Init error, using localStorage:', e);
+            degradedMode = true;
+            console.warn('DataService: Init error, degraded localStorage mode:', e);
+            showOfflineBanner();
         }
         initialized = true;
+    }
+
+    // Banner rojo persistente y muy visible para el modo sin conexion
+    // forzado por error (bug C-5). Idempotente: si ya existe no lo duplica.
+    function showOfflineBanner() {
+        if (typeof document === 'undefined') return;
+        try {
+            if (document.getElementById('mz-offline-banner')) return;
+            const banner = document.createElement('div');
+            banner.id = 'mz-offline-banner';
+            banner.setAttribute('role', 'alert');
+            banner.style.cssText = [
+                'position:fixed',
+                'top:0',
+                'left:0',
+                'right:0',
+                'z-index:2147483647',
+                'background:#b91c1c',
+                'color:#ffffff',
+                'font-family:system-ui,-apple-system,Segoe UI,Roboto,sans-serif',
+                'font-size:14px',
+                'font-weight:600',
+                'line-height:1.4',
+                'text-align:center',
+                'padding:12px 16px',
+                'box-shadow:0 2px 8px rgba(0,0,0,0.35)',
+                'letter-spacing:0.2px'
+            ].join(';');
+            banner.textContent = 'MODO SIN CONEXION A LA BASE DE DATOS. '
+                + 'Tus cambios NO se estan guardando en el servidor. '
+                + 'No ingreses datos hasta reconectar y recargar.';
+            if (document.body) {
+                document.body.insertBefore(banner, document.body.firstChild);
+            } else {
+                document.documentElement.appendChild(banner);
+            }
+        } catch (e) {
+            console.error('DataService: no se pudo mostrar el banner offline:', e);
+        }
     }
 
     function getStorageService(entityType) {
@@ -237,6 +327,7 @@ window.Mazelab = window.Mazelab || {};
         hasData,
         invalidateCache,
         invalidateAll,
-        isUsingSupabase: () => useSupabase
+        isUsingSupabase: () => useSupabase,
+        isDegraded: () => degradedMode
     };
 })();
