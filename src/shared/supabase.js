@@ -27,6 +27,22 @@ window.Mazelab = window.Mazelab || {};
         }
     }
 
+    // Variante estricta de fetchAll para distinguir "tabla vacia" de
+    // "fallo de conexion" (bug C-5). A diferencia de fetchAll, NO traga el
+    // error: en exito devuelve el array (vacio o no), y en !res.ok o
+    // excepcion de red LANZA un Error. Solo la usa init() para decidir
+    // honestamente si hay conexion. No tocar fetchAll: muchos callers
+    // asumen que siempre devuelve array.
+    async function fetchAllStrict(table) {
+        const res = await fetch(BASE + '/' + table);
+        if (!res.ok) {
+            const errText = await res.text().catch(function () { return String(res.status); });
+            throw new Error('Error al leer "' + table + '" (HTTP ' + res.status + '): ' + errText);
+        }
+        const data = await res.json();
+        return Array.isArray(data) ? data : (data.rows || data.data || []);
+    }
+
     async function insert(table, record) {
         const res = await fetch(BASE + '/' + table, {
             method: 'POST',
@@ -91,6 +107,7 @@ window.Mazelab = window.Mazelab || {};
         testConnection,
         isConnected: function () { return isConnected; },
         fetchAll,
+        fetchAllStrict,
         insert,
         update,
         remove,
