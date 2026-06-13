@@ -112,13 +112,21 @@ window.Mazelab = window.Mazelab || {};
             const connected = await window.Mazelab.Supabase.testConnection();
             if (!connected) {
                 // No hay backend alcanzable. Puede ser config intencional
-                // (caso normal de fallback) o un hipo de red. Mantenemos el
-                // comportamiento previo (modo local sin banner) salvo que
-                // haya un fallo duro mas abajo. testConnection ya distingue
-                // "no responde" de "responde con error", pero a este punto
-                // solo sabemos que no esta OK → modo local silencioso.
+                // (primer uso / demo sin datos) o un backend caido con datos
+                // previos (escenario peligroso de C-5). Distinguimos por la
+                // presencia de datos locales: si ya hay datos, el ERP estuvo
+                // en uso y la falta de conexion es sospechosa → banner. Si no
+                // hay datos, es arranque limpio sin backend → modo local
+                // silencioso (comportamiento previo).
                 useSupabase = false;
-                console.log('DataService: No Supabase connection, using localStorage');
+                const localSalesNC = window.Mazelab.Storage.SalesService.getAll();
+                if (localSalesNC && localSalesNC.length > 0) {
+                    degradedMode = true;
+                    console.error('DataService: Sin conexion pero hay datos locales previos, modo degradado');
+                    showOfflineBanner();
+                } else {
+                    console.log('DataService: No Supabase connection, using localStorage');
+                }
                 initialized = true;
                 return;
             }
