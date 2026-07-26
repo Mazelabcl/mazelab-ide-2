@@ -40,11 +40,6 @@ window.Mazelab.Modules.PayablesModule = (function () {
         return String(str || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
     }
 
-    // Retención BH — delega en la tabla SII central (shared/money.js)
-    function getBHRetentionRate(dateStr) {
-        return window.Mazelab.Money.bhRetentionRate(dateStr);
-    }
-
     function docTypeLabel(t) {
         var s = (t || '').toLowerCase().trim();
         return ({ bh: 'BH', factura: 'Factura', exenta: 'F. Exenta', invoice: 'Invoice', ninguno: '-' }[s]) || t || '-';
