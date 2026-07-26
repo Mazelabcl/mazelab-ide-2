@@ -76,7 +76,7 @@ window.Mazelab.Modules.SalesModule = (function () {
                 const clientName = (sale.clientName || getClientName(sale.clientId)).toLowerCase();
                 const eventName = (sale.eventName || '').toLowerCase();
                 const serviceNames = getServiceNames(sale.serviceIds).toLowerCase();
-                const sourceId = String(sale.sourceId || '').toLowerCase();
+                const sourceId = String(sale.sourceId || sale.id || '').toLowerCase();
                 return clientName.includes(q) || eventName.includes(q) || serviceNames.includes(q) || sourceId.includes(q);
             }
             return true;
@@ -89,6 +89,7 @@ window.Mazelab.Modules.SalesModule = (function () {
                     const fv = (columnFilters[col] || '').toLowerCase();
                     let val;
                     if (col === '_status') val = getEffectiveStatus(sale);
+                    else if (col === 'sourceId') val = String(sale.sourceId || sale.id || '');
                     else val = String(sale[col] || '');
                     return val.toLowerCase().includes(fv);
                 });
@@ -874,7 +875,26 @@ window.Mazelab.Modules.SalesModule = (function () {
                 var sid = String(editingId);
                 var ssid = editedSale ? String(editedSale.sourceId || '') : '';
                 var allReceivables = await DS.getAll('receivables') || [];
+                // Clasificación FACTURA vs RESIDUAL (I4): una factura sin número NO es
+                // residual — no se le pueden sobrescribir los montos.
+                // FACTURA: sourceType 'factura', o invoicedAmount > 0, o invoiceNumber no vacío.
+                // RESIDUAL: status que declara sin factura, o ninguna señal de factura.
+                // (El status declarado gana: las residuales legacy con el bug de
+                // invoicedAmount = netoRestante siguen sincronizándose como residuales.)
+                // Definida ANTES del filtro primario porque el fallback fuzzy también la usa.
+                var isFacturaCXC = function (r) {
+                    if (r.status === 'sin_factura' || r.status === 'pendiente_factura') return false;
+                    return r.sourceType === 'factura' ||
+                           Number(r.invoicedAmount) > 0 ||
+                           !!(r.invoiceNumber && String(r.invoiceNumber).trim() !== '');
+                };
+                // (I2) Las NC jamás entran a linkedCXCs: si no se excluyen aquí, isFacturaCXC
+                // las clasifica como factura (suelen traer invoicedAmount/invoiceNumber) y su
+                // monto se suma a totalAlreadyInvoiced, descontando la nota de crédito dos
+                // veces (ya descontó vía _ncOffset en el flujo de facturación) e inflando el
+                // saldo pendiente hacia abajo incorrectamente.
                 var linkedCXCs = allReceivables.filter(function (r) {
+                    if (r.tipoDoc === 'NC') return false;
                     var rSaleId = String(r.saleId || '');
                     var rEventId = String(r.eventId || '');
                     var rSourceId = String(r.sourceId || '');
@@ -883,15 +903,27 @@ window.Mazelab.Modules.SalesModule = (function () {
                 });
                 // Último recurso: si ningún ID calza, buscar por identidad de evento
                 // (evita crear una CXC fantasma cuando los IDs no coinciden, p. ej.
-                // ventas importadas con sourceId vacío)
-                if (linkedCXCs.length === 0) {
+                // ventas importadas con sourceId vacío).
+                // (B1) Endurecido: solo se activa si la venta trae eventName Y eventDate
+                // (sin ambos no hay señal suficiente para adoptar una CXC ajena), la
+                // candidata no es NC, no es una factura (isFacturaCXC) y está huérfana o
+                // ya apunta a esta venta (por saleId y por sourceId). Si hay 2+ candidatas
+                // ambiguas no se adopta ninguna — se prefiere crear una CXC propia antes
+                // que secuestrar la de otra venta.
+                if (linkedCXCs.length === 0 && (data.eventName || '') && (data.eventDate || '')) {
                     var fuzzy = allReceivables.filter(function (r) {
-                        return r.tipoDoc !== 'NC' &&
-                               (r.eventName || '') === (data.eventName || '') &&
+                        if (r.tipoDoc === 'NC') return false;
+                        if (isFacturaCXC(r)) return false;
+                        var rSaleIdF = String(r.saleId || '');
+                        var rSourceIdF = String(r.sourceId || '');
+                        var isOrphanOrOwn = (!r.saleId || rSaleIdF === sid || rSaleIdF === ssid) &&
+                                             (!r.sourceId || rSourceIdF === sid || rSourceIdF === ssid);
+                        if (!isOrphanOrOwn) return false;
+                        return (r.eventName || '') === (data.eventName || '') &&
                                (r.clientName || '') === (data.clientName || '') &&
                                (r.eventDate || '') === (data.eventDate || '');
                     });
-                    if (fuzzy.length > 0) linkedCXCs = fuzzy;
+                    if (fuzzy.length === 1) linkedCXCs = fuzzy;
                 }
                 // If no CXC exists, create one (fixes orphaned sales)
                 if (linkedCXCs.length === 0 && data.amount > 0) {
@@ -909,18 +941,6 @@ window.Mazelab.Modules.SalesModule = (function () {
                         sourceType: 'auto'
                     });
                 }
-                // Clasificación FACTURA vs RESIDUAL (I4): una factura sin número NO es
-                // residual — no se le pueden sobrescribir los montos.
-                // FACTURA: sourceType 'factura', o invoicedAmount > 0, o invoiceNumber no vacío.
-                // RESIDUAL: status que declara sin factura, o ninguna señal de factura.
-                // (El status declarado gana: las residuales legacy con el bug de
-                // invoicedAmount = netoRestante siguen sincronizándose como residuales.)
-                var isFacturaCXC = function (r) {
-                    if (r.status === 'sin_factura' || r.status === 'pendiente_factura') return false;
-                    return r.sourceType === 'factura' ||
-                           Number(r.invoicedAmount) > 0 ||
-                           !!(r.invoiceNumber && String(r.invoiceNumber).trim() !== '');
-                };
                 // Separate invoiced CXCs from sinFactura (residual)
                 var totalAlreadyInvoiced = 0;
                 for (var ri = 0; ri < linkedCXCs.length; ri++) {
@@ -935,21 +955,26 @@ window.Mazelab.Modules.SalesModule = (function () {
                         });
                     }
                 }
-                // Update sinFactura (residual) CXCs with correct remaining amount
+                // Update sinFactura (residual) CXCs with correct remaining amount.
+                // (I3) Solo se actualiza la PRIMERA residual con el monto completo. Si hay
+                // 2+ residuales huérfanas (dato inconsistente / duplicado), escribir el
+                // mismo residualAmount en todas multiplicaría el saldo pendiente real —
+                // las demás quedan intactas y se deja constancia por consola para revisión manual.
                 var newSaleAmount = data.amount || 0;
                 var residualAmount = Math.max(0, newSaleAmount - totalAlreadyInvoiced);
-                for (var ri2 = 0; ri2 < linkedCXCs.length; ri2++) {
-                    var cxcRec2 = linkedCXCs[ri2];
-                    if (!isFacturaCXC(cxcRec2)) {
-                        await DS.update('receivables', cxcRec2.id, {
-                            eventName: data.eventName,
-                            eventDate: data.eventDate,
-                            clientName: data.clientName,
-                            monto_venta: residualAmount,
-                            montoNeto: residualAmount,
-                            amount: residualAmount
-                        });
-                    }
+                var residualCXCs = linkedCXCs.filter(function (r) { return !isFacturaCXC(r); });
+                if (residualCXCs.length > 1) {
+                    console.warn('Venta con múltiples CXC residuales, se actualizó solo la primera: ' + sid);
+                }
+                if (residualCXCs.length > 0) {
+                    await DS.update('receivables', residualCXCs[0].id, {
+                        eventName: data.eventName,
+                        eventDate: data.eventDate,
+                        clientName: data.clientName,
+                        monto_venta: residualAmount,
+                        montoNeto: residualAmount,
+                        amount: residualAmount
+                    });
                 }
                 // Sincronizar CXP vinculados con datos actualizados
                 var allPayables = await DS.getAll('payables') || [];
