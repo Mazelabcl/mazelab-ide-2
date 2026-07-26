@@ -102,7 +102,7 @@ window.Mazelab.Modules.DashboardModule = (function () {
 
         // Comercial: sales KPIs + upcoming events + rankings (no CXP, no IVA)
         if (role === 'comercial') {
-            return buildComercialDashboard(sales, receivables, services);
+            return buildComercialDashboard(sales, receivables, payables, services);
         }
 
         // Operaciones: upcoming events, alerts, equipment status
@@ -291,7 +291,7 @@ window.Mazelab.Modules.DashboardModule = (function () {
         var upcomingHTML = buildUpcomingEvents(sales, services);
         var yoyHTML = buildYoYChart(sales);
         var quarterlyHTML = buildQuarterlyView(sales);
-        var comercialCards = buildComercialCards(sales, receivables, services);
+        var comercialCards = buildComercialCards(sales, receivables, payables, services);
 
         var opsActivityHTML = buildOpsActivityFeed(sales);
         return kpiHTML + upcomingHTML + opsActivityHTML + yoyHTML + quarterlyHTML + chartHTML + ivaHTML + rankingsHTML + comercialCards;
@@ -300,7 +300,7 @@ window.Mazelab.Modules.DashboardModule = (function () {
     // ================================================================
     //  COMERCIAL DASHBOARD
     // ================================================================
-    function buildComercialDashboard(sales, receivables, services) {
+    function buildComercialDashboard(sales, receivables, payables, services) {
         var now = new Date();
         var thisYear = now.getFullYear();
         var lastYear = thisYear - 1;
@@ -368,7 +368,7 @@ window.Mazelab.Modules.DashboardModule = (function () {
         var yoyHTML = buildYoYChart(sales);
         var quarterlyHTML = buildQuarterlyView(sales);
         var upcomingHTML = buildUpcomingEvents(sales, services);
-        var comercialCards = buildComercialCards(sales, receivables, services);
+        var comercialCards = buildComercialCards(sales, receivables, payables, services);
 
         var opsActivityHTML = buildOpsActivityFeed(sales);
         return kpiHTML + upcomingHTML + opsActivityHTML + yoyHTML + quarterlyHTML + comercialCards;
@@ -647,7 +647,7 @@ window.Mazelab.Modules.DashboardModule = (function () {
     }
 
     // --- Reusable: Commercial cards (servicios top, clientes, ejecutivos) ---
-    function buildComercialCards(sales, receivables, services) {
+    function buildComercialCards(sales, receivables, payables, services) {
         var now = new Date();
         var thisYear = now.getFullYear();
         var lastYear = thisYear - 1;
@@ -804,16 +804,32 @@ window.Mazelab.Modules.DashboardModule = (function () {
             '<tbody id="dash-cli-full" style="display:none;">' + clientFullRows + '</tbody></table>' + clientVerMas + '</div>';
 
         // Commission card
-        var commHTML = buildCommissionCard(sales);
+        var commHTML = buildCommissionCard(sales, receivables, payables);
 
         return '<div class="kpi-grid-2">' + svcCardHTML + clientCardHTML + '</div>' + execCardHTML + commHTML;
     }
 
-    function buildCommissionCard(sales) {
+    // Comisión devengada por cobro: % (manual por venta) × utilidad del evento × proporción cobrada.
+    // utilidad = venta neta efectiva (amount − refundAmount) − Σ costo empresa de los payables del evento.
+    // proporción cobrada = cobrado neto en CXC vinculadas / venta neta efectiva.
+    // Atribución por staffId (resuelto a nombre por el catálogo staff en init(), antes de llegar aquí);
+    // fallback a staffName/ejecutivo/vendedor para registros importados sin staffId.
+    function buildCommissionCard(sales, receivables, payables) {
+        var M = window.Mazelab && window.Mazelab.Money;
         var now = new Date();
         var thisYear = now.getFullYear();
         var commByExec = {};
         var totalComm = 0;
+        receivables = receivables || [];
+        payables = payables || [];
+
+        // pagado de una fila CXC: payments[] si existe, si no amountPaid
+        function getTotalPagadoR(r) {
+            if (r.payments && Array.isArray(r.payments)) {
+                return r.payments.reduce(function (sum, pay) { return sum + (Number(pay.amount) || 0); }, 0);
+            }
+            return Number(r.amountPaid) || 0;
+        }
 
         sales.forEach(function (s) {
             var ed = s.eventDate || s.event_date || '';
@@ -821,12 +837,48 @@ window.Mazelab.Modules.DashboardModule = (function () {
             if (y !== thisYear) return;
             var pct = Number(s.comisionPct || 0);
             if (pct <= 0) return;
-            var amt = Number(s.amount || s.monto_venta || 0);
-            var comm = Math.round(amt * pct / 100);
+
+            var ventaBruta = Number(s.amount || s.monto_venta || 0);
+            var refund = Number(s.refundAmount) || 0;
+            var ventaNeta = ventaBruta - refund; // la incidencia/devolución recalcula la comisión
+
+            var sid = String(s.id || '');
+            var ssid = String(s.sourceId || '');
+
+            // Costo total del evento: solo payables vinculados por eventId (con guardas contra vacíos)
+            var costoTotal = 0;
+            if (M) {
+                payables.forEach(function (p) {
+                    var peid = String(p.eventId || '');
+                    if (!peid) return;
+                    if (!((sid && peid === sid) || (ssid && peid === ssid))) return;
+                    costoTotal += M.costoEmpresaItem(p.docType, p.amount, p.billingDate || p.eventDate);
+                });
+            }
+            var utilidad = ventaNeta - costoTotal;
+
+            // Cobrado neto en CXC vinculadas (mismo criterio de match que el sync: saleId/eventId/sourceId
+            // contra s.id y s.sourceId), excluyendo NC. Fila 'E' → pagado tal cual; resto → neto (pagado/1.19).
+            var cobradoNeto = 0;
+            receivables.forEach(function (r) {
+                if (r.tipoDoc === 'NC') return;
+                var rSaleId = String(r.saleId || '');
+                var rEventId = String(r.eventId || '');
+                var rSourceId = String(r.sourceId || '');
+                var matches = (sid && (rSaleId === sid || rEventId === sid || rSourceId === sid)) ||
+                              (ssid && (rSaleId === ssid || rEventId === ssid || rSourceId === ssid));
+                if (!matches) return;
+                var pagado = getTotalPagadoR(r);
+                cobradoNeto += (r.tipoDoc === 'E') ? pagado : Math.round(pagado / 1.19);
+            });
+
+            var comm = M ? M.comisionDevengada(pct, utilidad, cobradoNeto, ventaNeta) : 0;
+
             var exec = s.staffName || s.ejecutivo || s.vendedor || 'Sin asignar';
-            if (!commByExec[exec]) commByExec[exec] = { name: exec, total: 0, sales: 0, commTotal: 0 };
+            if (!commByExec[exec]) commByExec[exec] = { name: exec, total: 0, sales: 0, commTotal: 0, pctSum: 0 };
             commByExec[exec].sales++;
-            commByExec[exec].total += amt;
+            commByExec[exec].total += ventaBruta;
+            commByExec[exec].pctSum += pct;
             commByExec[exec].commTotal += comm;
             totalComm += comm;
         });
@@ -835,15 +887,19 @@ window.Mazelab.Modules.DashboardModule = (function () {
         // Store for chart
         window._commByExec = execList;
 
+        var subtitleHTML = '<div style="padding:0 var(--space-md) 8px;font-size:11px;color:var(--text-muted);">' +
+            'Comisión devengada por cobro (% × utilidad × proporción cobrada)</div>';
+
         if (execList.length === 0) {
             return '<div class="card" style="margin-bottom:var(--space-md);">' +
                 '<div class="card-header"><span class="card-title">Comisiones</span><span class="badge badge-info">' + thisYear + '</span></div>' +
+                subtitleHTML +
                 '<div style="padding:20px;text-align:center;color:var(--text-muted);font-size:13px;">Sin comisiones registradas. Agrega % comision al crear ventas.</div>' +
                 '</div>';
         }
 
         var rows = execList.map(function (ex) {
-            var avgPct = ex.total > 0 ? (ex.commTotal / ex.total * 100).toFixed(1) : '0';
+            var avgPct = ex.sales > 0 ? (ex.pctSum / ex.sales).toFixed(1) : '0';
             return '<tr>' +
                 '<td style="padding:6px 8px;"><strong>' + escapeHtml(ex.name) + '</strong></td>' +
                 '<td style="padding:6px 8px;text-align:right;">' + ex.sales + '</td>' +
@@ -858,6 +914,7 @@ window.Mazelab.Modules.DashboardModule = (function () {
                 '<span class="card-title">Comisiones por Ejecutivo</span>' +
                 '<span class="badge badge-success">Total: ' + formatCLP(totalComm) + '</span>' +
             '</div>' +
+            subtitleHTML +
             '<div style="display:flex;gap:var(--space-md);flex-wrap:wrap;">' +
                 '<div style="flex:1;min-width:300px;">' +
                     '<table class="data-table"><thead><tr>' +
@@ -1500,6 +1557,6 @@ window.Mazelab.Modules.DashboardModule = (function () {
         }
     }
 
-    return { render: render, init: init };
+    return { render: render, init: init, buildCommissionCard: buildCommissionCard };
 
 })();
