@@ -15,6 +15,10 @@ t('tasa 2026 = 15,25%', () => assert.strictEqual(M.bhRetentionRate('2026-06-15')
 t('tasa 2027 = 16%',    () => assert.strictEqual(M.bhRetentionRate('2027-06-15'), 0.16));
 t('tasa 2028+ = 17%',   () => assert.strictEqual(M.bhRetentionRate('2029-01-01'), 0.17));
 t('sin fecha usa año actual', () => assert.strictEqual(typeof M.bhRetentionRate(null), 'number'));
+t('ISO date-only 1-ene no se corre de año por timezone', () => assert.strictEqual(M.bhRetentionRate('2026-01-01'), 0.1525));
+t('año-mes "2026-01" → 15,25%', () => assert.strictEqual(M.bhRetentionRate('2026-01'), 0.1525));
+t('formato chileno "15-03-2024" → 13,75%', () => assert.strictEqual(M.bhRetentionRate('15-03-2024'), 0.1375));
+t('formato "03/2025" → 14,5%', () => assert.strictEqual(M.bhRetentionRate('03/2025'), 0.145));
 
 // retención = líquido × tasa/(1−tasa), redondeada a peso
 t('retención de 1.000.000 líquido en 2026 = 179.941', () =>
@@ -46,6 +50,9 @@ t('"#REF!" → 0',            () => assert.strictEqual(M.parseAmountCL('#REF!'),
 t('"" → 0',                 () => assert.strictEqual(M.parseAmountCL(''), 0));
 t('null → 0',               () => assert.strictEqual(M.parseAmountCL(null), 0));
 t('número directo pasa',    () => assert.strictEqual(M.parseAmountCL(45000), 45000));
+t('"1.234.567,89" → 1234567.89 (miles + decimales)', () => assert.strictEqual(M.parseAmountCL('1.234.567,89'), 1234567.89));
+t('"12.345.678,90" → 12345678.9', () => assert.strictEqual(M.parseAmountCL('12.345.678,90'), 12345678.9));
+t('NaN → 0',                () => assert.strictEqual(M.parseAmountCL(NaN), 0));
 
 // ---- Regla del día 20: IVA declarado ----
 // factura de junio 2026: se paga el 20 de julio; es "mío" recién desde el 21
@@ -83,6 +90,8 @@ t('facturada, IVA declarado: total con IVA', () =>
     assert.strictEqual(M.mioRow({ tipoDoc: 'F', tieneFactura: true, facturadoNeto: 1000000, ncNeto: 0, pagado: 0, ivaDeclarado: true }), 1190000));
 t('facturada con NC, IVA declarado', () =>
     assert.strictEqual(M.mioRow({ tipoDoc: 'F', tieneFactura: true, facturadoNeto: 1500000, ncNeto: 200000, pagado: 0, ivaDeclarado: true }), 1547000));
+t('exenta facturada descuenta NC (sin IVA)', () =>
+    assert.strictEqual(M.mioRow({ tipoDoc: 'E', tieneFactura: true, facturadoNeto: 1000000, ncNeto: 200000, pagado: 0 }), 800000));
 
 // ---- Comisión: % × utilidad × proporción cobrada ----
 t('10% de utilidad 600k, cobrada la mitad → 30.000', () =>

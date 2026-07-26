@@ -17,8 +17,16 @@
     var BH_RATES = { 2022: 0.1225, 2023: 0.13, 2024: 0.1375, 2025: 0.145, 2026: 0.1525, 2027: 0.16 };
 
     function bhRetentionRate(dateStr) {
+        // El año se extrae por regex antes de recurrir a Date: evita el corrimiento
+        // de año por timezone en fechas ISO date-only ("2026-01-01" parsea medianoche
+        // UTC → 2025 en Chile) y soporta formatos chilenos ("15-03-2024", "03/2025").
         var year = NaN;
-        if (dateStr) year = new Date(dateStr).getFullYear();
+        if (dateStr) {
+            var s = String(dateStr);
+            var m = s.match(/^(\d{4})/) || s.match(/(\d{4})$/);
+            if (m) year = Number(m[1]);
+            else year = new Date(s).getFullYear();
+        }
         if (!year || isNaN(year)) year = new Date().getFullYear();
         if (year <= 2022) return 0.1225;
         if (year >= 2028) return 0.17;
@@ -59,7 +67,7 @@
     // Parser de montos chilenos: punto = miles, coma = decimal.
     function parseAmountCL(val) {
         if (val === null || val === undefined) return 0;
-        if (typeof val === 'number') return val;
+        if (typeof val === 'number') return isFinite(val) ? val : 0;
         var str = String(val).replace(/[$\s]/g, '');
         if (!str || str === '.') return 0;
         if (str.indexOf('#') !== -1 || str.indexOf('REF') !== -1) return 0;
@@ -70,7 +78,9 @@
         if (commaCount > 1) {
             str = str.replace(/,/g, '');
         } else if (dotCount > 1) {
+            // Varios puntos = miles; si queda exactamente una coma, es el decimal
             str = str.replace(/\./g, '');
+            if ((str.match(/,/g) || []).length === 1) str = str.replace(',', '.');
         } else if (commaCount === 1 && dotCount === 1) {
             if (str.lastIndexOf(',') > str.lastIndexOf('.')) str = str.replace(/\./g, '').replace(',', '.');
             else str = str.replace(/,/g, '');
@@ -124,6 +134,11 @@
         if (o.tipoDoc === 'NC') return 0;
         var pagado = Number(o.pagado) || 0;
         if (o.tipoDoc === 'E') {
+            // Exenta facturada: descuenta NC igual que pendienteFacturadoRow, sin IVA
+            if (o.tieneFactura) {
+                var baseE = Math.max(0, (Number(o.facturadoNeto) || 0) - (Number(o.ncNeto) || 0));
+                return Math.max(0, baseE - pagado);
+            }
             return Math.max(0, (Number(o.neto) || 0) - (Number(o.refundNeto) || 0) - pagado);
         }
         if (!o.tieneFactura) {
