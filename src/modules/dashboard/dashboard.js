@@ -209,7 +209,8 @@ window.Mazelab.Modules.DashboardModule = (function () {
         });
 
         // CXC — delegate to FinanceModule for consistent calculation
-        var cxcKPIs = window.Mazelab.Modules.FinanceModule.computeKPIs(receivables);
+        // (sales se pasa para que computeKPIs enriquezca _refundAmount igual que en la página CXC)
+        var cxcKPIs = window.Mazelab.Modules.FinanceModule.computeKPIs(receivables, sales);
         var totalCXC = cxcKPIs.totalPorCobrar;
         var countCXC = cxcKPIs.data.sinFactura.length + cxcKPIs.data.facturadoPendientes.length;
 
@@ -322,7 +323,8 @@ window.Mazelab.Modules.DashboardModule = (function () {
         });
 
         // CXC — delegate to FinanceModule for consistent calculation
-        var cxcKPIs = window.Mazelab.Modules.FinanceModule.computeKPIs(receivables);
+        // (sales se pasa para que computeKPIs enriquezca _refundAmount igual que en la página CXC)
+        var cxcKPIs = window.Mazelab.Modules.FinanceModule.computeKPIs(receivables, sales);
         var totalCXC = cxcKPIs.totalPorCobrar;
         var countCXC = cxcKPIs.data.sinFactura.length + cxcKPIs.data.facturadoPendientes.length;
 
