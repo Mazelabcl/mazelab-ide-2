@@ -5,6 +5,14 @@ window.Mazelab.Modules.BodegaModule = (function () {
     var searchQuery = '';
     var editingId = null;
 
+    // Feedback visual (toast) — defensivo: los harnesses de Node cargan este módulo
+    // con window mockeado y sin window.Mazelab.UI, así que no debe romper.
+    var UI = (window.Mazelab && window.Mazelab.UI) || {
+        toast: function () {},
+        showOfflineBanner: function () {},
+        showTestModeBanner: function () {}
+    };
+
     var CATEGORIAS_SUGERIDAS = [
         'Notebooks', 'PCs', 'Tablets', 'Teléfonos',
         'Cámaras', 'Impresoras', 'Pantallas', 'Totems',
@@ -288,27 +296,38 @@ window.Mazelab.Modules.BodegaModule = (function () {
 
         var record = { nombre, categoria, estado, notas };
 
-        if (editingId) {
-            if (equipoIdInput) record.equipo_id = equipoIdInput;
-            await window.Mazelab.DataService.update('bodega', editingId, record);
-        } else {
-            record.equipo_id = equipoIdInput || generateEquipoId(categoria);
-            record.id = 'eq-' + Date.now();
-            await window.Mazelab.DataService.create('bodega', record);
-        }
+        try {
+            if (editingId) {
+                if (equipoIdInput) record.equipo_id = equipoIdInput;
+                await window.Mazelab.DataService.update('bodega', editingId, record);
+            } else {
+                record.equipo_id = equipoIdInput || generateEquipoId(categoria);
+                record.id = 'eq-' + Date.now();
+                await window.Mazelab.DataService.create('bodega', record);
+            }
 
-        closeModal();
-        await loadData();
-        refreshContent();
+            UI.toast('Guardado en la base de datos');
+            closeModal();
+            await loadData();
+            refreshContent();
+        } catch (err) {
+            console.error('BodegaModule: Save error', err);
+            UI.toast('ERROR: no se guardó — ' + err.message, 'error');
+        }
     }
 
     async function deleteEquipo(id) {
         var eq = equipos.find(function (e) { return String(e.id) === String(id); });
         if (!eq) return;
         if (!confirm('¿Eliminar "' + (eq.nombre || eq.equipo_id) + '"? Esta acción no se puede deshacer.')) return;
-        await window.Mazelab.DataService.remove('bodega', id);
-        await loadData();
-        refreshContent();
+        try {
+            await window.Mazelab.DataService.remove('bodega', id);
+            await loadData();
+            refreshContent();
+        } catch (err) {
+            console.error('BodegaModule: Delete error', err);
+            UI.toast('ERROR: no se eliminó — ' + err.message, 'error');
+        }
     }
 
     function refreshContent() {
@@ -389,8 +408,16 @@ window.Mazelab.Modules.BodegaModule = (function () {
     }
 
     async function init() {
-        await loadData();
-        refreshContent();
+        try {
+            await loadData();
+            refreshContent();
+        } catch (err) {
+            // Sin este catch, con la base caída loadData() lanza y la vista queda
+            // congelada en "Cargando..." para siempre (el placeholder de render()).
+            console.error('BodegaModule: Error loading data', err);
+            var content = document.getElementById('bodega-content');
+            if (content) content.innerHTML = '<div class="empty-state"><p>Error al cargar datos: ' + err.message + '</p></div>';
+        }
     }
 
     return { render, init };

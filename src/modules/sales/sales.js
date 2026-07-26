@@ -873,15 +873,26 @@ window.Mazelab.Modules.SalesModule = (function () {
         e.preventDefault();
         const data = getFormData();
         const DS = window.Mazelab.DataService;
+        // Capturado ANTES de closeModal() (que resetea editingId a null) — el bloque 2
+        // (CXP, secundario) necesita saber en qué rama estábamos, incluso después de
+        // cerrar el modal.
+        var wasEditing = !!editingId;
+        var savedSaleId = wasEditing ? editingId : null;
+        var sid, ssid; // resueltos en el bloque 1 (rama edición), usados por el bloque 2
 
+        // =====================================================================
+        // BLOQUE 1 — escritura de la venta + su CXC (identidad financiera del
+        // evento). Si falla, la venta NO quedó guardada: error visible, modal
+        // sigue abierto, sin invitar a reintentar como si hubiera funcionado.
+        // =====================================================================
         try {
-            if (editingId) {
+            if (wasEditing) {
                 await DS.update('sales', editingId, data);
                 // Sincronizar la CXC auto-generada con los datos actualizados de la venta
                 // Sync ALL linked CXC — match by multiple IDs
                 var editedSale = sales.find(function (s) { return s.id === editingId; });
-                var sid = String(editingId);
-                var ssid = editedSale ? String(editedSale.sourceId || '') : '';
+                sid = String(editingId);
+                ssid = editedSale ? String(editedSale.sourceId || '') : '';
                 var allReceivables = await DS.getAll('receivables') || [];
                 // Clasificación FACTURA vs RESIDUAL (I4): una factura sin número NO es
                 // residual — no se le pueden sobrescribir los montos.
@@ -984,19 +995,6 @@ window.Mazelab.Modules.SalesModule = (function () {
                         amount: residualAmount
                     });
                 }
-                // Sincronizar CXP vinculados con datos actualizados
-                var allPayables = await DS.getAll('payables') || [];
-                var linkedCXPs = allPayables.filter(function (p) {
-                    var pEid = String(p.eventId || '');
-                    return pEid === sid || (ssid && pEid === ssid);
-                });
-                for (var pi = 0; pi < linkedCXPs.length; pi++) {
-                    await DS.update('payables', linkedCXPs[pi].id, {
-                        eventName: data.eventName,
-                        clientName: data.clientName,
-                        eventDate: data.eventDate
-                    });
-                }
             } else {
                 // Asignar ID numérico auto-incremental (max existente + 1)
                 // Also check receivables and payables to avoid ID collision
@@ -1037,7 +1035,7 @@ window.Mazelab.Modules.SalesModule = (function () {
                     encargado: '',
                     kanbanNotes: ''
                 }));
-                const saleId = createdSale ? createdSale.id : null;
+                savedSaleId = createdSale ? createdSale.id : null;
 
                 // Auto-create CXC (receivable) for this sale
                 await DS.create('receivables', {
@@ -1050,10 +1048,42 @@ window.Mazelab.Modules.SalesModule = (function () {
                     invoicedAmount: 0,
                     amountPaid: 0,
                     status: 'sin_factura',
-                    saleId: saleId,
+                    saleId: savedSaleId,
                     sourceType: 'auto'
                 });
+            }
+        } catch (err) {
+            console.error('Error guardando venta:', err);
+            UI.toast('ERROR: no se guardó — ' + err.message, 'error');
+            return; // la venta NO quedó guardada — modal abierto, sin refrescar como si hubiera funcionado
+        }
 
+        // La venta (y su CXC) ya están guardadas: confirmar y cerrar de inmediato.
+        // Lo que sigue (CXP, recarga) es secundario — un fallo ahí NUNCA debe
+        // decir "no se guardó" ni reabrir el modal invitando a duplicar la venta.
+        UI.toast('Guardado en la base de datos');
+        closeModal();
+
+        // =====================================================================
+        // BLOQUE 2 — sincronización de CXP (secundaria). La venta YA se guardó;
+        // un fallo aquí se reporta aparte y jamás como "no se guardó".
+        // =====================================================================
+        try {
+            if (wasEditing) {
+                // Sincronizar CXP vinculados con datos actualizados
+                var allPayables = await DS.getAll('payables') || [];
+                var linkedCXPs = allPayables.filter(function (p) {
+                    var pEid = String(p.eventId || '');
+                    return pEid === sid || (ssid && pEid === ssid);
+                });
+                for (var pi = 0; pi < linkedCXPs.length; pi++) {
+                    await DS.update('payables', linkedCXPs[pi].id, {
+                        eventName: data.eventName,
+                        clientName: data.clientName,
+                        eventDate: data.eventDate
+                    });
+                }
+            } else {
                 // Auto-generate CXP draft entries from service cost templates
                 const drafts = [];
                 (data.serviceIds || []).forEach(function (svcId) {
@@ -1079,7 +1109,7 @@ window.Mazelab.Modules.SalesModule = (function () {
                                     return 'ninguno';
                                 })(item.tipo_beneficiario),
                                 status: 'pendiente',
-                                eventId: saleId
+                                eventId: savedSaleId
                             });
                         });
                     }
@@ -1088,17 +1118,24 @@ window.Mazelab.Modules.SalesModule = (function () {
                     await DS.create('payables', draft);
                 }
             }
-            // Reload sales and payables (new sale may have auto-created CXP)
+        } catch (err) {
+            console.error('Error sincronizando CXP tras guardar venta:', err);
+            UI.toast('La venta se guardó, pero la sincronización de costos falló — revisa CXP', 'error');
+        }
+
+        // =====================================================================
+        // BLOQUE 3 — recarga de la vista. La venta YA se guardó; un fallo aquí
+        // NUNCA debe reportarse como "no se guardó".
+        // =====================================================================
+        try {
             const [freshSales, freshPayables] = await Promise.all([DS.getAll('sales'), DS.getAll('payables')]);
             sales = freshSales || [];
             payables = freshPayables || [];
             buildEventCostsMap();
             refreshTable();
-            UI.toast('Guardado en la base de datos');
-            closeModal();
         } catch (err) {
-            console.error('Error guardando venta:', err);
-            UI.toast('ERROR: no se guardó — ' + err.message, 'error');
+            console.error('Error recargando datos tras guardar venta:', err);
+            UI.toast('Guardado OK — la recarga falló, actualiza la página', 'error');
         }
     }
 

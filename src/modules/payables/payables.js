@@ -13,6 +13,7 @@ window.Mazelab.Modules.PayablesModule = (function () {
     let columnFilters = {}; // { colKey: 'filterText' }
     let editingId = null;
     let abonoTargetId = null;
+    let loadError = null; // mensaje de error si loadData() falló — refreshView() lo muestra en vez de una tabla vacía muda
 
     // Feedback visual (toast) — defensivo: los harnesses de Node cargan este módulo
     // con window mockeado y sin window.Mazelab.UI, así que no debe romper.
@@ -641,18 +642,27 @@ window.Mazelab.Modules.PayablesModule = (function () {
             payables      = results[0] || [];
             cachedSales   = results[1] || [];
             cachedClients = results[2] || [];
+            loadError = null;
         } catch (e) {
             console.warn('PayablesModule: Error loading data', e);
             payables = [];
             cachedSales = [];
             cachedClients = [];
+            loadError = (e && e.message) || 'Error desconocido';
         }
     }
 
     function refreshView() {
         var kpi = document.getElementById('payables-kpis');
-        if (kpi) kpi.innerHTML = renderKPIs();
         var content = document.getElementById('payables-content');
+        if (loadError) {
+            // Con la base caída no se muestra una tabla vacía muda (parece "no hay costos"
+            // cuando en realidad es "no se pudo leer") — mismo espíritu que finance.js.
+            if (kpi) kpi.innerHTML = '';
+            if (content) content.innerHTML = '<div class="empty-state"><p>Error al cargar datos — sin conexión con la base: ' + escapeHtml(loadError) + '</p></div>';
+            return;
+        }
+        if (kpi) kpi.innerHTML = renderKPIs();
         if (content) content.innerHTML = currentView === 'lista' ? renderListView()
             : renderGroupedView();
         bindTableActions();
@@ -989,7 +999,10 @@ window.Mazelab.Modules.PayablesModule = (function () {
             var fresh = payables.find(function (x) { return x.id === payableId; });
             if (fresh) refreshAbonoContent(fresh);
             refreshView();
-        } catch (err) { console.error('PayablesModule: deletePayment error', err); }
+        } catch (err) {
+            console.error('PayablesModule: deletePayment error', err);
+            UI.toast('ERROR: no se eliminó — ' + err.message, 'error');
+        }
     }
 
     async function handleAbonoSave(e) {
@@ -1070,7 +1083,10 @@ window.Mazelab.Modules.PayablesModule = (function () {
             await window.Mazelab.DataService.remove('payables', id);
             await loadData();
             refreshView();
-        } catch (err) { console.error('PayablesModule: Delete error', err); }
+        } catch (err) {
+            console.error('PayablesModule: Delete error', err);
+            UI.toast('ERROR: no se eliminó — ' + err.message, 'error');
+        }
     }
 
     // ── Bind table actions ─────────────────────────────────────────────

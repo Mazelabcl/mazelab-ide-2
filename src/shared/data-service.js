@@ -1,7 +1,11 @@
 window.Mazelab = window.Mazelab || {};
 
 (function () {
-    let useSupabase = false;
+    // Default true: el servidor es la única fuente de verdad. Antes el default era
+    // false, dejando una ventana en que un getAll() llamado ANTES de init() (o si
+    // init() nunca corre) caía en silencio a localStorage. El modo localdev es la
+    // ÚNICA vía para bajar esto a false, y lo hace explícitamente dentro de init().
+    let useSupabase = true;
     let initialized = false;
     let readOnly = false;      // true si la conexión inicial falló o un fetchAll lanzó en runtime
     let localDevMode = false;  // true solo con ?localdev=1 en la URL
@@ -168,6 +172,11 @@ window.Mazelab = window.Mazelab || {};
     }
 
     async function importMany(entityType, records) {
+        // La escritura de mayor radio (upsertMany en lotes de 100, potencialmente
+        // sobre miles de filas): debe respetar el modo solo lectura igual que
+        // create/update/remove — sin esto, una importación llegaba a la red
+        // mientras el banner decía "no se guardará".
+        assertWritable();
         invalidateCache(entityType);
         if (useSupabase) {
             const table = TABLE_MAP[entityType];

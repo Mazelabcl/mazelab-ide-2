@@ -313,8 +313,16 @@ window.Mazelab.Modules.PagosModule = (function () {
         sortCol     = 'payDate';
         sortDir     = 'desc';
 
-        await loadData();
-        refreshView();
+        try {
+            await loadData();
+            refreshView();
+        } catch (err) {
+            // Sin este catch, con la base caída loadData() lanza y la vista queda
+            // congelada en "Cargando..." para siempre (el placeholder de render()).
+            console.error('PagosModule: Error loading data', err);
+            var content = document.getElementById('pagos-content');
+            if (content) content.innerHTML = '<div class="empty-state"><p>Error al cargar datos: ' + err.message + '</p></div>';
+        }
     }
 
     return { render: render, init: init };
