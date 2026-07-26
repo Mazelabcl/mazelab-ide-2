@@ -659,7 +659,8 @@ window.Mazelab.Modules.DashboardModule = (function () {
         var svcStats = {};
         sales.forEach(function (s) {
             var ed = s.eventDate || s.event_date || '';
-            var y = ed ? new Date(ed).getFullYear() : 0;
+            var edLocal = parseLocalDate(ed);
+            var y = edLocal ? edLocal.getFullYear() : 0;
             if (y !== thisYear && y !== lastYear) return;
             var amt = Number(s.amount || s.monto_venta || 0);
             var jornadas = Math.max(Number(s.jornadas) || 1, 1);
@@ -707,7 +708,8 @@ window.Mazelab.Modules.DashboardModule = (function () {
         var salesById = {};
         sales.forEach(function (s) {
             var ed = s.eventDate || s.event_date || '';
-            var y = ed ? new Date(ed).getFullYear() : 0;
+            var edLocal = parseLocalDate(ed);
+            var y = edLocal ? edLocal.getFullYear() : 0;
             if (y !== thisYear) return;
             var exec = s.staffName || s.ejecutivo || s.vendedor || s.salesperson || s.createdBy || 'Sin asignar';
             if (!execData[exec]) execData[exec] = { name: exec, count: 0, total: 0, cobrado: 0 };
@@ -740,7 +742,8 @@ window.Mazelab.Modules.DashboardModule = (function () {
         });
         sales.forEach(function (s) {
             var ed = s.eventDate || s.event_date || '';
-            var y = ed ? new Date(ed).getFullYear() : 0;
+            var edLocal = parseLocalDate(ed);
+            var y = edLocal ? edLocal.getFullYear() : 0;
             if (y !== thisYear) return;
             var exec = s.staffName || s.ejecutivo || s.vendedor || s.salesperson || s.createdBy || 'Sin asignar';
             if (!execSales[exec]) execSales[exec] = [];
@@ -781,7 +784,8 @@ window.Mazelab.Modules.DashboardModule = (function () {
         var clientStats = {};
         sales.forEach(function (s) {
             var ed = s.eventDate || s.event_date || '';
-            var y = ed ? new Date(ed).getFullYear() : 0;
+            var edLocal = parseLocalDate(ed);
+            var y = edLocal ? edLocal.getFullYear() : 0;
             if (y !== thisYear && y !== lastYear) return;
             var name = s.clientName || s.client_name || 'Sin cliente';
             if (!clientStats[name]) clientStats[name] = { name: name, count: 0, total: 0 };
@@ -833,7 +837,8 @@ window.Mazelab.Modules.DashboardModule = (function () {
 
         sales.forEach(function (s) {
             var ed = s.eventDate || s.event_date || '';
-            var y = ed ? new Date(ed).getFullYear() : 0;
+            var edLocal = parseLocalDate(ed);
+            var y = edLocal ? edLocal.getFullYear() : 0;
             if (y !== thisYear) return;
             var pct = Number(s.comisionPct || 0);
             if (pct <= 0) return;
@@ -845,11 +850,12 @@ window.Mazelab.Modules.DashboardModule = (function () {
             var sid = String(s.id || '');
             var ssid = String(s.sourceId || '');
 
-            // Costo total del evento: solo payables vinculados por eventId (con guardas contra vacíos)
+            // Costo total del evento: payables vinculados por eventId (o saleId legado — misma
+            // convención que sales.js:buildEventCostsMap) con guardas contra vacíos.
             var costoTotal = 0;
             if (M) {
                 payables.forEach(function (p) {
-                    var peid = String(p.eventId || '');
+                    var peid = String(p.eventId || p.saleId || '');
                     if (!peid) return;
                     if (!((sid && peid === sid) || (ssid && peid === ssid))) return;
                     costoTotal += M.costoEmpresaItem(p.docType, p.amount, p.billingDate || p.eventDate);
