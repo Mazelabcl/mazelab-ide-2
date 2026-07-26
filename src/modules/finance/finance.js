@@ -1873,6 +1873,74 @@ window.Mazelab.Modules.FinanceModule = (function () {
         bindAbonoEvents();
     }
 
+    // Crea la CXC de la factura y reduce/cierra la fila residual sin_factura.
+    // rec: fila residual (puede ser null si la venta no tiene residual);
+    // sale: venta vinculada (puede ser null); datos: {invoicedAmount, invoiceNumber, billingMonth, paymentTerms, tipoDoc}
+    async function crearFacturaYCerrarResidual(rec, sale, datos) {
+        var DS = window.Mazelab.DataService;
+        var linkedSaleId = (rec && rec.saleId) || (sale && sale.id) || null;
+        var srcId = (rec && rec.sourceId) || (sale && sale.sourceId) || '';
+        var newRec = {
+            id:             window.Mazelab.Storage.generateId(),
+            eventName:      (rec && rec.eventName)  || (sale && sale.eventName)  || '',
+            eventDate:      (rec && rec.eventDate)  || (sale && sale.eventDate)  || '',
+            clientName:     (rec && rec.clientName) || (sale && sale.clientName) || '',
+            montoNeto:      datos.invoicedAmount,
+            invoicedAmount: datos.invoicedAmount,
+            monto_venta:    datos.invoicedAmount,
+            invoiceNumber:  datos.invoiceNumber,
+            billingMonth:   datos.billingMonth,
+            paymentTerms:   datos.paymentTerms,
+            tipoDoc:        datos.tipoDoc,
+            status:         'pendiente_pago',
+            saleId:         linkedSaleId,
+            sourceId:       srcId,
+            sourceType:     'factura',
+            payments:       []
+        };
+        if (rec) {
+            if (rec.avisos_factura && rec.avisos_factura.length) newRec.avisos_factura = rec.avisos_factura;
+            if (rec.notas_cobranza && rec.notas_cobranza.length) newRec.notas_cobranza = rec.notas_cobranza;
+            if (rec.cobros && rec.cobros.length) newRec.cobros = rec.cobros;
+        }
+        await DS.create('receivables', newRec);
+
+        if (rec) {
+            var netoTotal = getMonto(rec);
+            var netoRestante = netoTotal - datos.invoicedAmount;
+            if (netoRestante <= 0) {
+                await DS.remove('receivables', rec.id);
+            } else {
+                await DS.update('receivables', rec.id, {
+                    monto_venta:    netoRestante,
+                    montoNeto:      netoRestante,
+                    invoicedAmount: 0,   // la residual NO tiene factura — antes escribía netoRestante (bug)
+                    amount:         netoRestante,
+                    status:         'sin_factura'
+                });
+            }
+        }
+        return newRec;
+    }
+
+    // Busca la fila residual sin factura (pendiente de facturar) de una venta.
+    // Usa el mismo criterio de estado que muestra el botón "Facturar" en la tabla.
+    function findResidualSinFactura(sale, saleIdRaw) {
+        var sid  = String((sale && sale.id) || saleIdRaw || '');
+        var ssrc = String((sale && sale.sourceId) || '');
+        if (!sid && !ssrc) return null;
+        return allReceivables.find(function (r) {
+            if (r.tipoDoc === 'NC') return false;
+            var st = r._realStatus || getRealTimeStatus(r);
+            if (st !== 'pendiente_factura' && st !== 'post_evento_sin_factura') return false;
+            var rSale = String(r.saleId || '');
+            var rSrc  = String(r.sourceId || '');
+            if (rSale && (rSale === sid || (ssrc && rSale === ssrc))) return true;
+            if (rSrc && ssrc && rSrc === ssrc) return true;
+            return false;
+        }) || null;
+    }
+
     function openNuevaFacturaModal() {
         var modalContainer = document.getElementById('finance-modal-container');
         if (!modalContainer) return;
@@ -1997,21 +2065,22 @@ window.Mazelab.Modules.FinanceModule = (function () {
             var sale = (cachedSales || []).find(function (s) { return String(s.id) === saleId; });
 
             try {
-                await window.Mazelab.DataService.create('receivables', {
-                    id:             window.Mazelab.Storage.generateId(),
-                    eventName:      sale ? (sale.eventName  || '') : '',
-                    eventDate:      sale ? (sale.eventDate  || '') : '',
-                    clientName:     sale ? (sale.clientName || '') : '',
-                    montoNeto:      invoicedAmount,
+                // Misma semántica que el botón "Facturar": buscar la fila residual
+                // sin factura de la venta y reducirla/cerrarla al crear la factura.
+                var residual = findResidualSinFactura(sale, saleId);
+                if (residual) {
+                    var netoResidual = getMonto(residual);
+                    if (invoicedAmount > netoResidual) {
+                        var seguir = confirm('El monto facturado (' + formatCLP(invoicedAmount) + ') supera el neto pendiente de la fila sin factura (' + formatCLP(netoResidual) + ').\n\nLa fila pendiente se cerrará completa.\n\n¿Continuar?');
+                        if (!seguir) return;
+                    }
+                }
+                await crearFacturaYCerrarResidual(residual || null, sale || null, {
                     invoicedAmount: invoicedAmount,
-                    monto_venta:    invoicedAmount,
                     invoiceNumber:  invoiceNumber,
                     billingMonth:   billingMonth,
                     paymentTerms:   paymentTerms,
-                    tipoDoc:        tipoDoc,
-                    status:         'pendiente_pago',
-                    saleId:         saleId,
-                    payments:       []
+                    tipoDoc:        tipoDoc
                 });
                 closeModal();
                 await loadAndRender();
@@ -2140,48 +2209,18 @@ window.Mazelab.Modules.FinanceModule = (function () {
                     alert('El monto facturado (' + formatCLP(invoicedAmount) + ') no puede superar el neto pendiente (' + formatCLP(netoTotal) + ').');
                     return;
                 }
-                var netoRestante = netoTotal - invoicedAmount;
-
-                // 1. Crear una nueva CXC row para esta factura específica
-                var linkedSaleId = rec.saleId || (/^\d+$/.test(String(rec.id || '')) ? rec.id : null);
-                var newRec = {
-                    id:             window.Mazelab.Storage.generateId(),
-                    eventName:      rec.eventName  || '',
-                    eventDate:      rec.eventDate  || '',
-                    clientName:     rec.clientName || '',
-                    montoNeto:      invoicedAmount,
+                // Venta vinculada (completa saleId/sourceId si a la residual le faltan)
+                var sale = rec.saleId ? (cachedSales || []).find(function (s) {
+                    return String(s.id) === String(rec.saleId) || String(s.sourceId) === String(rec.saleId);
+                }) : null;
+                // Crea la CXC de la factura y reduce/cierra la residual (lógica compartida con "+ Nueva Factura")
+                await crearFacturaYCerrarResidual(rec, sale || null, {
                     invoicedAmount: invoicedAmount,
-                    monto_venta:    invoicedAmount,
                     invoiceNumber:  invoiceNumber,
                     billingMonth:   billingMonth,
                     paymentTerms:   paymentTerms,
-                    tipoDoc:        tipoDoc,
-                    status:         'pendiente_pago',
-                    saleId:         linkedSaleId,
-                    sourceId:       rec.sourceId || '',
-                    sourceType:     'factura',
-                    payments:       []
-                };
-                // Preserve history arrays only if they exist on the original record
-                if (rec.avisos_factura && rec.avisos_factura.length) newRec.avisos_factura = rec.avisos_factura;
-                if (rec.notas_cobranza && rec.notas_cobranza.length) newRec.notas_cobranza = rec.notas_cobranza;
-                if (rec.cobros && rec.cobros.length) newRec.cobros = rec.cobros;
-                await window.Mazelab.DataService.create('receivables', newRec);
-
-                // 2. Actualizar o eliminar la CXC residual (por facturar)
-                if (netoRestante <= 0) {
-                    // Completamente facturado: eliminar la fila residual
-                    await window.Mazelab.DataService.remove('receivables', rec.id);
-                } else {
-                    // Parcialmente facturado: reducir el monto restante en TODOS los campos de monto
-                    await window.Mazelab.DataService.update('receivables', rec.id, {
-                        monto_venta:    netoRestante,
-                        montoNeto:      netoRestante,
-                        invoicedAmount: netoRestante,
-                        amount:         netoRestante,
-                        status:         'sin_factura'
-                    });
-                }
+                    tipoDoc:        tipoDoc
+                });
 
                 closeModal();
                 await loadAndRender();
