@@ -1915,22 +1915,39 @@ window.Mazelab.Modules.FinanceModule = (function () {
         if (rec) {
             var netoTotal = getMonto(rec);
             var netoRestante = netoTotal - datos.invoicedAmount;
-            if (netoRestante <= 0) {
-                await DS.remove('receivables', rec.id);
-            } else {
-                await DS.update('receivables', rec.id, {
-                    monto_venta:    netoRestante,
-                    montoNeto:      netoRestante,
-                    invoicedAmount: 0,   // la residual NO tiene factura — antes escribía netoRestante (bug)
-                    amount:         netoRestante,
-                    status:         'sin_factura',
-                    // Semántica de MOVER, no copiar: el historial se traspasó a newRec arriba
-                    // (la factura es donde se gestiona/cobra). Si la residual lo conservara,
-                    // tras N facturaciones parciales el mismo aviso/cobro vive en N+1 filas.
-                    avisos_factura: [],
-                    notas_cobranza: [],
-                    cobros:         []
-                });
+            try {
+                if (netoRestante <= 0) {
+                    await DS.remove('receivables', rec.id);
+                } else {
+                    await DS.update('receivables', rec.id, {
+                        monto_venta:    netoRestante,
+                        montoNeto:      netoRestante,
+                        invoicedAmount: 0,   // la residual NO tiene factura — antes escribía netoRestante (bug)
+                        amount:         netoRestante,
+                        status:         'sin_factura',
+                        // Semántica de MOVER, no copiar: el historial se traspasó a newRec arriba
+                        // (la factura es donde se gestiona/cobra). Si la residual lo conservara,
+                        // tras N facturaciones parciales el mismo aviso/cobro vive en N+1 filas.
+                        avisos_factura: [],
+                        notas_cobranza: [],
+                        cobros:         []
+                    });
+                }
+            } catch (closeErr) {
+                // Mitigación de no-atomicidad (hallazgo I7): la factura ya se creó pero el
+                // cierre/reducción de la fila residual falló. Intentamos un delete compensatorio
+                // de la factura recién creada para no dejar el dato duplicado/huérfano.
+                var compensated = false;
+                try {
+                    await DS.remove('receivables', newRec.id);
+                    compensated = true;
+                } catch (compErr) {
+                    compensated = false;
+                }
+                if (compensated) {
+                    throw closeErr; // compensación OK → informar el error original
+                }
+                throw new Error('La factura se creó pero la fila pendiente no se pudo cerrar. NO reintentes crear la factura — revisa la lista y cierra la pendiente a mano.');
             }
         }
         return newRec;

@@ -3,6 +3,8 @@ window.Mazelab = window.Mazelab || {};
 (function () {
     let useSupabase = false;
     let initialized = false;
+    let readOnly = false;      // true si la conexión inicial falló o un fetchAll lanzó en runtime
+    let localDevMode = false;  // true solo con ?localdev=1 en la URL
 
     const TABLE_MAP = {
         services: 'servicios',
@@ -29,34 +31,51 @@ window.Mazelab = window.Mazelab || {};
         Object.keys(_cache).forEach(k => delete _cache[k]);
     }
 
+    // Modo solo lectura: se activa si la conexión inicial falla o si un fetchAll
+    // lanza en runtime (servidor caído a mitad de sesión). Bloquea create/update/remove
+    // ANTES de tocar red — nunca más fallback silencioso a localStorage. No hay
+    // auto-recuperación en caliente: si la conexión vuelve, basta con recargar la página.
+    function markReadOnly() {
+        if (readOnly) return;
+        readOnly = true;
+        var UI = (window.Mazelab && window.Mazelab.UI) || { showOfflineBanner: function () {} };
+        UI.showOfflineBanner();
+    }
+
     async function init() {
         if (initialized) return;
+        initialized = true;
+
+        // Escape de desarrollo explícito y NO silencioso: ?localdev=1 usa localStorage
+        // con un banner naranja permanente. Nunca se entra a este modo por defecto ni
+        // como fallback de un error — solo si el usuario lo pide en la URL.
         try {
-            const connected = await window.Mazelab.Supabase.testConnection();
-            if (connected) {
-                const salesData = await window.Mazelab.Supabase.fetchAll('ventas');
-                if (salesData && salesData.length > 0) {
-                    useSupabase = true;
-                    console.log('DataService: Using Supabase (' + salesData.length + ' sales found)');
-                } else {
-                    const localSales = window.Mazelab.Storage.SalesService.getAll();
-                    if (localSales.length > 0) {
-                        useSupabase = false;
-                        console.log('DataService: Supabase empty, using localStorage (' + localSales.length + ' local sales)');
-                    } else {
-                        useSupabase = true;
-                        console.log('DataService: Both empty, defaulting to Supabase for new data');
-                    }
-                }
-            } else {
+            var params = new URLSearchParams(window.location.search);
+            if (params.get('localdev') === '1') {
                 useSupabase = false;
-                console.log('DataService: No Supabase connection, using localStorage');
+                localDevMode = true;
+                var UILocal = (window.Mazelab && window.Mazelab.UI) || { showTestModeBanner: function () {} };
+                UILocal.showTestModeBanner();
+                console.warn('DataService: ?localdev=1 — modo prueba local, los datos viven SOLO en este navegador');
+                return;
             }
         } catch (e) {
-            useSupabase = false;
-            console.warn('DataService: Init error, using localStorage:', e);
+            // window.location no disponible (harness de Node) — seguir en modo servidor
         }
-        initialized = true;
+
+        // Fuera de localdev, el servidor es la única fuente de verdad — sin fallback
+        // silencioso a localStorage si está vacío o si falla.
+        useSupabase = true;
+        try {
+            const connected = await window.Mazelab.Supabase.testConnection();
+            if (!connected) {
+                console.error('DataService: sin conexión con la base de datos al iniciar');
+                markReadOnly();
+            }
+        } catch (e) {
+            console.error('DataService: error de conexión al iniciar:', e);
+            markReadOnly();
+        }
     }
 
     function getStorageService(entityType) {
@@ -83,10 +102,14 @@ window.Mazelab = window.Mazelab || {};
         let result;
         if (useSupabase) {
             const table = TABLE_MAP[entityType];
-            const data = await window.Mazelab.Supabase.fetchAll(table);
-            if (data && data.length > 0) result = data;
-        }
-        if (!result) {
+            try {
+                const data = await window.Mazelab.Supabase.fetchAll(table);
+                result = data; // un array vacío del servidor ES la verdad, no una señal de fallback
+            } catch (e) {
+                markReadOnly();
+                throw e; // sin fallback silencioso — el llamador debe ver el error
+            }
+        } else {
             const svc = getStorageService(entityType);
             result = svc ? svc.getAll() : [];
         }
@@ -104,7 +127,15 @@ window.Mazelab = window.Mazelab || {};
         return svc ? svc.getById(id) : null;
     }
 
+    // Estando en modo solo lectura, lanza ANTES de intentar cualquier red.
+    function assertWritable() {
+        if (readOnly) {
+            throw new Error('Sin conexión con la base de datos — modo solo lectura');
+        }
+    }
+
     async function create(entityType, record) {
+        assertWritable();
         invalidateCache(entityType);
         if (useSupabase) {
             const table = TABLE_MAP[entityType];
@@ -115,6 +146,7 @@ window.Mazelab = window.Mazelab || {};
     }
 
     async function update(entityType, id, updates) {
+        assertWritable();
         invalidateCache(entityType);
         if (useSupabase) {
             const table = TABLE_MAP[entityType];
@@ -125,6 +157,7 @@ window.Mazelab = window.Mazelab || {};
     }
 
     async function remove(entityType, id) {
+        assertWritable();
         invalidateCache(entityType);
         if (useSupabase) {
             const table = TABLE_MAP[entityType];
@@ -160,6 +193,13 @@ window.Mazelab = window.Mazelab || {};
         hasData,
         invalidateCache,
         invalidateAll,
-        isUsingSupabase: () => useSupabase
+        isUsingSupabase: () => useSupabase,
+        isLocalDev: () => localDevMode
     };
+    // readOnly expuesto como propiedad boolean viva (no snapshot) — se lee en
+    // cada acceso, así refleja el estado actual aunque cambie después del load.
+    Object.defineProperty(window.Mazelab.DataService, 'readOnly', {
+        get: function () { return readOnly; },
+        enumerable: true
+    });
 })();
