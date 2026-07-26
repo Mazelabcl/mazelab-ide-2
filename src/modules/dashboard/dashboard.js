@@ -1284,12 +1284,6 @@ window.Mazelab.Modules.DashboardModule = (function () {
         return null;
     }
 
-    function getBHRetentionRate(dateStr) {
-        if (!dateStr) return 0.1525;
-        var year = new Date(dateStr).getFullYear();
-        return year <= 2024 ? 0.145 : 0.1525;
-    }
-
     function buildIVACard(receivables, payables) {
         var now = new Date();
         var thisMonth = now.getFullYear() + '-' + String(now.getMonth() + 1).padStart(2, '0');
@@ -1316,10 +1310,11 @@ window.Mazelab.Modules.DashboardModule = (function () {
             var mk = toMonthKey(p.billingDate || p.eventDate);
             if (!mk || !data[mk]) return;
             if (dt === 'factura') {
-                data[mk].ivaCredito += (Number(p.amount) || 0) * 0.19;
+                // amount incluye IVA — el crédito es amount − amount/1.19, no amount × 0.19
+                data[mk].ivaCredito += window.Mazelab.Money.ivaCredito(Number(p.amount) || 0);
             } else if (dt === 'bh') {
-                var rate = getBHRetentionRate(p.billingDate || p.eventDate);
-                data[mk].retencionBH += (Number(p.amount) || 0) * rate;
+                // amount es líquido — retención = líquido × tasa/(1−tasa) según tabla SII
+                data[mk].retencionBH += window.Mazelab.Money.bhRetencion(Number(p.amount) || 0, p.billingDate || p.eventDate);
             }
         });
 
