@@ -175,7 +175,7 @@ window.Mazelab.Modules.SalesModule = (function () {
             const utilidad = (Number(sale.amount) || 0) - cost;
             const margenPct = (Number(sale.amount) || 0) > 0 ? utilidad / Number(sale.amount) : null;
             const marginClass = utilidad >= 0 ? 'text-success' : 'text-danger';
-            const displayId = sale.sourceId || '';
+            const displayId = sale.sourceId || sale.id || '';
             return `
                 <tr data-id="${sale.id}">
                     <td style="font-size:12px;font-weight:600;white-space:nowrap">${displayId}</td>
@@ -639,6 +639,14 @@ window.Mazelab.Modules.SalesModule = (function () {
 
         if (!overlay || !form) return;
 
+        // Mostrar el modal y reconstruir dropdowns ANTES de poblar valores:
+        // populateDropdowns() reescribe el select de vendedor y los checkboxes
+        // de servicios, así que poblarlos antes dejaría la selección borrada
+        // al guardar (getFormData leería checkboxes recién creados sin checked).
+        // El datalist de clientes necesita el modal visible: overlay primero.
+        overlay.classList.add('active');
+        populateDropdowns();
+
         if (sale) {
             editingId = sale.id;
             title.textContent = 'Editar Venta';
@@ -748,11 +756,6 @@ window.Mazelab.Modules.SalesModule = (function () {
             if (traspasoFieldsDiv) traspasoFieldsDiv.style.display = 'none';
             if (traspasoArrow) traspasoArrow.style.transform = '';
         }
-
-        overlay.classList.add('active');
-
-        // Populate dropdowns AFTER modal is visible (datalist needs visible parent)
-        populateDropdowns();
 
         // Service search filter
         var svcSearch = document.getElementById('sale-svc-search');
@@ -878,6 +881,18 @@ window.Mazelab.Modules.SalesModule = (function () {
                     return rSaleId === sid || rEventId === sid || rSourceId === sid ||
                            (ssid && (rSaleId === ssid || rEventId === ssid || rSourceId === ssid));
                 });
+                // Último recurso: si ningún ID calza, buscar por identidad de evento
+                // (evita crear una CXC fantasma cuando los IDs no coinciden, p. ej.
+                // ventas importadas con sourceId vacío)
+                if (linkedCXCs.length === 0) {
+                    var fuzzy = allReceivables.filter(function (r) {
+                        return r.tipoDoc !== 'NC' &&
+                               (r.eventName || '') === (data.eventName || '') &&
+                               (r.clientName || '') === (data.clientName || '') &&
+                               (r.eventDate || '') === (data.eventDate || '');
+                    });
+                    if (fuzzy.length > 0) linkedCXCs = fuzzy;
+                }
                 // If no CXC exists, create one (fixes orphaned sales)
                 if (linkedCXCs.length === 0 && data.amount > 0) {
                     await DS.create('receivables', {
@@ -894,12 +909,23 @@ window.Mazelab.Modules.SalesModule = (function () {
                         sourceType: 'auto'
                     });
                 }
+                // Clasificación FACTURA vs RESIDUAL (I4): una factura sin número NO es
+                // residual — no se le pueden sobrescribir los montos.
+                // FACTURA: sourceType 'factura', o invoicedAmount > 0, o invoiceNumber no vacío.
+                // RESIDUAL: status que declara sin factura, o ninguna señal de factura.
+                // (El status declarado gana: las residuales legacy con el bug de
+                // invoicedAmount = netoRestante siguen sincronizándose como residuales.)
+                var isFacturaCXC = function (r) {
+                    if (r.status === 'sin_factura' || r.status === 'pendiente_factura') return false;
+                    return r.sourceType === 'factura' ||
+                           Number(r.invoicedAmount) > 0 ||
+                           !!(r.invoiceNumber && String(r.invoiceNumber).trim() !== '');
+                };
                 // Separate invoiced CXCs from sinFactura (residual)
                 var totalAlreadyInvoiced = 0;
                 for (var ri = 0; ri < linkedCXCs.length; ri++) {
                     var cxcRec = linkedCXCs[ri];
-                    var hasInvoice = cxcRec.invoiceNumber && cxcRec.invoiceNumber !== '';
-                    if (hasInvoice) {
+                    if (isFacturaCXC(cxcRec)) {
                         // Already invoiced: only update event metadata, NOT amounts
                         totalAlreadyInvoiced += Number(cxcRec.montoNeto || cxcRec.invoicedAmount || cxcRec.monto_venta || 0);
                         await DS.update('receivables', cxcRec.id, {
@@ -914,8 +940,7 @@ window.Mazelab.Modules.SalesModule = (function () {
                 var residualAmount = Math.max(0, newSaleAmount - totalAlreadyInvoiced);
                 for (var ri2 = 0; ri2 < linkedCXCs.length; ri2++) {
                     var cxcRec2 = linkedCXCs[ri2];
-                    var hasInvoice2 = cxcRec2.invoiceNumber && cxcRec2.invoiceNumber !== '';
-                    if (!hasInvoice2) {
+                    if (!isFacturaCXC(cxcRec2)) {
                         await DS.update('receivables', cxcRec2.id, {
                             eventName: data.eventName,
                             eventDate: data.eventDate,
