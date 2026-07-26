@@ -12,6 +12,14 @@ window.Mazelab.Modules.SalesModule = (function () {
     let eventCosts = {}; // { [saleId|eventId]: totalAmount }
     let columnFilters = {}; // { colKey: 'filterText' }
 
+    // Feedback visual (toast) — defensivo: los harnesses de Node cargan este módulo
+    // con window mockeado y sin window.Mazelab.UI, así que no debe romper.
+    var UI = (window.Mazelab && window.Mazelab.UI) || {
+        toast: function () {},
+        showOfflineBanner: function () {},
+        showTestModeBanner: function () {}
+    };
+
     function formatCLP(amount) {
         if (amount == null || isNaN(amount)) return '$0';
         return '$' + Number(amount).toFixed(0).replace(/\B(?=(\d{3})+(?!\d))/g, '.');
@@ -1086,10 +1094,11 @@ window.Mazelab.Modules.SalesModule = (function () {
             payables = freshPayables || [];
             buildEventCostsMap();
             refreshTable();
+            UI.toast('Guardado en la base de datos');
             closeModal();
         } catch (err) {
             console.error('Error guardando venta:', err);
-            alert('Error al guardar la venta.');
+            UI.toast('ERROR: no se guardó — ' + err.message, 'error');
         }
     }
 

@@ -14,6 +14,14 @@ window.Mazelab.Modules.FinanceModule = (function () {
     let currentView = 'lista'; // 'lista' | 'agrupada'
     let columnFilters = {}; // { colKey: 'filterText' }
 
+    // Feedback visual (toast) — defensivo: los harnesses de Node cargan este módulo
+    // con window mockeado y sin window.Mazelab.UI, así que no debe romper.
+    var UI = (window.Mazelab && window.Mazelab.UI) || {
+        toast: function () {},
+        showOfflineBanner: function () {},
+        showTestModeBanner: function () {}
+    };
+
     // =========================================================================
     // HELPER FUNCTIONS
     // =========================================================================
@@ -1866,11 +1874,12 @@ window.Mazelab.Modules.FinanceModule = (function () {
                         var payments = Array.isArray(rec.payments) ? rec.payments.slice() : [];
                         payments.push({ id: Date.now().toString(), amount: amount, date: date || new Date().toISOString().split('T')[0] });
                         await window.Mazelab.DataService.update('receivables', rec.id, { payments: payments });
+                        UI.toast('Guardado en la base de datos');
                         closeModal();
                         await loadAndRender();
                     } catch (err) {
                         console.error('Error saving abono:', err);
-                        alert('Error al guardar abono: ' + err.message);
+                        UI.toast('ERROR: no se guardó — ' + err.message, 'error');
                     }
                 });
             }
@@ -2113,9 +2122,10 @@ window.Mazelab.Modules.FinanceModule = (function () {
                     paymentTerms:   paymentTerms,
                     tipoDoc:        tipoDoc
                 });
+                UI.toast('Guardado en la base de datos');
                 closeModal();
                 await loadAndRender();
-            } catch (err) { alert('Error al guardar: ' + err.message); }
+            } catch (err) { UI.toast('ERROR: no se guardó — ' + err.message, 'error'); }
         });
     }
 
@@ -2257,9 +2267,10 @@ window.Mazelab.Modules.FinanceModule = (function () {
                     tipoDoc:        tipoDoc
                 });
 
+                UI.toast('Guardado en la base de datos');
                 closeModal();
                 await loadAndRender();
-            } catch (err) { alert('Error: ' + err.message); }
+            } catch (err) { UI.toast('ERROR: no se guardó — ' + err.message, 'error'); }
         });
     }
 
@@ -2406,10 +2417,11 @@ window.Mazelab.Modules.FinanceModule = (function () {
                 await window.Mazelab.DataService.update('receivables', rec.id, { status: 'pagada' });
             }
 
+            UI.toast('Guardado en la base de datos');
             await loadAndRender();
         } catch (err) {
             console.error('Error marking as paid:', err);
-            alert('Error al marcar como pagado: ' + err.message);
+            UI.toast('ERROR: no se guardó — ' + err.message, 'error');
         }
     }
 
@@ -2488,10 +2500,11 @@ window.Mazelab.Modules.FinanceModule = (function () {
                     }
                 }
 
+                UI.toast('Guardado en la base de datos');
                 closeModal();
                 await loadAndRender();
             } catch (err) {
-                alert('Error al registrar NC: ' + err.message);
+                UI.toast('ERROR: no se guardó — ' + err.message, 'error');
             }
         });
     }

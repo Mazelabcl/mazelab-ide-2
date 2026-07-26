@@ -14,6 +14,14 @@ window.Mazelab.Modules.PayablesModule = (function () {
     let editingId = null;
     let abonoTargetId = null;
 
+    // Feedback visual (toast) — defensivo: los harnesses de Node cargan este módulo
+    // con window mockeado y sin window.Mazelab.UI, así que no debe romper.
+    var UI = (window.Mazelab && window.Mazelab.UI) || {
+        toast: function () {},
+        showOfflineBanner: function () {},
+        showTestModeBanner: function () {}
+    };
+
     // ── Helpers ────────────────────────────────────────────────────────
 
     function formatCLP(n) {
@@ -1046,10 +1054,14 @@ window.Mazelab.Modules.PayablesModule = (function () {
                 record.payments = [];
                 await window.Mazelab.DataService.create('payables', record);
             }
+            UI.toast('Guardado en la base de datos');
             closeEditModal();
             await loadData();
             refreshView();
-        } catch (err) { console.error('PayablesModule: Save error', err); alert('Error al guardar el costo.'); }
+        } catch (err) {
+            console.error('PayablesModule: Save error', err);
+            UI.toast('ERROR: no se guardó — ' + err.message, 'error');
+        }
     }
 
     async function deletePayable(id) {
