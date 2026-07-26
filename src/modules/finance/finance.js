@@ -745,8 +745,9 @@ window.Mazelab.Modules.FinanceModule = (function () {
                     var cobrarLabel = cobrosArr.length > 0 ? (cobrosArr.length + 1) + '\u00b0 Cobro' : 'Cobrar';
                     html += '<button class="btn-sm btn-icon btn-cobrar" data-id="' + r.id + '" title="Enviar cobro" style="background:linear-gradient(135deg,#e67e22,#f39c12);color:white;border:none;margin-right:4px">' + cobrarLabel + '</button>';
                 }
-                // NC available for any invoiced record (including paid)
-                if (getMontoFacturado(r) > 0 && realStatus !== 'nc' && realStatus !== 'anulada') {
+                // NC available for any invoiced record (including paid) — requiere N° de factura
+                // (hallazgo O2: una NC siempre está asociada a una factura específica).
+                if (getMontoFacturado(r) > 0 && r.invoiceNumber && realStatus !== 'nc' && realStatus !== 'anulada') {
                     html += '<button class="btn-sm btn-icon btn-nc" data-id="' + r.id + '" title="Registrar Nota de Cr\u00e9dito" style="color:var(--text-secondary);margin-right:4px">NC</button>';
                 }
                 // Mail facturacion button — only for invoiced records
@@ -1915,7 +1916,9 @@ window.Mazelab.Modules.FinanceModule = (function () {
             payments:       []
         };
         if (rec) {
-            if (rec.avisos_factura && rec.avisos_factura.length) newRec.avisos_factura = rec.avisos_factura;
+            // avisos_factura NO se copia: es el historial de "solicitar OC/datos para poder
+            // facturar" y pertenece a la fila residual que sigue pendiente (hallazgo O1).
+            // notas_cobranza y cobros sí son gestión de cobranza y se mueven a la factura.
             if (rec.notas_cobranza && rec.notas_cobranza.length) newRec.notas_cobranza = rec.notas_cobranza;
             if (rec.cobros && rec.cobros.length) newRec.cobros = rec.cobros;
         }
@@ -1934,10 +1937,13 @@ window.Mazelab.Modules.FinanceModule = (function () {
                         invoicedAmount: 0,   // la residual NO tiene factura — antes escribía netoRestante (bug)
                         amount:         netoRestante,
                         status:         'sin_factura',
-                        // Semántica de MOVER, no copiar: el historial se traspasó a newRec arriba
-                        // (la factura es donde se gestiona/cobra). Si la residual lo conservara,
-                        // tras N facturaciones parciales el mismo aviso/cobro vive en N+1 filas.
-                        avisos_factura: [],
+                        // Semántica de MOVER (no copiar) para cobros/notas_cobranza: ese historial
+                        // se traspasó a newRec arriba (la factura es donde se gestiona/cobra). Si la
+                        // residual lo conservara, tras N facturaciones parciales el mismo cobro/nota
+                        // viviría en N+1 filas.
+                        // avisos_factura NO se vacía: pertenece a la residual, que sigue pendiente
+                        // de facturar (hallazgo O1) — no se movió a newRec, así que no corresponde
+                        // borrarlo aquí.
                         notas_cobranza: [],
                         cobros:         []
                     });
@@ -2432,6 +2438,13 @@ window.Mazelab.Modules.FinanceModule = (function () {
     function openNCModal(id) {
         var rec = allReceivables.find(function (r) { return r.id === id; });
         if (!rec) return;
+        // Regla de negocio (hallazgo O2): una NC siempre está asociada a una factura específica.
+        // Sin N° de factura, ncAsociada nacería vacía y el fallback legado por sourceId la
+        // descontaría en TODAS las facturas del evento.
+        if (!rec.invoiceNumber) {
+            alert('Para emitir una Nota de Crédito la factura debe tener N° de factura. Edita la factura y asigna el número primero.');
+            return;
+        }
         var modalContainer = document.getElementById('finance-modal-container');
         if (!modalContainer) return;
 
