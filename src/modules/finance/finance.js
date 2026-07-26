@@ -380,6 +380,11 @@ window.Mazelab.Modules.FinanceModule = (function () {
             }
 
             // facturadoPendientes
+            // Nota: NO se filtra por r.ncAsociada aquí — ese campo vive en la fila de la NC
+            // (apunta al invoiceNumber que descuenta), no en la factura misma. Filtrarlo
+            // ocultaba facturas import CSV con esa columna poblada por error de mapeo.
+            // El descuento de NC ya lo maneja _ncOffset vía getPendienteFacturado: una
+            // factura 100% cubierta por su NC queda en $0 (pendiente <= 0) y no entra aquí.
             if (
                 realStatus !== 'pendiente_factura' &&
                 realStatus !== 'post_evento_sin_factura' &&
@@ -387,7 +392,6 @@ window.Mazelab.Modules.FinanceModule = (function () {
                 realStatus !== 'pagada' &&
                 realStatus !== 'nc' &&
                 r.tipoDoc !== 'NC' &&
-                (!r.ncAsociada || r.ncAsociada === '') &&
                 getMontoFacturado(r) > 0
             ) {
                 // Separación de libros: la fila facturada descuenta solo NC (nunca la incidencia/refund)
@@ -910,7 +914,12 @@ window.Mazelab.Modules.FinanceModule = (function () {
                     case 'neto':     av = getMonto(a); bv = getMonto(b); break;
                     case 'totalIva': av = getMontoFacturado(a) * 1.19; bv = getMontoFacturado(b) * 1.19; break;
                     case 'pagado':   av = getTotalPagado(a); bv = getTotalPagado(b); break;
-                    case 'pending':  av = getPendienteFacturado(a); bv = getPendienteFacturado(b); break;
+                    case 'pending':
+                        // Mismo número que muestra la celda "Restante" (getRestanteCell) — antes
+                        // ordenaba por getPendienteFacturado, que vale 0 en filas sin factura.
+                        av = getRestanteCell(a, a._realStatus || getRealTimeStatus(a)).restante;
+                        bv = getRestanteCell(b, b._realStatus || getRealTimeStatus(b)).restante;
+                        break;
                     default:         av = a[sortCol] || ''; bv = b[sortCol] || '';
                 }
                 var an = Number(av), bn = Number(bv);
@@ -1202,14 +1211,15 @@ window.Mazelab.Modules.FinanceModule = (function () {
                 if (items.length === 0) { alert('No hay documentos en esta categor\u00eda.'); return; }
                 var modalContainer = document.getElementById('finance-modal-container');
                 if (!modalContainer) return;
-                var totalMonto = 0;
+                var totalPendiente = 0;
                 var rows = items.map(function (r) {
                     var monto = getMonto(r);
                     var montoIVA = Math.round(monto * 1.19);
-                    totalMonto += montoIVA;
                     var pagado = getTotalPagado(r);
                     // Mismo número que los KPIs y la tabla (solo NC descuenta en facturadas)
-                    var pendiente = getPendienteFacturado(r);
+                    var realStatus = r._realStatus || getRealTimeStatus(r);
+                    var pendiente = getRestanteCell(r, realStatus).restante;
+                    totalPendiente += pendiente;
                     var overdue = r._daysOverdue || 0;
                     var baseDate = getVencimientoBaseDate(r);
                     var baseDateStr = baseDate ? baseDate.toLocaleDateString('es-CL', { day: '2-digit', month: 'short', year: '2-digit' }) : '-';
@@ -1229,7 +1239,7 @@ window.Mazelab.Modules.FinanceModule = (function () {
                 }).join('');
                 var html = '<div class="modal-overlay active" id="kpi-status-overlay">' +
                     '<div class="modal" style="max-width:1000px;width:95%">' +
-                    '<div class="modal-header"><h3>' + cfg.label + ' (' + items.length + ') \u2014 ' + formatCLP(totalMonto) + '</h3><button class="modal-close" id="kpi-status-close">&times;</button></div>' +
+                    '<div class="modal-header"><h3>' + cfg.label + ' (' + items.length + ') \u2014 ' + formatCLP(totalPendiente) + '</h3><button class="modal-close" id="kpi-status-close">&times;</button></div>' +
                     '<div style="overflow-x:auto;"><table class="data-table"><thead><tr>' +
                         '<th>ID</th><th>Cliente</th><th>Evento</th><th>Documento</th><th class="text-right">Monto</th><th class="text-right">Pagado</th><th class="text-right">Pendiente</th><th class="text-center">Fecha Base</th><th class="text-center">Plazo</th><th class="text-center">Atraso</th>' +
                     '</tr></thead><tbody>' + rows + '</tbody></table></div>' +
@@ -1913,7 +1923,13 @@ window.Mazelab.Modules.FinanceModule = (function () {
                     montoNeto:      netoRestante,
                     invoicedAmount: 0,   // la residual NO tiene factura — antes escribía netoRestante (bug)
                     amount:         netoRestante,
-                    status:         'sin_factura'
+                    status:         'sin_factura',
+                    // Semántica de MOVER, no copiar: el historial se traspasó a newRec arriba
+                    // (la factura es donde se gestiona/cobra). Si la residual lo conservara,
+                    // tras N facturaciones parciales el mismo aviso/cobro vive en N+1 filas.
+                    avisos_factura: [],
+                    notas_cobranza: [],
+                    cobros:         []
                 });
             }
         }
