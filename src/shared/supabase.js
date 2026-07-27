@@ -16,15 +16,15 @@ window.Mazelab = window.Mazelab || {};
     }
 
     async function fetchAll(table) {
-        try {
-            const res = await fetch(BASE + '/' + table);
-            if (!res.ok) { console.error('DB fetch ' + table + ':', res.status); return []; }
-            const data = await res.json();
-            return Array.isArray(data) ? data : (data.rows || data.data || []);
-        } catch (e) {
-            console.error('DB fetch ' + table + ':', e);
-            return [];
+        // Lanza en error de red o de servidor — un array vacío devuelto aquí antes se
+        // trataba como "sin datos legítimo" y disparaba fallback silencioso a localStorage.
+        const res = await fetch(BASE + '/' + table);
+        if (!res.ok) {
+            const errText = await res.text().catch(function () { return String(res.status); });
+            throw new Error('Error al leer ' + table + ' (HTTP ' + res.status + '): ' + errText);
         }
+        const data = await res.json();
+        return Array.isArray(data) ? data : (data.rows || data.data || []);
     }
 
     async function insert(table, record) {
@@ -41,29 +41,28 @@ window.Mazelab = window.Mazelab || {};
     }
 
     async function update(table, id, updates) {
-        try {
-            const res = await fetch(BASE + '/' + table + '/' + id, {
-                method: 'PATCH',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify(updates)
-            });
-            if (!res.ok) { console.error('DB update ' + table + ':', res.status); return null; }
-            return await res.json();
-        } catch (e) {
-            console.error('DB update ' + table + ':', e);
-            return null;
+        // Mismo patrón que insert(): lanza en vez de devolver null — un null se
+        // interpretaba en llamadores como "no pasó nada" en vez de un error real.
+        const res = await fetch(BASE + '/' + table + '/' + id, {
+            method: 'PATCH',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(updates)
+        });
+        if (!res.ok) {
+            const errText = await res.text().catch(function () { return String(res.status); });
+            throw new Error('Error al actualizar en ' + table + ' (HTTP ' + res.status + '): ' + errText);
         }
+        return await res.json();
     }
 
     async function remove(table, id) {
-        try {
-            const res = await fetch(BASE + '/' + table + '/' + id, { method: 'DELETE' });
-            if (!res.ok) { console.error('DB delete ' + table + ':', res.status); return false; }
-            return true;
-        } catch (e) {
-            console.error('DB delete ' + table + ':', e);
-            return false;
+        // Mismo patrón que insert(): lanza en vez de devolver false.
+        const res = await fetch(BASE + '/' + table + '/' + id, { method: 'DELETE' });
+        if (!res.ok) {
+            const errText = await res.text().catch(function () { return String(res.status); });
+            throw new Error('Error al eliminar en ' + table + ' (HTTP ' + res.status + '): ' + errText);
         }
+        return true;
     }
 
     async function upsertMany(table, records) {

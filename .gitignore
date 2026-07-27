@@ -14,3 +14,12 @@ Thumbs.db
 .vscode/
 *.suo
 *.user
+
+# Dependencias y archivos personales sueltos
+node_modules/
+branding/
+*.xlsx
+*.pdf
+diff.txt
+test.txt
+*.png

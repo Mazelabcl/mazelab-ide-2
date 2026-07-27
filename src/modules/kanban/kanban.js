@@ -1001,6 +1001,29 @@ window.Mazelab.Modules.KanbanModule = (function () {
                 (di.label ? '<span style="font-size:11px;font-weight:600;color:' + di.color + '">\u23f1 ' + di.label + '</span>' : '') +
             '</div>' +
             '<div class="kanban-card-client">' + (sale.clientName || '-') + '</div>' +
+            (function () {
+                var tr = sale.traspaso || {};
+                var cName = tr.contactoNombre || '';
+                var cTel = (tr.contactoTel || '').replace(/\s+/g, '');
+                if (!cName && !cTel) return '';
+                // Format phone: ensure +56 prefix for display, clean for wa.me
+                var displayTel = cTel;
+                if (cTel && !cTel.startsWith('+')) displayTel = '+' + cTel;
+                var waTel = cTel.replace(/^\+/, ''); // wa.me needs no + prefix
+                var contactLine = '<div style="font-size:11px;color:var(--text-secondary);margin:2px 0;display:flex;gap:6px;align-items:center;flex-wrap:wrap;">';
+                if (cName) contactLine += '<span>' + cName + '</span>';
+                if (cTel) {
+                    contactLine += '<span style="display:inline-flex;gap:4px;align-items:center;">';
+                    contactLine += '<span style="color:var(--text-muted);">' + displayTel + '</span>';
+                    // WhatsApp button
+                    contactLine += '<a href="https://wa.me/' + waTel + '" target="_blank" rel="noopener" onclick="event.stopPropagation()" title="WhatsApp" style="display:inline-flex;align-items:center;justify-content:center;width:20px;height:20px;border-radius:50%;background:#25D366;color:#fff;font-size:11px;text-decoration:none;flex-shrink:0;">W</a>';
+                    // Call button
+                    contactLine += '<a href="tel:' + displayTel + '" onclick="event.stopPropagation()" title="Llamar" style="display:inline-flex;align-items:center;justify-content:center;width:20px;height:20px;border-radius:50%;background:rgba(139,92,246,0.3);color:var(--accent);font-size:11px;text-decoration:none;flex-shrink:0;">&#9742;</a>';
+                    contactLine += '</span>';
+                }
+                contactLine += '</div>';
+                return contactLine;
+            })() +
             '<div class="kanban-card-title">' + (sale.eventName || '-') + '</div>' +
             '<div class="kanban-card-date" style="font-size:12px;color:var(--text-muted);margin-bottom:4px">' + formatDate(sale.eventDate) + '</div>' +
             svcTags +

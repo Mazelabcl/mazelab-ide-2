@@ -40,6 +40,10 @@
                         <span class="nav-icon">&#9679;</span>
                         <span>CXP</span>
                     </div>
+                    <div class="nav-item" data-route="cxc-kanban">
+                        <span class="nav-icon">&#128203;</span>
+                        <span>Cobranza</span>
+                    </div>
                     <div class="nav-item" data-route="nominas">
                         <span class="nav-icon">&#128179;</span>
                         <span>N&oacute;minas</span>
@@ -97,6 +101,7 @@
 
     <div id="modal-container"></div>
 
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.7/dist/chart.umd.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
@@ -104,9 +109,14 @@
     <script src="src/shared/auth.js"></script>
     <script src="src/shared/auth-ui.js"></script>
     <script src="src/shared/storage.js"></script>
+    <script src="src/shared/money.js"></script>
+    <script src="src/shared/ui-feedback.js"></script>
     <script src="src/shared/ai-service.js"></script>
     <script src="src/shared/data-service.js"></script>
     <script src="src/shared/autocomplete.js"></script>
+    <script src="src/shared/chatbot.js"></script>
+    <script src="src/shared/alerts-service.js"></script>
+    <script src="src/shared/alerts-panel.js"></script>
     <script src="src/modules/finance/finance.js"></script>
     <script src="src/modules/dashboard/dashboard.js"></script>
     <script src="src/modules/sales/sales.js"></script>
@@ -121,7 +131,7 @@
     <script src="src/modules/nominas/nominas.js"></script>
     <script src="src/modules/pagos/pagos.js"></script>
     <script src="src/modules/cotizador/cotizador.js"></script>
-    <script src="src/shared/demo-data.js"></script>
+    <script src="src/modules/cxc-kanban/cxc-kanban.js"></script>
     <script src="src/app.js"></script>
 </body>
 </html>

@@ -14,6 +14,14 @@ window.Mazelab.Modules.FinanceModule = (function () {
     let currentView = 'lista'; // 'lista' | 'agrupada'
     let columnFilters = {}; // { colKey: 'filterText' }
 
+    // Feedback visual (toast) — defensivo: los harnesses de Node cargan este módulo
+    // con window mockeado y sin window.Mazelab.UI, así que no debe romper.
+    var UI = (window.Mazelab && window.Mazelab.UI) || {
+        toast: function () {},
+        showOfflineBanner: function () {},
+        showTestModeBanner: function () {}
+    };
+
     // =========================================================================
     // HELPER FUNCTIONS
     // =========================================================================
@@ -41,16 +49,26 @@ window.Mazelab.Modules.FinanceModule = (function () {
         return r.payments.reduce(function (sum, p) { return sum + (Number(p.amount) || 0); }, 0);
     }
 
-    function getPendienteItem(r) {
-        var pagado = getTotalPagado(r);
-        if (r.tipoDoc === 'E') return getMonto(r) - pagado;
-        return (getMontoFacturado(r) * 1.19) - pagado;
+    function getPendienteFacturado(r) {
+        // Solo la NC descuenta en filas facturadas (la incidencia vive en la venta / fila sin factura)
+        return window.Mazelab.Money.pendienteFacturadoRow({
+            tipoDoc: r.tipoDoc,
+            facturadoNeto: getMontoFacturado(r),
+            ncNeto: r._ncOffset || 0,
+            pagado: getTotalPagado(r)
+        });
     }
 
-    function getPendienteFacturado(r) {
+    // Pendiente neto de una fila SIN factura: neto − incidencia − pagado (separación de libros).
+    // El pagado se lleva a neto porque los abonos se registran con IVA en filas F.
+    function getPendienteSinFacturaNeto(r) {
         var pagado = getTotalPagado(r);
-        if (r.tipoDoc === 'E') return getMontoFacturado(r) - pagado;
-        return (getMontoFacturado(r) * 1.19) - pagado;
+        var pagadoNeto = r.tipoDoc === 'E' ? pagado : Math.round(pagado / 1.19);
+        return window.Mazelab.Money.pendienteSinFacturaRow({
+            neto: getMonto(r),
+            refundNeto: Number(r._refundAmount) || 0,
+            pagado: pagadoNeto
+        });
     }
 
     function isIvaPaid(mesEmision) {
@@ -74,24 +92,45 @@ window.Mazelab.Modules.FinanceModule = (function () {
         } else {
             return false;
         }
-        // IVA paid on 20th of next month
-        var ivaMonth = month + 1;
-        var ivaYear = year;
-        if (ivaMonth > 12) { ivaMonth = 1; ivaYear++; }
-        var ivaDate = new Date(ivaYear, ivaMonth - 1, 20);
-        return new Date() > ivaDate;
+        if (!year || !month || isNaN(year) || isNaN(month)) return false;
+        // Guard de rango razonable: formatos no soportados (ej. "26-07-2026" legado)
+        // producen year=26 → jamás tratarlos como declarados
+        if (year < 2000 || year > 2100 || month < 1 || month > 12) return false;
+        // Regla del día 20: el IVA se paga el 20 del mes siguiente y es del negocio recién DESDE el 21
+        return window.Mazelab.Money.ivaDeclarado(year, month, new Date());
     }
 
     function getPendienteMio(r) {
-        var pagado = getTotalPagado(r);
-        var neto = getMonto(r);
-        if (r.tipoDoc === 'E') return Math.max(0, neto - pagado);
-        if (r.tipoDoc === 'NC') return 0;
-        var facturado = getMontoFacturado(r);
-        if (!r.invoiceNumber && facturado <= 0) return Math.max(0, neto - pagado);
-        if (isIvaPaid(r.billingMonth)) return Math.max(0, (facturado * 1.19) - pagado);
-        // IVA aún no declarado: el pago recibido incluye IVA, extraer solo la parte neta
-        return Math.max(0, neto - Math.round(pagado / 1.19));
+        return window.Mazelab.Money.mioRow({
+            tipoDoc: r.tipoDoc,
+            tieneFactura: !!(r.invoiceNumber || getMontoFacturado(r) > 0),
+            neto: getMonto(r),
+            facturadoNeto: getMontoFacturado(r),
+            ncNeto: r._ncOffset || 0,
+            refundNeto: r._refundAmount || 0,
+            pagado: getTotalPagado(r),
+            ivaDeclarado: isIvaPaid(r.billingMonth)
+        });
+    }
+
+    // Celda "Restante" de la tabla — MISMOS números que los KPIs (separación de libros):
+    // filas facturadas descuentan solo NC → nota "(NC: -X)";
+    // filas sin factura descuentan solo incidencia → nota "(Dev: -X)".
+    function getRestanteCell(r, realStatus) {
+        if (r.tipoDoc === 'NC' || realStatus === 'nc') return { restante: 0, note: '' };
+        var esSinFactura = realStatus === 'pendiente_factura' || realStatus === 'post_evento_sin_factura';
+        if (esSinFactura) {
+            var refund = Number(r._refundAmount) || 0;
+            var restNeto = getPendienteSinFacturaNeto(r);
+            var restante = r.tipoDoc === 'E' ? restNeto : Math.round(restNeto * 1.19);
+            var refundIva = r.tipoDoc === 'E' ? refund : Math.round(refund * 1.19);
+            var note = refund > 0 ? '<br><small style="color:var(--warning,#e67e22)">(Dev: -' + formatCLP(refundIva) + ')</small>' : '';
+            return { restante: restante, note: note };
+        }
+        var ncOff = Number(r._ncOffset) || 0;
+        var ncIva = r.tipoDoc === 'E' ? ncOff : Math.round(ncOff * 1.19);
+        var noteF = ncOff > 0 ? '<br><small style="color:var(--warning,#e67e22)">(NC: -' + formatCLP(ncIva) + ')</small>' : '';
+        return { restante: getPendienteFacturado(r), note: noteF };
     }
 
     // Returns the current eventDate from the linked sale (if loaded), falling back to stored copy.
@@ -137,12 +176,14 @@ window.Mazelab.Modules.FinanceModule = (function () {
     }
 
     function getRealTimeStatus(r) {
-        // 1. NC
-        if (r.tipoDoc === 'NC') return 'nc';
+        // 1. NC — status guardado 'nc_aplicada' (nuevo) o 'nc' (legado) son sinónimos
+        if (r.tipoDoc === 'NC' || r.status === 'nc' || r.status === 'nc_aplicada') return 'nc';
         // 2. Anulada
         if (r.status === 'anulada') return 'anulada';
         // 3. Pagada
         if (r.status === 'pagado' || r.status === 'pagada') return 'pagada';
+        // 3b. En gestion (manually set via CXC Kanban)
+        if (r.status === 'en_gestion') return 'en_gestion';
         // 4. Pendiente factura by status — differentiate pre/post evento
         if (r.status === 'pendiente_factura' || r.status === 'sin_factura' || getMontoFacturado(r) <= 0) {
             var evDate = getEffectiveEventDate(r);
@@ -155,9 +196,8 @@ window.Mazelab.Modules.FinanceModule = (function () {
         if (r.status === 'pendiente' || r.status === 'pendiente_pago' ||
             r.status === 'vencida_30' || r.status === 'vencida_60' || r.status === 'vencida_90' ||
             r.status === 'por_vencer' || !r.status || r.status === '') {
-            var pagado = getTotalPagado(r);
-            var montoTotal = r.tipoDoc === 'E' ? getMonto(r) : (getMontoFacturado(r) * 1.19);
-            if (pagado >= montoTotal) return 'pagada';
+            // Separación de libros: la fila facturada descuenta solo NC (nunca la incidencia)
+            if (getPendienteFacturado(r) <= 0) return 'pagada';
             var baseDate = getVencimientoBaseDate(r);
             if (baseDate) {
                 var diffDays = Math.floor((new Date() - baseDate) / (1000 * 60 * 60 * 24));
@@ -273,6 +313,7 @@ window.Mazelab.Modules.FinanceModule = (function () {
             'vencida_90': '<span class="badge badge-danger">Vencida' + daysLabel + '</span>',
             'anulada': '<span class="badge badge-secondary">Anulada</span>',
             'nc': '<span class="badge badge-secondary">N. Cr\u00e9dito</span>',
+            'nc_aplicada': '<span class="badge badge-secondary">N. Cr\u00e9dito</span>',
             'por_vencer': '<span class="badge badge-warning">Por Vencer</span>'
         };
         return map[status] || '<span class="badge">' + (status || 'Desconocido') + '</span>';
@@ -294,7 +335,35 @@ window.Mazelab.Modules.FinanceModule = (function () {
         var facturadoVencido60 = [];
         var facturadoVencido90 = [];
 
+        // Build NC offset map: sum NC amounts by linked invoice number or sourceId
+        var ncByInvoice = {}; // invoiceNumber → total NC amount
+        var ncBySourceId = {}; // sourceId → total NC amount
         receivables.forEach(function (r) {
+            if (r.tipoDoc !== 'NC') return;
+            var ncAmt = Number(r.montoFacturado || r.montoNeto || r.invoicedAmount || 0);
+            if (r.ncAsociada) {
+                // NC asociada a una factura específica: SOLO esa factura descuenta.
+                // No alimenta el mapa por sourceId — si no, las facturas hermanas
+                // del mismo evento (facturación parcial) descontarían la misma NC.
+                ncByInvoice[r.ncAsociada] = (ncByInvoice[r.ncAsociada] || 0) + ncAmt;
+            } else if (r.sourceId) {
+                // Fallback por evento SOLO para NCs sin factura asociada
+                ncBySourceId[String(r.sourceId)] = (ncBySourceId[String(r.sourceId)] || 0) + ncAmt;
+            }
+        });
+
+        receivables.forEach(function (r) {
+            // Compute NC offset for this invoice — ANTES del status, porque
+            // getRealTimeStatus → getPendienteFacturado depende de _ncOffset
+            r._ncOffset = 0;
+            if (r.tipoDoc !== 'NC') {
+                if (r.invoiceNumber && ncByInvoice[r.invoiceNumber]) {
+                    r._ncOffset = ncByInvoice[r.invoiceNumber];
+                } else if (r.sourceId && ncBySourceId[String(r.sourceId)]) {
+                    r._ncOffset = ncBySourceId[String(r.sourceId)];
+                }
+            }
+
             var realStatus = getRealTimeStatus(r);
             r._realStatus = realStatus;
 
@@ -319,6 +388,11 @@ window.Mazelab.Modules.FinanceModule = (function () {
             }
 
             // facturadoPendientes
+            // Nota: NO se filtra por r.ncAsociada aquí — ese campo vive en la fila de la NC
+            // (apunta al invoiceNumber que descuenta), no en la factura misma. Filtrarlo
+            // ocultaba facturas import CSV con esa columna poblada por error de mapeo.
+            // El descuento de NC ya lo maneja _ncOffset vía getPendienteFacturado: una
+            // factura 100% cubierta por su NC queda en $0 (pendiente <= 0) y no entra aquí.
             if (
                 realStatus !== 'pendiente_factura' &&
                 realStatus !== 'post_evento_sin_factura' &&
@@ -326,26 +400,28 @@ window.Mazelab.Modules.FinanceModule = (function () {
                 realStatus !== 'pagada' &&
                 realStatus !== 'nc' &&
                 r.tipoDoc !== 'NC' &&
-                (!r.ncAsociada || r.ncAsociada === '') &&
                 getMontoFacturado(r) > 0
             ) {
-                var pagado = getTotalPagado(r);
-                var montoTotal = r.tipoDoc === 'E' ? getMonto(r) : (getMontoFacturado(r) * 1.19);
-                if (pagado < montoTotal) {
+                // Separación de libros: la fila facturada descuenta solo NC (nunca la incidencia/refund)
+                var pendiente = getPendienteFacturado(r);
+                if (pendiente > 0) {
                     facturadoPendientes.push(r);
 
-                    // Sub-clasificar por días desde emisión de factura (billingMonth)
-                    var diffDays = 0;
+                    // Sub-clasificar por días de atraso (días desde emisión - paymentTerms)
+                    var daysOverdue = 0;
                     var baseDate = getVencimientoBaseDate(r);
                     if (baseDate) {
-                        diffDays = Math.floor((new Date() - baseDate) / (1000 * 60 * 60 * 24));
+                        var diffDays = Math.floor((new Date() - baseDate) / (1000 * 60 * 60 * 24));
+                        var terms = Number(r.paymentTerms) || 30;
+                        daysOverdue = Math.max(0, diffDays - terms);
                     }
+                    r._daysOverdue = daysOverdue;
 
-                    if (diffDays <= 30) {
+                    if (daysOverdue <= 0) {
                         facturadoEnPlazo.push(r);
-                    } else if (diffDays <= 60) {
+                    } else if (daysOverdue <= 30) {
                         facturadoVencido30.push(r);
-                    } else if (diffDays <= 90) {
+                    } else if (daysOverdue <= 60) {
                         facturadoVencido60.push(r);
                     } else {
                         facturadoVencido90.push(r);
@@ -372,7 +448,25 @@ window.Mazelab.Modules.FinanceModule = (function () {
     // KPI CALCULATIONS
     // =========================================================================
 
-    function computeKPIs(receivables) {
+    // Enriquece cada CXC con _refundAmount desde su venta vinculada.
+    // Vive aquí (no en loadAndRender) para que TODO caller de computeKPIs
+    // (finanzas Y dashboard) produzca los mismos números.
+    function enrichRefunds(receivables, sales) {
+        receivables.forEach(function (r) {
+            r._refundAmount = 0;
+            if (r.saleId && sales.length) {
+                var sale = sales.find(function (s) {
+                    return String(s.id) === String(r.saleId) || String(s.sourceId) === String(r.saleId);
+                });
+                if (sale && Number(sale.refundAmount) > 0) {
+                    r._refundAmount = Number(sale.refundAmount);
+                }
+            }
+        });
+    }
+
+    function computeKPIs(receivables, sales) {
+        if (Array.isArray(sales)) enrichRefunds(receivables, sales);
         var data = classifyData(receivables);
         var currentMonthKey = getCurrentMonthKey();
 
@@ -419,8 +513,9 @@ window.Mazelab.Modules.FinanceModule = (function () {
         });
 
         // Row 2 — Status categories
+        // Filas sin factura: neto − incidencia (Money.pendienteSinFacturaRow)
         var totalSinFacturaNeto = 0;
-        data.sinFactura.forEach(function (r) { totalSinFacturaNeto += getMonto(r); });
+        data.sinFactura.forEach(function (r) { totalSinFacturaNeto += getPendienteSinFacturaNeto(r); });
 
         var totalEnPlazo = 0;
         data.facturadoEnPlazo.forEach(function (r) { totalEnPlazo += getPendienteFacturado(r); });
@@ -505,8 +600,8 @@ window.Mazelab.Modules.FinanceModule = (function () {
         var postCount = kpis.data.postEventoSinFactura.length;
         var preCount = kpis.data.preEvento.length;
         var postMonto = 0, preMonto = 0;
-        kpis.data.postEventoSinFactura.forEach(function (r) { postMonto += getMonto(r); });
-        kpis.data.preEvento.forEach(function (r) { preMonto += getMonto(r); });
+        kpis.data.postEventoSinFactura.forEach(function (r) { postMonto += getPendienteSinFacturaNeto(r); });
+        kpis.data.preEvento.forEach(function (r) { preMonto += getPendienteSinFacturaNeto(r); });
         html += '<div class="kpi-card ' + (postCount > 0 ? 'danger' : 'warning') + '" id="kpi-sin-factura" style="cursor:pointer;" title="Click para ver detalle">';
         html += '  <div class="kpi-label">Sin Factura</div>';
         html += '  <div class="kpi-value">' + kpis.data.sinFactura.length + '</div>';
@@ -515,22 +610,22 @@ window.Mazelab.Modules.FinanceModule = (function () {
         html += preCount + ' pre-evento (' + formatCLP(preMonto) + ')';
         html += '</div>';
         html += '</div>';
-        html += '<div class="kpi-card info">';
+        html += '<div class="kpi-card info" id="kpi-en-plazo" style="cursor:pointer;" title="Click para ver detalle">';
         html += '  <div class="kpi-label">En Plazo</div>';
         html += '  <div class="kpi-value">' + kpis.data.facturadoEnPlazo.length + '</div>';
         html += '  <div class="kpi-sub">' + formatCLP(kpis.totalEnPlazo) + '</div>';
         html += '</div>';
-        html += '<div class="kpi-card warning">';
+        html += '<div class="kpi-card warning" id="kpi-vencida-30" style="cursor:pointer;" title="Click para ver detalle">';
         html += '  <div class="kpi-label">30+ D\u00edas</div>';
         html += '  <div class="kpi-value">' + kpis.data.facturadoVencido30.length + '</div>';
         html += '  <div class="kpi-sub">' + formatCLP(kpis.totalVencido30) + '</div>';
         html += '</div>';
-        html += '<div class="kpi-card danger">';
+        html += '<div class="kpi-card danger" id="kpi-vencida-60" style="cursor:pointer;" title="Click para ver detalle">';
         html += '  <div class="kpi-label">60+ D\u00edas</div>';
         html += '  <div class="kpi-value">' + kpis.data.facturadoVencido60.length + '</div>';
         html += '  <div class="kpi-sub">' + formatCLP(kpis.totalVencido60) + '</div>';
         html += '</div>';
-        html += '<div class="kpi-card danger">';
+        html += '<div class="kpi-card danger" id="kpi-vencida-90" style="cursor:pointer;" title="Click para ver detalle">';
         html += '  <div class="kpi-label">90+ D\u00edas</div>';
         html += '  <div class="kpi-value">' + kpis.data.facturadoVencido90.length + '</div>';
         html += '  <div class="kpi-sub">' + formatCLP(kpis.totalVencido90) + '</div>';
@@ -621,7 +716,10 @@ window.Mazelab.Modules.FinanceModule = (function () {
                 // totalIva siempre se calcula sobre el neto completo (monto_venta) para no perder valor al facturar parcialmente
                 var totalIva = r.tipoDoc === 'E' ? neto : Math.round(neto * 1.19);
                 var pagado = getTotalPagado(r);
-                var restante = Math.max(0, totalIva - pagado);
+                // Restante con los mismos números que los KPIs (separación de libros NC / incidencia)
+                var cell = getRestanteCell(r, realStatus);
+                var restante = cell.restante;
+                var refundNote = cell.note;
                 // ID numérico: sourceId del registro CXC, o saleId si es numérico
                 var displayId = r.sourceId || (/^\d+$/.test(String(r.saleId || '')) ? r.saleId : '') || '-';
                 html += '<tr>';
@@ -631,7 +729,7 @@ window.Mazelab.Modules.FinanceModule = (function () {
                 html += '<td>' + formatCLP(neto) + '</td>';
                 html += '<td>' + formatCLP(totalIva) + '</td>';
                 html += '<td>' + formatCLP(pagado) + '</td>';
-                html += '<td>' + formatCLP(restante) + '</td>';
+                html += '<td>' + formatCLP(restante) + refundNote + '</td>';
                 html += '<td>' + formatDate(getEffectiveEventDate(r)) + '</td>';
                 html += '<td>' + getStatusBadge(realStatus, r) + '</td>';
                 html += '<td>';
@@ -647,8 +745,9 @@ window.Mazelab.Modules.FinanceModule = (function () {
                     var cobrarLabel = cobrosArr.length > 0 ? (cobrosArr.length + 1) + '\u00b0 Cobro' : 'Cobrar';
                     html += '<button class="btn-sm btn-icon btn-cobrar" data-id="' + r.id + '" title="Enviar cobro" style="background:linear-gradient(135deg,#e67e22,#f39c12);color:white;border:none;margin-right:4px">' + cobrarLabel + '</button>';
                 }
-                // NC available for any invoiced record (including paid)
-                if (getMontoFacturado(r) > 0 && realStatus !== 'nc' && realStatus !== 'anulada') {
+                // NC available for any invoiced record (including paid) — requiere N° de factura
+                // (hallazgo O2: una NC siempre está asociada a una factura específica).
+                if (getMontoFacturado(r) > 0 && r.invoiceNumber && realStatus !== 'nc' && realStatus !== 'anulada') {
                     html += '<button class="btn-sm btn-icon btn-nc" data-id="' + r.id + '" title="Registrar Nota de Cr\u00e9dito" style="color:var(--text-secondary);margin-right:4px">NC</button>';
                 }
                 // Mail facturacion button — only for invoiced records
@@ -685,20 +784,25 @@ window.Mazelab.Modules.FinanceModule = (function () {
             var totalPending = grp.items.reduce(function (s, r) {
                 var rs = r._realStatus || getRealTimeStatus(r);
                 if (rs === 'pagada' || rs === 'anulada' || rs === 'nc') return s;
-                return s + Math.max(0, getPendienteFacturado(r));
+                // Misma derivación que la celda Restante: facturadas descuentan NC,
+                // sin factura descuentan incidencia (antes las sin-factura aportaban $0)
+                return s + getRestanteCell(r, rs).restante;
             }, 0);
             var rows = grp.items.map(function (r) {
                 var realStatus = r._realStatus || getRealTimeStatus(r);
                 var neto = getMonto(r);
                 var totalIva = r.tipoDoc === 'E' ? neto : Math.round(neto * 1.19);
                 var pagado = getTotalPagado(r);
-                var restante = Math.max(0, totalIva - pagado);
+                // Restante con los mismos números que los KPIs (separación de libros NC / incidencia)
+                var grpCell = getRestanteCell(r, realStatus);
+                var restante = grpCell.restante;
+                var grpRefNote = grpCell.note;
                 var row = '<tr>';
                 row += '<td>' + (r.invoiceNumber || '-') + '</td>';
                 row += '<td>' + formatCLP(neto) + '</td>';
                 row += '<td>' + formatCLP(totalIva) + '</td>';
                 row += '<td>' + formatCLP(pagado) + '</td>';
-                row += '<td>' + formatCLP(restante) + '</td>';
+                row += '<td>' + formatCLP(restante) + grpRefNote + '</td>';
                 row += '<td>' + formatDate(r.eventDate) + '</td>';
                 row += '<td>' + getStatusBadge(realStatus, r) + '</td>';
                 row += '<td>';
@@ -819,7 +923,12 @@ window.Mazelab.Modules.FinanceModule = (function () {
                     case 'neto':     av = getMonto(a); bv = getMonto(b); break;
                     case 'totalIva': av = getMontoFacturado(a) * 1.19; bv = getMontoFacturado(b) * 1.19; break;
                     case 'pagado':   av = getTotalPagado(a); bv = getTotalPagado(b); break;
-                    case 'pending':  av = getPendienteFacturado(a); bv = getPendienteFacturado(b); break;
+                    case 'pending':
+                        // Mismo número que muestra la celda "Restante" (getRestanteCell) — antes
+                        // ordenaba por getPendienteFacturado, que vale 0 en filas sin factura.
+                        av = getRestanteCell(a, a._realStatus || getRealTimeStatus(a)).restante;
+                        bv = getRestanteCell(b, b._realStatus || getRealTimeStatus(b)).restante;
+                        break;
                     default:         av = a[sortCol] || ''; bv = b[sortCol] || '';
                 }
                 var an = Number(av), bn = Number(bv);
@@ -839,7 +948,8 @@ window.Mazelab.Modules.FinanceModule = (function () {
         var neto = getMonto(receivable);
         var totalIva = receivable.tipoDoc === 'E' ? neto : (getMontoFacturado(receivable) * 1.19);
         var pagado = getTotalPagado(receivable);
-        var restante = totalIva - pagado;
+        // Restante con la misma derivación que tabla/KPIs (la NC descuenta)
+        var restante = getPendienteFacturado(receivable);
         var today = new Date().toISOString().split('T')[0];
         var payments = Array.isArray(receivable.payments) ? receivable.payments : [];
 
@@ -935,12 +1045,9 @@ window.Mazelab.Modules.FinanceModule = (function () {
             // ESTADO: en branch pr-1, aún no mergeado a master.
             console.log('[CXC] Loaded', allReceivables.length, 'receivables,', cachedSales.length, 'sales. Using Supabase:', window.Mazelab.DataService.isUsingSupabase());
 
-            // Compute real-time status for all
-            allReceivables.forEach(function (r) {
-                r._realStatus = getRealTimeStatus(r);
-            });
-
-            var kpis = computeKPIs(allReceivables);
+            // _refundAmount y _realStatus se calculan dentro de computeKPIs
+            // (enrichRefunds + classifyData) — misma derivación que usa el dashboard.
+            var kpis = computeKPIs(allReceivables, cachedSales);
             var container = document.getElementById('finance-content');
             if (!container) return;
 
@@ -1071,7 +1178,7 @@ window.Mazelab.Modules.FinanceModule = (function () {
                         '<td style="padding:4px 6px;font-size:12px;">' + (r.sourceId || '-') + '</td>' +
                         '<td style="padding:4px 6px;font-size:12px;">' + escapeHtml(r.clientName || '') + '</td>' +
                         '<td style="padding:4px 6px;font-size:12px;">' + escapeHtml(r.eventName || '') + '</td>' +
-                        '<td style="padding:4px 6px;font-size:12px;">' + formatCLP(getMonto(r)) + '</td>' +
+                        '<td style="padding:4px 6px;font-size:12px;">' + formatCLP(getPendienteSinFacturaNeto(r)) + '</td>' +
                         '<td style="padding:4px 6px;font-size:12px;color:' + (diasSinFactura > 30 ? 'var(--danger)' : 'var(--warning)') + ';font-weight:600;">' + diasSinFactura + 'd</td>' +
                         '<td style="padding:4px 6px;font-size:12px;">' + (avisos > 0 ? avisos + ' aviso(s)' : '-') + '</td>' +
                         '<td style="padding:4px 6px;"><button class="btn btn-secondary btn-sm btn-solicitar-oc" data-id="' + r.id + '" style="font-size:10px;">Solicitar OC</button> <button class="btn btn-secondary btn-sm btn-facturar" data-id="' + r.id + '" style="font-size:10px;">Facturar</button></td>' +
@@ -1096,6 +1203,63 @@ window.Mazelab.Modules.FinanceModule = (function () {
                 });
             });
         }
+
+        // KPI status cards click → show popup with receivables list
+        var kpiStatusCards = [
+            { id: 'kpi-en-plazo', label: 'En Plazo', dataKey: 'facturadoEnPlazo' },
+            { id: 'kpi-vencida-30', label: 'Vencidas 30+ d\u00edas', dataKey: 'facturadoVencido30' },
+            { id: 'kpi-vencida-60', label: 'Vencidas 60+ d\u00edas', dataKey: 'facturadoVencido60' },
+            { id: 'kpi-vencida-90', label: 'Vencidas 90+ d\u00edas', dataKey: 'facturadoVencido90' }
+        ];
+        kpiStatusCards.forEach(function (cfg) {
+            var el = document.getElementById(cfg.id);
+            if (!el) return;
+            el.addEventListener('click', function () {
+                var kpis = computeKPIs(allReceivables, cachedSales);
+                var items = kpis.data[cfg.dataKey] || [];
+                if (items.length === 0) { alert('No hay documentos en esta categor\u00eda.'); return; }
+                var modalContainer = document.getElementById('finance-modal-container');
+                if (!modalContainer) return;
+                var totalPendiente = 0;
+                var rows = items.map(function (r) {
+                    var monto = getMonto(r);
+                    var montoIVA = Math.round(monto * 1.19);
+                    var pagado = getTotalPagado(r);
+                    // Mismo número que los KPIs y la tabla (solo NC descuenta en facturadas)
+                    var realStatus = r._realStatus || getRealTimeStatus(r);
+                    var pendiente = getRestanteCell(r, realStatus).restante;
+                    totalPendiente += pendiente;
+                    var overdue = r._daysOverdue || 0;
+                    var baseDate = getVencimientoBaseDate(r);
+                    var baseDateStr = baseDate ? baseDate.toLocaleDateString('es-CL', { day: '2-digit', month: 'short', year: '2-digit' }) : '-';
+                    var terms = Number(r.paymentTerms) || 30;
+                    return '<tr>' +
+                        '<td style="padding:4px 6px;font-size:12px;">' + (r.sourceId || '-') + '</td>' +
+                        '<td style="padding:4px 6px;font-size:12px;">' + escapeHtml(r.clientName || '') + '</td>' +
+                        '<td style="padding:4px 6px;font-size:12px;">' + escapeHtml(r.eventName || '') + '</td>' +
+                        '<td style="padding:4px 6px;font-size:12px;">' + (r.tipoDoc || '') + (r.numDoc || r.invoiceNumber ? ' #' + (r.numDoc || r.invoiceNumber) : '') + '</td>' +
+                        '<td style="padding:4px 6px;font-size:12px;text-align:right;">' + formatCLP(montoIVA) + '</td>' +
+                        '<td style="padding:4px 6px;font-size:12px;text-align:right;color:var(--success);">' + formatCLP(pagado) + '</td>' +
+                        '<td style="padding:4px 6px;font-size:12px;text-align:right;font-weight:600;color:' + (pendiente > 0 ? 'var(--warning)' : 'var(--success)') + ';">' + formatCLP(pendiente) + '</td>' +
+                        '<td style="padding:4px 6px;font-size:12px;text-align:center;">' + baseDateStr + '</td>' +
+                        '<td style="padding:4px 6px;font-size:12px;text-align:center;">' + terms + 'd</td>' +
+                        '<td style="padding:4px 6px;font-size:12px;text-align:center;' + (overdue > 30 ? 'color:var(--danger);font-weight:600;' : '') + '">' + (overdue > 0 ? overdue + 'd' : '-') + '</td>' +
+                    '</tr>';
+                }).join('');
+                var html = '<div class="modal-overlay active" id="kpi-status-overlay">' +
+                    '<div class="modal" style="max-width:1000px;width:95%">' +
+                    '<div class="modal-header"><h3>' + cfg.label + ' (' + items.length + ') \u2014 ' + formatCLP(totalPendiente) + '</h3><button class="modal-close" id="kpi-status-close">&times;</button></div>' +
+                    '<div style="overflow-x:auto;"><table class="data-table"><thead><tr>' +
+                        '<th>ID</th><th>Cliente</th><th>Evento</th><th>Documento</th><th class="text-right">Monto</th><th class="text-right">Pagado</th><th class="text-right">Pendiente</th><th class="text-center">Fecha Base</th><th class="text-center">Plazo</th><th class="text-center">Atraso</th>' +
+                    '</tr></thead><tbody>' + rows + '</tbody></table></div>' +
+                    '<div class="form-actions" style="margin-top:12px"><button class="btn btn-secondary" id="kpi-status-close-btn">Cerrar</button></div>' +
+                    '</div></div>';
+                modalContainer.innerHTML = html;
+                document.getElementById('kpi-status-close').addEventListener('click', function () { modalContainer.innerHTML = ''; });
+                document.getElementById('kpi-status-close-btn').addEventListener('click', function () { modalContainer.innerHTML = ''; });
+                document.getElementById('kpi-status-overlay').addEventListener('click', function (e) { if (e.target === this) modalContainer.innerHTML = ''; });
+            });
+        });
 
         // Abono buttons
         document.querySelectorAll('.btn-abono').forEach(function (btn) {
@@ -1605,7 +1769,7 @@ window.Mazelab.Modules.FinanceModule = (function () {
         var focusedCol = (focusedEl && focusedEl.classList && focusedEl.classList.contains('fin-col-filter')) ? focusedEl.dataset.col : null;
         var focusCursor = focusedCol ? { s: focusedEl.selectionStart, e: focusedEl.selectionEnd } : null;
 
-        var kpis = computeKPIs(allReceivables);
+        var kpis = computeKPIs(allReceivables, cachedSales);
         container.innerHTML = renderKPIs(kpis) + renderTable(allReceivables);
         attachTableListeners();
 
@@ -1711,11 +1875,12 @@ window.Mazelab.Modules.FinanceModule = (function () {
                         var payments = Array.isArray(rec.payments) ? rec.payments.slice() : [];
                         payments.push({ id: Date.now().toString(), amount: amount, date: date || new Date().toISOString().split('T')[0] });
                         await window.Mazelab.DataService.update('receivables', rec.id, { payments: payments });
+                        UI.toast('Guardado en la base de datos');
                         closeModal();
                         await loadAndRender();
                     } catch (err) {
                         console.error('Error saving abono:', err);
-                        alert('Error al guardar abono: ' + err.message);
+                        UI.toast('ERROR: no se guardó — ' + err.message, 'error');
                     }
                 });
             }
@@ -1723,6 +1888,102 @@ window.Mazelab.Modules.FinanceModule = (function () {
 
         modalContainer.innerHTML = renderAbonoModal(rec);
         bindAbonoEvents();
+    }
+
+    // Crea la CXC de la factura y reduce/cierra la fila residual sin_factura.
+    // rec: fila residual (puede ser null si la venta no tiene residual);
+    // sale: venta vinculada (puede ser null); datos: {invoicedAmount, invoiceNumber, billingMonth, paymentTerms, tipoDoc}
+    async function crearFacturaYCerrarResidual(rec, sale, datos) {
+        var DS = window.Mazelab.DataService;
+        var linkedSaleId = (rec && rec.saleId) || (sale && sale.id) || null;
+        var srcId = (rec && rec.sourceId) || (sale && sale.sourceId) || '';
+        var newRec = {
+            id:             window.Mazelab.Storage.generateId(),
+            eventName:      (rec && rec.eventName)  || (sale && sale.eventName)  || '',
+            eventDate:      (rec && rec.eventDate)  || (sale && sale.eventDate)  || '',
+            clientName:     (rec && rec.clientName) || (sale && sale.clientName) || '',
+            montoNeto:      datos.invoicedAmount,
+            invoicedAmount: datos.invoicedAmount,
+            monto_venta:    datos.invoicedAmount,
+            invoiceNumber:  datos.invoiceNumber,
+            billingMonth:   datos.billingMonth,
+            paymentTerms:   datos.paymentTerms,
+            tipoDoc:        datos.tipoDoc,
+            status:         'pendiente_pago',
+            saleId:         linkedSaleId,
+            sourceId:       srcId,
+            sourceType:     'factura',
+            payments:       []
+        };
+        if (rec) {
+            // avisos_factura NO se copia: es el historial de "solicitar OC/datos para poder
+            // facturar" y pertenece a la fila residual que sigue pendiente (hallazgo O1).
+            // notas_cobranza y cobros sí son gestión de cobranza y se mueven a la factura.
+            if (rec.notas_cobranza && rec.notas_cobranza.length) newRec.notas_cobranza = rec.notas_cobranza;
+            if (rec.cobros && rec.cobros.length) newRec.cobros = rec.cobros;
+        }
+        await DS.create('receivables', newRec);
+
+        if (rec) {
+            var netoTotal = getMonto(rec);
+            var netoRestante = netoTotal - datos.invoicedAmount;
+            try {
+                if (netoRestante <= 0) {
+                    await DS.remove('receivables', rec.id);
+                } else {
+                    await DS.update('receivables', rec.id, {
+                        monto_venta:    netoRestante,
+                        montoNeto:      netoRestante,
+                        invoicedAmount: 0,   // la residual NO tiene factura — antes escribía netoRestante (bug)
+                        amount:         netoRestante,
+                        status:         'sin_factura',
+                        // Semántica de MOVER (no copiar) para cobros/notas_cobranza: ese historial
+                        // se traspasó a newRec arriba (la factura es donde se gestiona/cobra). Si la
+                        // residual lo conservara, tras N facturaciones parciales el mismo cobro/nota
+                        // viviría en N+1 filas.
+                        // avisos_factura NO se vacía: pertenece a la residual, que sigue pendiente
+                        // de facturar (hallazgo O1) — no se movió a newRec, así que no corresponde
+                        // borrarlo aquí.
+                        notas_cobranza: [],
+                        cobros:         []
+                    });
+                }
+            } catch (closeErr) {
+                // Mitigación de no-atomicidad (hallazgo I7): la factura ya se creó pero el
+                // cierre/reducción de la fila residual falló. Intentamos un delete compensatorio
+                // de la factura recién creada para no dejar el dato duplicado/huérfano.
+                var compensated = false;
+                try {
+                    await DS.remove('receivables', newRec.id);
+                    compensated = true;
+                } catch (compErr) {
+                    compensated = false;
+                }
+                if (compensated) {
+                    throw closeErr; // compensación OK → informar el error original
+                }
+                throw new Error('La factura se creó pero la fila pendiente no se pudo cerrar. NO reintentes crear la factura — revisa la lista y cierra la pendiente a mano.');
+            }
+        }
+        return newRec;
+    }
+
+    // Busca la fila residual sin factura (pendiente de facturar) de una venta.
+    // Usa el mismo criterio de estado que muestra el botón "Facturar" en la tabla.
+    function findResidualSinFactura(sale, saleIdRaw) {
+        var sid  = String((sale && sale.id) || saleIdRaw || '');
+        var ssrc = String((sale && sale.sourceId) || '');
+        if (!sid && !ssrc) return null;
+        return allReceivables.find(function (r) {
+            if (r.tipoDoc === 'NC') return false;
+            var st = r._realStatus || getRealTimeStatus(r);
+            if (st !== 'pendiente_factura' && st !== 'post_evento_sin_factura') return false;
+            var rSale = String(r.saleId || '');
+            var rSrc  = String(r.sourceId || '');
+            if (rSale && (rSale === sid || (ssrc && rSale === ssrc))) return true;
+            if (rSrc && ssrc && rSrc === ssrc) return true;
+            return false;
+        }) || null;
     }
 
     function openNuevaFacturaModal() {
@@ -1843,31 +2104,34 @@ window.Mazelab.Modules.FinanceModule = (function () {
             var tipoDoc = document.getElementById('nf-tipo').value;
 
             if (!saleId) { alert('Selecciona el evento al que pertenece esta factura.'); return; }
+            if (!invoiceNumber) { alert('Ingresa el N° de factura.'); return; }
             if (!/^\d{2}\/\d{2}\/\d{4}$/.test(billingMonth)) { alert('La fecha debe tener formato DD/MM/AAAA'); return; }
             if (invoicedAmount <= 0) { alert('Ingresa el monto neto facturado.'); return; }
 
             var sale = (cachedSales || []).find(function (s) { return String(s.id) === saleId; });
 
             try {
-                await window.Mazelab.DataService.create('receivables', {
-                    id:             window.Mazelab.Storage.generateId(),
-                    eventName:      sale ? (sale.eventName  || '') : '',
-                    eventDate:      sale ? (sale.eventDate  || '') : '',
-                    clientName:     sale ? (sale.clientName || '') : '',
-                    montoNeto:      invoicedAmount,
+                // Misma semántica que el botón "Facturar": buscar la fila residual
+                // sin factura de la venta y reducirla/cerrarla al crear la factura.
+                var residual = findResidualSinFactura(sale, saleId);
+                if (residual) {
+                    var netoResidual = getMonto(residual);
+                    if (invoicedAmount > netoResidual) {
+                        var seguir = confirm('El monto facturado (' + formatCLP(invoicedAmount) + ') supera el neto pendiente de la fila sin factura (' + formatCLP(netoResidual) + ').\n\nLa fila pendiente se cerrará completa.\n\n¿Continuar?');
+                        if (!seguir) return;
+                    }
+                }
+                await crearFacturaYCerrarResidual(residual || null, sale || null, {
                     invoicedAmount: invoicedAmount,
-                    monto_venta:    invoicedAmount,
                     invoiceNumber:  invoiceNumber,
                     billingMonth:   billingMonth,
                     paymentTerms:   paymentTerms,
-                    tipoDoc:        tipoDoc,
-                    status:         'pendiente_pago',
-                    saleId:         saleId,
-                    payments:       []
+                    tipoDoc:        tipoDoc
                 });
+                UI.toast('Guardado en la base de datos');
                 closeModal();
                 await loadAndRender();
-            } catch (err) { alert('Error al guardar: ' + err.message); }
+            } catch (err) { UI.toast('ERROR: no se guardó — ' + err.message, 'error'); }
         });
     }
 
@@ -1977,6 +2241,10 @@ window.Mazelab.Modules.FinanceModule = (function () {
             var paymentTerms = Number(document.getElementById('fac-terms').value) || 30;
             var tipoDoc = document.getElementById('fac-tipo').value;
 
+            if (!invoiceNumber) {
+                alert('Ingresa el N° de factura.');
+                return;
+            }
             // Validate DD/MM/YYYY
             if (!/^\d{2}\/\d{2}\/\d{4}$/.test(billingMonth)) {
                 alert('La fecha debe tener formato DD/MM/AAAA (ej: 18/01/2026)');
@@ -1992,49 +2260,23 @@ window.Mazelab.Modules.FinanceModule = (function () {
                     alert('El monto facturado (' + formatCLP(invoicedAmount) + ') no puede superar el neto pendiente (' + formatCLP(netoTotal) + ').');
                     return;
                 }
-                var netoRestante = netoTotal - invoicedAmount;
-
-                // 1. Crear una nueva CXC row para esta factura específica
-                var linkedSaleId = rec.saleId || (/^\d+$/.test(String(rec.id || '')) ? rec.id : null);
-                var newRec = {
-                    id:             window.Mazelab.Storage.generateId(),
-                    eventName:      rec.eventName  || '',
-                    eventDate:      rec.eventDate  || '',
-                    clientName:     rec.clientName || '',
-                    montoNeto:      invoicedAmount,
+                // Venta vinculada (completa saleId/sourceId si a la residual le faltan)
+                var sale = rec.saleId ? (cachedSales || []).find(function (s) {
+                    return String(s.id) === String(rec.saleId) || String(s.sourceId) === String(rec.saleId);
+                }) : null;
+                // Crea la CXC de la factura y reduce/cierra la residual (lógica compartida con "+ Nueva Factura")
+                await crearFacturaYCerrarResidual(rec, sale || null, {
                     invoicedAmount: invoicedAmount,
-                    monto_venta:    invoicedAmount,
                     invoiceNumber:  invoiceNumber,
                     billingMonth:   billingMonth,
                     paymentTerms:   paymentTerms,
-                    tipoDoc:        tipoDoc,
-                    status:         'pendiente_pago',
-                    saleId:         linkedSaleId,
-                    sourceId:       rec.sourceId || '',
-                    sourceType:     'factura',
-                    payments:       []
-                };
-                // Preserve history arrays only if they exist on the original record
-                if (rec.avisos_factura && rec.avisos_factura.length) newRec.avisos_factura = rec.avisos_factura;
-                if (rec.notas_cobranza && rec.notas_cobranza.length) newRec.notas_cobranza = rec.notas_cobranza;
-                if (rec.cobros && rec.cobros.length) newRec.cobros = rec.cobros;
-                await window.Mazelab.DataService.create('receivables', newRec);
+                    tipoDoc:        tipoDoc
+                });
 
-                // 2. Actualizar o eliminar la CXC residual (por facturar)
-                if (netoRestante <= 0) {
-                    // Completamente facturado: eliminar la fila residual
-                    await window.Mazelab.DataService.remove('receivables', rec.id);
-                } else {
-                    // Parcialmente facturado: reducir el monto restante
-                    await window.Mazelab.DataService.update('receivables', rec.id, {
-                        monto_venta: netoRestante,
-                        status:      'sin_factura'
-                    });
-                }
-
+                UI.toast('Guardado en la base de datos');
                 closeModal();
                 await loadAndRender();
-            } catch (err) { alert('Error: ' + err.message); }
+            } catch (err) { UI.toast('ERROR: no se guardó — ' + err.message, 'error'); }
         });
     }
 
@@ -2162,9 +2404,9 @@ window.Mazelab.Modules.FinanceModule = (function () {
         }
 
         try {
-            var totalIva = rec.tipoDoc === 'E' ? getMonto(rec) : (getMontoFacturado(rec) * 1.19);
-            var pagado = getTotalPagado(rec);
-            var restante = totalIva - pagado;
+            // Mismo número que tabla/KPIs: la NC descuenta, la incidencia no.
+            // Antes usaba montoFacturado×1.19 − pagado y registraba un pago fantasma por la NC.
+            var restante = getPendienteFacturado(rec);
 
             if (restante > 0) {
                 var payments = Array.isArray(rec.payments) ? rec.payments.slice() : [];
@@ -2181,10 +2423,11 @@ window.Mazelab.Modules.FinanceModule = (function () {
                 await window.Mazelab.DataService.update('receivables', rec.id, { status: 'pagada' });
             }
 
+            UI.toast('Guardado en la base de datos');
             await loadAndRender();
         } catch (err) {
             console.error('Error marking as paid:', err);
-            alert('Error al marcar como pagado: ' + err.message);
+            UI.toast('ERROR: no se guardó — ' + err.message, 'error');
         }
     }
 
@@ -2195,6 +2438,13 @@ window.Mazelab.Modules.FinanceModule = (function () {
     function openNCModal(id) {
         var rec = allReceivables.find(function (r) { return r.id === id; });
         if (!rec) return;
+        // Regla de negocio (hallazgo O2): una NC siempre está asociada a una factura específica.
+        // Sin N° de factura, ncAsociada nacería vacía y el fallback legado por sourceId la
+        // descontaría en TODAS las facturas del evento.
+        if (!rec.invoiceNumber) {
+            alert('Para emitir una Nota de Crédito la factura debe tener N° de factura. Edita la factura y asigna el número primero.');
+            return;
+        }
         var modalContainer = document.getElementById('finance-modal-container');
         if (!modalContainer) return;
 
@@ -2240,8 +2490,12 @@ window.Mazelab.Modules.FinanceModule = (function () {
                     montoNeto: ncAmount,
                     invoicedAmount: ncAmount,
                     montoFacturado: ncAmount,
-                    billingMonth: new Date().toLocaleDateString('es-CL', { day: '2-digit', month: '2-digit', year: 'numeric' }),
-                    status: 'nc',
+                    // DD/MM/YYYY como los otros modales — toLocaleDateString('es-CL') producía
+                    // "26-07-2026" (guiones) que matchesBillingMonth/isIvaPaid no parsean
+                    billingMonth: (function (d) {
+                        return String(d.getDate()).padStart(2, '0') + '/' + String(d.getMonth() + 1).padStart(2, '0') + '/' + d.getFullYear();
+                    })(new Date()),
+                    status: 'nc_aplicada',
                     saleId: rec.saleId || '',
                     ncAsociada: rec.invoiceNumber || '',
                     comments: ncMotivo
@@ -2259,10 +2513,11 @@ window.Mazelab.Modules.FinanceModule = (function () {
                     }
                 }
 
+                UI.toast('Guardado en la base de datos');
                 closeModal();
                 await loadAndRender();
             } catch (err) {
-                alert('Error al registrar NC: ' + err.message);
+                UI.toast('ERROR: no se guardó — ' + err.message, 'error');
             }
         });
     }

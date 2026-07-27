@@ -13,6 +13,15 @@ window.Mazelab.Modules.PayablesModule = (function () {
     let columnFilters = {}; // { colKey: 'filterText' }
     let editingId = null;
     let abonoTargetId = null;
+    let loadError = null; // mensaje de error si loadData() falló — refreshView() lo muestra en vez de una tabla vacía muda
+
+    // Feedback visual (toast) — defensivo: los harnesses de Node cargan este módulo
+    // con window mockeado y sin window.Mazelab.UI, así que no debe romper.
+    var UI = (window.Mazelab && window.Mazelab.UI) || {
+        toast: function () {},
+        showOfflineBanner: function () {},
+        showTestModeBanner: function () {}
+    };
 
     // ── Helpers ────────────────────────────────────────────────────────
 
@@ -29,13 +38,6 @@ window.Mazelab.Modules.PayablesModule = (function () {
 
     function escapeHtml(str) {
         return String(str || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
-    }
-
-    // Retención BH configurable por año (SII Chile)
-    function getBHRetentionRate(dateStr) {
-        if (!dateStr) return 0.1525;
-        var year = new Date(dateStr).getFullYear();
-        return year <= 2024 ? 0.145 : 0.1525; // 14.5% ≤2024, 15.25% 2025+
     }
 
     function docTypeLabel(t) {
@@ -190,18 +192,19 @@ window.Mazelab.Modules.PayablesModule = (function () {
     function docInfoHTML(p) {
         var lines = [];
         if (isBH(p)) {
-            // amount = transferencia al proveedor (neto); retención se paga al SII encima de eso
-            var rate = getBHRetentionRate(p.billingDate || p.eventDate);
+            // amount = transferencia al proveedor (líquido); retención = líquido × tasa/(1−tasa), se paga al SII encima
+            var M = window.Mazelab.Money;
             var amount = Number(p.amount) || 0;
-            var ret  = Math.round(amount * rate);
+            var ret  = M.bhRetencion(amount, p.billingDate || p.eventDate);
+            var rate = M.bhRetentionRate(p.billingDate || p.eventDate);
             var totalCosto = amount + ret;
             lines.push('Retenci\u00f3n ' + (rate * 100).toFixed(2) + '%: ' + formatCLP(ret) + ' \u00b7 Costo total: ' + formatCLP(totalCosto));
         }
         if (isFactura(p)) {
             // amount = total a transferir (incluye IVA); IVA es crédito fiscal
             var amount = Number(p.amount) || 0;
-            var neto = Math.round(amount / 1.19);
-            var iva  = amount - neto;
+            var neto = window.Mazelab.Money.facturaNeto(amount);
+            var iva  = window.Mazelab.Money.ivaCredito(amount);
             lines.push('Neto proveedor: ' + formatCLP(neto) + ' \u00b7 IVA cr\u00e9dito: ' + formatCLP(iva));
         }
         if (!lines.length) return '';
@@ -224,8 +227,8 @@ window.Mazelab.Modules.PayablesModule = (function () {
             if (di.status === 'vencido' || di.status === 'hoy') { vencidoCount++; vencidoSum += pending; }
             else if (di.status === 'proximo') { proximoCount++; proximoSum += pending; }
             if (p.vendorName) vendorsSet[p.vendorName] = true;
-            if (isBH(p)) totalRetencion += Math.round((Number(p.amount) || 0) * getBHRetentionRate(p.billingDate || p.eventDate));
-            if (isFactura(p)) { var _a = Number(p.amount) || 0; totalIVACredito += (_a - Math.round(_a / 1.19)); }
+            if (isBH(p)) totalRetencion += window.Mazelab.Money.bhRetencion(Number(p.amount) || 0, p.billingDate || p.eventDate);
+            if (isFactura(p)) totalIVACredito += window.Mazelab.Money.ivaCredito(Number(p.amount) || 0);
         });
 
         return {
@@ -634,18 +637,27 @@ window.Mazelab.Modules.PayablesModule = (function () {
             payables      = results[0] || [];
             cachedSales   = results[1] || [];
             cachedClients = results[2] || [];
+            loadError = null;
         } catch (e) {
             console.warn('PayablesModule: Error loading data', e);
             payables = [];
             cachedSales = [];
             cachedClients = [];
+            loadError = (e && e.message) || 'Error desconocido';
         }
     }
 
     function refreshView() {
         var kpi = document.getElementById('payables-kpis');
-        if (kpi) kpi.innerHTML = renderKPIs();
         var content = document.getElementById('payables-content');
+        if (loadError) {
+            // Con la base caída no se muestra una tabla vacía muda (parece "no hay costos"
+            // cuando en realidad es "no se pudo leer") — mismo espíritu que finance.js.
+            if (kpi) kpi.innerHTML = '';
+            if (content) content.innerHTML = '<div class="empty-state"><p>Error al cargar datos — sin conexión con la base: ' + escapeHtml(loadError) + '</p></div>';
+            return;
+        }
+        if (kpi) kpi.innerHTML = renderKPIs();
         if (content) content.innerHTML = currentView === 'lista' ? renderListView()
             : renderGroupedView();
         bindTableActions();
@@ -687,9 +699,10 @@ window.Mazelab.Modules.PayablesModule = (function () {
 
         var amountLabel = document.getElementById('pay-amount-label');
         if (docType === 'bh' && amount > 0) {
-            // amount = TRANSFERENCIA al proveedor (neto); retención = amount * rate, pagada al SII por el empleador
-            var rate = getBHRetentionRate(billingDate);
-            var ret  = Math.round(amount * rate);
+            // amount = TRANSFERENCIA al proveedor (líquido); retención = líquido × tasa/(1−tasa), pagada al SII por el empleador
+            var M = window.Mazelab.Money;
+            var ret  = M.bhRetencion(amount, billingDate);
+            var rate = M.bhRetentionRate(billingDate);
             var totalCosto = amount + ret;
             if (amountLabel) amountLabel.textContent = 'Monto a transferir al proveedor';
             preview.style.display = 'block';
@@ -697,9 +710,9 @@ window.Mazelab.Modules.PayablesModule = (function () {
                 '<br>Retenci\u00f3n ' + (rate * 100).toFixed(2) + '%: <strong>' + formatCLP(ret) + '</strong> (queda en tu cuenta para SII)' +
                 '<br>Costo real total: <strong>' + formatCLP(totalCosto) + '</strong>';
         } else if (docType === 'factura' && amount > 0) {
-            // amount = TOTAL a transferir (incluye IVA); neto = amount/1.19; IVA es crédito fiscal
-            var neto = Math.round(amount / 1.19);
-            var iva  = amount - neto;
+            // amount = TOTAL a transferir (incluye IVA); neto y crédito IVA vía shared/money.js
+            var neto = window.Mazelab.Money.facturaNeto(amount);
+            var iva  = window.Mazelab.Money.ivaCredito(amount);
             if (amountLabel) amountLabel.textContent = 'Monto total a transferir (incluye IVA)';
             preview.style.display = 'block';
             preview.innerHTML = '\u24d8 Factura &middot; Monto neto al proveedor: <strong>' + formatCLP(neto) + '</strong>' +
@@ -913,14 +926,15 @@ window.Mazelab.Modules.PayablesModule = (function () {
         if (summaryEl) {
             var extraLine = '';
             if (isBH(p) && amount > 0) {
-                var rate = getBHRetentionRate(p.billingDate || p.eventDate);
-                var ret  = Math.round(amount * rate);
+                var M = window.Mazelab.Money;
+                var ret  = M.bhRetencion(amount, p.billingDate || p.eventDate);
+                var rate = M.bhRetentionRate(p.billingDate || p.eventDate);
                 var totalCosto = amount + ret;
                 extraLine = '<br><span style="color:var(--text-muted);font-size:12px">Retenci\u00f3n SII (' + (rate * 100).toFixed(2) + '%): ' + formatCLP(ret) +
                             ' &middot; Costo total: ' + formatCLP(totalCosto) + '</span>';
             } else if (isFactura(p) && amount > 0) {
-                var neto = Math.round(amount / 1.19);
-                var iva  = amount - neto;
+                var neto = window.Mazelab.Money.facturaNeto(amount);
+                var iva  = window.Mazelab.Money.ivaCredito(amount);
                 extraLine = '<br><span style="color:var(--text-muted);font-size:12px">Neto proveedor: ' + formatCLP(neto) + ' &middot; IVA cr\u00e9dito: ' + formatCLP(iva) + '</span>';
             }
             summaryEl.innerHTML =
@@ -980,7 +994,10 @@ window.Mazelab.Modules.PayablesModule = (function () {
             var fresh = payables.find(function (x) { return x.id === payableId; });
             if (fresh) refreshAbonoContent(fresh);
             refreshView();
-        } catch (err) { console.error('PayablesModule: deletePayment error', err); }
+        } catch (err) {
+            console.error('PayablesModule: deletePayment error', err);
+            UI.toast('ERROR: no se eliminó — ' + err.message, 'error');
+        }
     }
 
     async function handleAbonoSave(e) {
@@ -1045,10 +1062,14 @@ window.Mazelab.Modules.PayablesModule = (function () {
                 record.payments = [];
                 await window.Mazelab.DataService.create('payables', record);
             }
+            UI.toast('Guardado en la base de datos');
             closeEditModal();
             await loadData();
             refreshView();
-        } catch (err) { console.error('PayablesModule: Save error', err); alert('Error al guardar el costo.'); }
+        } catch (err) {
+            console.error('PayablesModule: Save error', err);
+            UI.toast('ERROR: no se guardó — ' + err.message, 'error');
+        }
     }
 
     async function deletePayable(id) {
@@ -1057,7 +1078,10 @@ window.Mazelab.Modules.PayablesModule = (function () {
             await window.Mazelab.DataService.remove('payables', id);
             await loadData();
             refreshView();
-        } catch (err) { console.error('PayablesModule: Delete error', err); }
+        } catch (err) {
+            console.error('PayablesModule: Delete error', err);
+            UI.toast('ERROR: no se eliminó — ' + err.message, 'error');
+        }
     }
 
     // ── Bind table actions ─────────────────────────────────────────────
@@ -1147,9 +1171,9 @@ window.Mazelab.Modules.PayablesModule = (function () {
         //         payments (JSONB array: [{id, amount, date, method, comment}])
         // CONVENCION DE MONTO (actualizado 2025-03-05):
         //   - amount = siempre lo que se transfiere al proveedor/trabajador (monto real de la transferencia)
-        //   - BH:      amount = neto transferido; retención = amount * rate (pagada al SII por el empleador)
-        //              costo total = amount + retención
-        //   - Factura: amount = total con IVA (lo que se transfiere); neto = amount/1.19; IVA = amount - neto
+        //   - BH:      amount = líquido transferido; retención = Money.bhRetencion(amount, fecha) = líquido × tasa/(1−tasa)
+        //              costo total = amount + retención (fórmulas en shared/money.js)
+        //   - Factura: amount = total con IVA (lo que se transfiere); neto = Money.facturaNeto(amount); IVA = Money.ivaCredito(amount)
         //   - Otros:   amount = monto directo
         console.log('[CXP] Loaded', payables.length, 'payables,', cachedSales.length, 'sales. Using Supabase:', window.Mazelab.DataService.isUsingSupabase());
 

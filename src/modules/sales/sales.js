@@ -12,6 +12,14 @@ window.Mazelab.Modules.SalesModule = (function () {
     let eventCosts = {}; // { [saleId|eventId]: totalAmount }
     let columnFilters = {}; // { colKey: 'filterText' }
 
+    // Feedback visual (toast) — defensivo: los harnesses de Node cargan este módulo
+    // con window mockeado y sin window.Mazelab.UI, así que no debe romper.
+    var UI = (window.Mazelab && window.Mazelab.UI) || {
+        toast: function () {},
+        showOfflineBanner: function () {},
+        showTestModeBanner: function () {}
+    };
+
     function formatCLP(amount) {
         if (amount == null || isNaN(amount)) return '$0';
         return '$' + Number(amount).toFixed(0).replace(/\B(?=(\d{3})+(?!\d))/g, '.');
@@ -76,7 +84,7 @@ window.Mazelab.Modules.SalesModule = (function () {
                 const clientName = (sale.clientName || getClientName(sale.clientId)).toLowerCase();
                 const eventName = (sale.eventName || '').toLowerCase();
                 const serviceNames = getServiceNames(sale.serviceIds).toLowerCase();
-                const sourceId = String(sale.sourceId || '').toLowerCase();
+                const sourceId = String(sale.sourceId || sale.id || '').toLowerCase();
                 return clientName.includes(q) || eventName.includes(q) || serviceNames.includes(q) || sourceId.includes(q);
             }
             return true;
@@ -89,6 +97,7 @@ window.Mazelab.Modules.SalesModule = (function () {
                     const fv = (columnFilters[col] || '').toLowerCase();
                     let val;
                     if (col === '_status') val = getEffectiveStatus(sale);
+                    else if (col === 'sourceId') val = String(sale.sourceId || sale.id || '');
                     else val = String(sale[col] || '');
                     return val.toLowerCase().includes(fv);
                 });
@@ -175,7 +184,7 @@ window.Mazelab.Modules.SalesModule = (function () {
             const utilidad = (Number(sale.amount) || 0) - cost;
             const margenPct = (Number(sale.amount) || 0) > 0 ? utilidad / Number(sale.amount) : null;
             const marginClass = utilidad >= 0 ? 'text-success' : 'text-danger';
-            const displayId = sale.sourceId || '';
+            const displayId = sale.sourceId || sale.id || '';
             return `
                 <tr data-id="${sale.id}">
                     <td style="font-size:12px;font-weight:600;white-space:nowrap">${displayId}</td>
@@ -287,6 +296,10 @@ window.Mazelab.Modules.SalesModule = (function () {
                         <div class="form-group">
                             <label for="sale-amount">Monto</label>
                             <input type="number" id="sale-amount" class="form-control" min="0" step="1" placeholder="0" />
+                        </div>
+                        <div class="form-group" style="flex:0 0 100px;">
+                            <label for="sale-comision">% Comisi&oacute;n</label>
+                            <input type="number" id="sale-comision" class="form-control" min="0" max="100" step="0.5" placeholder="0" />
                         </div>
                     </div>
 
@@ -635,6 +648,14 @@ window.Mazelab.Modules.SalesModule = (function () {
 
         if (!overlay || !form) return;
 
+        // Mostrar el modal y reconstruir dropdowns ANTES de poblar valores:
+        // populateDropdowns() reescribe el select de vendedor y los checkboxes
+        // de servicios, así que poblarlos antes dejaría la selección borrada
+        // al guardar (getFormData leería checkboxes recién creados sin checked).
+        // El datalist de clientes necesita el modal visible: overlay primero.
+        overlay.classList.add('active');
+        populateDropdowns();
+
         if (sale) {
             editingId = sale.id;
             title.textContent = 'Editar Venta';
@@ -660,6 +681,7 @@ window.Mazelab.Modules.SalesModule = (function () {
             document.getElementById('sale-closing-date').value = closingVal;
             document.getElementById('sale-jornadas').value = sale.jornadas != null ? sale.jornadas : '';
             document.getElementById('sale-amount').value = sale.amount != null ? sale.amount : '';
+            document.getElementById('sale-comision').value = sale.comisionPct != null ? sale.comisionPct : '';
 
             // Staff — prefer staffId; fallback to name-match for imported records
             var staffSelEl = document.getElementById('sale-staff');
@@ -682,10 +704,15 @@ window.Mazelab.Modules.SalesModule = (function () {
 
             // Check service checkboxes — prefer serviceIds; fallback to name-match for imported records
             const checkboxes = document.querySelectorAll('.sale-service-cb');
-            const sids = Array.isArray(sale.serviceIds) ? sale.serviceIds : [];
+            var rawSids = sale.serviceIds;
+            // Parse if stored as JSON string
+            if (typeof rawSids === 'string') {
+                try { rawSids = JSON.parse(rawSids); } catch (e) { rawSids = []; }
+            }
+            const sids = Array.isArray(rawSids) ? rawSids.map(String) : [];
             if (sids.length > 0) {
                 checkboxes.forEach(cb => {
-                    cb.checked = sids.includes(cb.value) || sids.includes(Number(cb.value));
+                    cb.checked = sids.includes(String(cb.value));
                 });
             } else if (sale.serviceNames) {
                 var svcNameList = sale.serviceNames.split(/[,;\/+]/).map(function(s) { return s.trim().toLowerCase(); }).filter(Boolean);
@@ -738,11 +765,6 @@ window.Mazelab.Modules.SalesModule = (function () {
             if (traspasoFieldsDiv) traspasoFieldsDiv.style.display = 'none';
             if (traspasoArrow) traspasoArrow.style.transform = '';
         }
-
-        overlay.classList.add('active');
-
-        // Populate dropdowns AFTER modal is visible (datalist needs visible parent)
-        populateDropdowns();
 
         // Service search filter
         var svcSearch = document.getElementById('sale-svc-search');
@@ -816,8 +838,11 @@ window.Mazelab.Modules.SalesModule = (function () {
 
     function getFormData() {
         const selectedServices = [];
+        var selectedServiceNames = [];
         document.querySelectorAll('.sale-service-cb:checked').forEach(cb => {
             selectedServices.push(cb.value);
+            var svc = services.find(function (s) { return String(s.id) === String(cb.value); });
+            if (svc) selectedServiceNames.push(svc.name || svc.nombre || '');
         });
 
         const clientNameVal = (document.getElementById('sale-clientName').value || '').trim();
@@ -831,6 +856,7 @@ window.Mazelab.Modules.SalesModule = (function () {
             eventDate: document.getElementById('sale-event-date').value,
             closingDate: document.getElementById('sale-closing-date').value || new Date().toISOString().split('T')[0],
             serviceIds: selectedServices,
+            serviceNames: selectedServiceNames.join(', '),
             jornadas: document.getElementById('sale-jornadas').value ? Number(document.getElementById('sale-jornadas').value) : null,
             amount: document.getElementById('sale-amount').value ? Number(document.getElementById('sale-amount').value) : 0,
             staffId: document.getElementById('sale-staff').value,
@@ -838,6 +864,7 @@ window.Mazelab.Modules.SalesModule = (function () {
             comments: document.getElementById('sale-comments').value,
             hasIssue: document.getElementById('sale-has-issue').checked,
             refundAmount: document.getElementById('sale-refund-amount').value ? Number(document.getElementById('sale-refund-amount').value) : 0,
+            comisionPct: document.getElementById('sale-comision').value ? Number(document.getElementById('sale-comision').value) : 0,
             traspaso: buildTraspasoObject()
         };
     }
@@ -846,23 +873,77 @@ window.Mazelab.Modules.SalesModule = (function () {
         e.preventDefault();
         const data = getFormData();
         const DS = window.Mazelab.DataService;
+        // Capturado ANTES de closeModal() (que resetea editingId a null) — el bloque 2
+        // (CXP, secundario) necesita saber en qué rama estábamos, incluso después de
+        // cerrar el modal.
+        var wasEditing = !!editingId;
+        var savedSaleId = wasEditing ? editingId : null;
+        var sid, ssid; // resueltos en el bloque 1 (rama edición), usados por el bloque 2
 
+        // =====================================================================
+        // BLOQUE 1 — escritura de la venta + su CXC (identidad financiera del
+        // evento). Si falla, la venta NO quedó guardada: error visible, modal
+        // sigue abierto, sin invitar a reintentar como si hubiera funcionado.
+        // =====================================================================
         try {
-            if (editingId) {
+            if (wasEditing) {
                 await DS.update('sales', editingId, data);
                 // Sincronizar la CXC auto-generada con los datos actualizados de la venta
                 // Sync ALL linked CXC — match by multiple IDs
                 var editedSale = sales.find(function (s) { return s.id === editingId; });
-                var sid = String(editingId);
-                var ssid = editedSale ? String(editedSale.sourceId || '') : '';
+                sid = String(editingId);
+                ssid = editedSale ? String(editedSale.sourceId || '') : '';
                 var allReceivables = await DS.getAll('receivables') || [];
+                // Clasificación FACTURA vs RESIDUAL (I4): una factura sin número NO es
+                // residual — no se le pueden sobrescribir los montos.
+                // FACTURA: sourceType 'factura', o invoicedAmount > 0, o invoiceNumber no vacío.
+                // RESIDUAL: status que declara sin factura, o ninguna señal de factura.
+                // (El status declarado gana: las residuales legacy con el bug de
+                // invoicedAmount = netoRestante siguen sincronizándose como residuales.)
+                // Definida ANTES del filtro primario porque el fallback fuzzy también la usa.
+                var isFacturaCXC = function (r) {
+                    if (r.status === 'sin_factura' || r.status === 'pendiente_factura') return false;
+                    return r.sourceType === 'factura' ||
+                           Number(r.invoicedAmount) > 0 ||
+                           !!(r.invoiceNumber && String(r.invoiceNumber).trim() !== '');
+                };
+                // (I2) Las NC jamás entran a linkedCXCs: si no se excluyen aquí, isFacturaCXC
+                // las clasifica como factura (suelen traer invoicedAmount/invoiceNumber) y su
+                // monto se suma a totalAlreadyInvoiced, descontando la nota de crédito dos
+                // veces (ya descontó vía _ncOffset en el flujo de facturación) e inflando el
+                // saldo pendiente hacia abajo incorrectamente.
                 var linkedCXCs = allReceivables.filter(function (r) {
+                    if (r.tipoDoc === 'NC') return false;
                     var rSaleId = String(r.saleId || '');
                     var rEventId = String(r.eventId || '');
                     var rSourceId = String(r.sourceId || '');
                     return rSaleId === sid || rEventId === sid || rSourceId === sid ||
                            (ssid && (rSaleId === ssid || rEventId === ssid || rSourceId === ssid));
                 });
+                // Último recurso: si ningún ID calza, buscar por identidad de evento
+                // (evita crear una CXC fantasma cuando los IDs no coinciden, p. ej.
+                // ventas importadas con sourceId vacío).
+                // (B1) Endurecido: solo se activa si la venta trae eventName Y eventDate
+                // (sin ambos no hay señal suficiente para adoptar una CXC ajena), la
+                // candidata no es NC, no es una factura (isFacturaCXC) y está huérfana o
+                // ya apunta a esta venta (por saleId y por sourceId). Si hay 2+ candidatas
+                // ambiguas no se adopta ninguna — se prefiere crear una CXC propia antes
+                // que secuestrar la de otra venta.
+                if (linkedCXCs.length === 0 && (data.eventName || '') && (data.eventDate || '')) {
+                    var fuzzy = allReceivables.filter(function (r) {
+                        if (r.tipoDoc === 'NC') return false;
+                        if (isFacturaCXC(r)) return false;
+                        var rSaleIdF = String(r.saleId || '');
+                        var rSourceIdF = String(r.sourceId || '');
+                        var isOrphanOrOwn = (!r.saleId || rSaleIdF === sid || rSaleIdF === ssid) &&
+                                             (!r.sourceId || rSourceIdF === sid || rSourceIdF === ssid);
+                        if (!isOrphanOrOwn) return false;
+                        return (r.eventName || '') === (data.eventName || '') &&
+                               (r.clientName || '') === (data.clientName || '') &&
+                               (r.eventDate || '') === (data.eventDate || '');
+                    });
+                    if (fuzzy.length === 1) linkedCXCs = fuzzy;
+                }
                 // If no CXC exists, create one (fixes orphaned sales)
                 if (linkedCXCs.length === 0 && data.amount > 0) {
                     await DS.create('receivables', {
@@ -883,8 +964,7 @@ window.Mazelab.Modules.SalesModule = (function () {
                 var totalAlreadyInvoiced = 0;
                 for (var ri = 0; ri < linkedCXCs.length; ri++) {
                     var cxcRec = linkedCXCs[ri];
-                    var hasInvoice = cxcRec.invoiceNumber && cxcRec.invoiceNumber !== '';
-                    if (hasInvoice) {
+                    if (isFacturaCXC(cxcRec)) {
                         // Already invoiced: only update event metadata, NOT amounts
                         totalAlreadyInvoiced += Number(cxcRec.montoNeto || cxcRec.invoicedAmount || cxcRec.monto_venta || 0);
                         await DS.update('receivables', cxcRec.id, {
@@ -894,34 +974,25 @@ window.Mazelab.Modules.SalesModule = (function () {
                         });
                     }
                 }
-                // Update sinFactura (residual) CXCs with correct remaining amount
+                // Update sinFactura (residual) CXCs with correct remaining amount.
+                // (I3) Solo se actualiza la PRIMERA residual con el monto completo. Si hay
+                // 2+ residuales huérfanas (dato inconsistente / duplicado), escribir el
+                // mismo residualAmount en todas multiplicaría el saldo pendiente real —
+                // las demás quedan intactas y se deja constancia por consola para revisión manual.
                 var newSaleAmount = data.amount || 0;
                 var residualAmount = Math.max(0, newSaleAmount - totalAlreadyInvoiced);
-                for (var ri2 = 0; ri2 < linkedCXCs.length; ri2++) {
-                    var cxcRec2 = linkedCXCs[ri2];
-                    var hasInvoice2 = cxcRec2.invoiceNumber && cxcRec2.invoiceNumber !== '';
-                    if (!hasInvoice2) {
-                        await DS.update('receivables', cxcRec2.id, {
-                            eventName: data.eventName,
-                            eventDate: data.eventDate,
-                            clientName: data.clientName,
-                            monto_venta: residualAmount,
-                            montoNeto: residualAmount,
-                            amount: residualAmount
-                        });
-                    }
+                var residualCXCs = linkedCXCs.filter(function (r) { return !isFacturaCXC(r); });
+                if (residualCXCs.length > 1) {
+                    console.warn('Venta con múltiples CXC residuales, se actualizó solo la primera: ' + sid);
                 }
-                // Sincronizar CXP vinculados con datos actualizados
-                var allPayables = await DS.getAll('payables') || [];
-                var linkedCXPs = allPayables.filter(function (p) {
-                    var pEid = String(p.eventId || '');
-                    return pEid === sid || (ssid && pEid === ssid);
-                });
-                for (var pi = 0; pi < linkedCXPs.length; pi++) {
-                    await DS.update('payables', linkedCXPs[pi].id, {
+                if (residualCXCs.length > 0) {
+                    await DS.update('receivables', residualCXCs[0].id, {
                         eventName: data.eventName,
+                        eventDate: data.eventDate,
                         clientName: data.clientName,
-                        eventDate: data.eventDate
+                        monto_venta: residualAmount,
+                        montoNeto: residualAmount,
+                        amount: residualAmount
                     });
                 }
             } else {
@@ -964,7 +1035,7 @@ window.Mazelab.Modules.SalesModule = (function () {
                     encargado: '',
                     kanbanNotes: ''
                 }));
-                const saleId = createdSale ? createdSale.id : null;
+                savedSaleId = createdSale ? createdSale.id : null;
 
                 // Auto-create CXC (receivable) for this sale
                 await DS.create('receivables', {
@@ -977,10 +1048,42 @@ window.Mazelab.Modules.SalesModule = (function () {
                     invoicedAmount: 0,
                     amountPaid: 0,
                     status: 'sin_factura',
-                    saleId: saleId,
+                    saleId: savedSaleId,
                     sourceType: 'auto'
                 });
+            }
+        } catch (err) {
+            console.error('Error guardando venta:', err);
+            UI.toast('ERROR: no se guardó — ' + err.message, 'error');
+            return; // la venta NO quedó guardada — modal abierto, sin refrescar como si hubiera funcionado
+        }
 
+        // La venta (y su CXC) ya están guardadas: confirmar y cerrar de inmediato.
+        // Lo que sigue (CXP, recarga) es secundario — un fallo ahí NUNCA debe
+        // decir "no se guardó" ni reabrir el modal invitando a duplicar la venta.
+        UI.toast('Guardado en la base de datos');
+        closeModal();
+
+        // =====================================================================
+        // BLOQUE 2 — sincronización de CXP (secundaria). La venta YA se guardó;
+        // un fallo aquí se reporta aparte y jamás como "no se guardó".
+        // =====================================================================
+        try {
+            if (wasEditing) {
+                // Sincronizar CXP vinculados con datos actualizados
+                var allPayables = await DS.getAll('payables') || [];
+                var linkedCXPs = allPayables.filter(function (p) {
+                    var pEid = String(p.eventId || '');
+                    return pEid === sid || (ssid && pEid === ssid);
+                });
+                for (var pi = 0; pi < linkedCXPs.length; pi++) {
+                    await DS.update('payables', linkedCXPs[pi].id, {
+                        eventName: data.eventName,
+                        clientName: data.clientName,
+                        eventDate: data.eventDate
+                    });
+                }
+            } else {
                 // Auto-generate CXP draft entries from service cost templates
                 const drafts = [];
                 (data.serviceIds || []).forEach(function (svcId) {
@@ -1006,7 +1109,7 @@ window.Mazelab.Modules.SalesModule = (function () {
                                     return 'ninguno';
                                 })(item.tipo_beneficiario),
                                 status: 'pendiente',
-                                eventId: saleId
+                                eventId: savedSaleId
                             });
                         });
                     }
@@ -1015,16 +1118,24 @@ window.Mazelab.Modules.SalesModule = (function () {
                     await DS.create('payables', draft);
                 }
             }
-            // Reload sales and payables (new sale may have auto-created CXP)
+        } catch (err) {
+            console.error('Error sincronizando CXP tras guardar venta:', err);
+            UI.toast('La venta se guardó, pero la sincronización de costos falló — revisa CXP', 'error');
+        }
+
+        // =====================================================================
+        // BLOQUE 3 — recarga de la vista. La venta YA se guardó; un fallo aquí
+        // NUNCA debe reportarse como "no se guardó".
+        // =====================================================================
+        try {
             const [freshSales, freshPayables] = await Promise.all([DS.getAll('sales'), DS.getAll('payables')]);
             sales = freshSales || [];
             payables = freshPayables || [];
             buildEventCostsMap();
             refreshTable();
-            closeModal();
         } catch (err) {
-            console.error('Error guardando venta:', err);
-            alert('Error al guardar la venta.');
+            console.error('Error recargando datos tras guardar venta:', err);
+            UI.toast('Guardado OK — la recarga falló, actualiza la página', 'error');
         }
     }
 
@@ -1039,13 +1150,20 @@ window.Mazelab.Modules.SalesModule = (function () {
             const allReceivables = await DS.getAll('receivables') || [];
             const allPayables = await DS.getAll('payables') || [];
 
+            var saleSourceId = sale ? String(sale.sourceId || '') : '';
             const linkedCXC = allReceivables.filter(function (r) {
-                return String(r.saleId) === String(id) ||
-                    (r.sourceType === 'auto' && sale && r.eventName === sale.eventName && r.eventDate === sale.eventDate);
+                if (String(r.saleId) === String(id)) return true;
+                if (saleSourceId && String(r.saleId) === saleSourceId) return true;
+                if (saleSourceId && String(r.sourceId) === saleSourceId) return true;
+                if (r.sourceType === 'auto' && sale && r.eventName === sale.eventName && r.eventDate === sale.eventDate) return true;
+                return false;
             });
             const linkedCXP = allPayables.filter(function (p) {
-                return String(p.saleId) === String(id) ||
-                    (p.sourceType === 'auto' && sale && p.eventName === sale.eventName && p.eventDate === sale.eventDate);
+                if (String(p.saleId) === String(id)) return true;
+                if (saleSourceId && String(p.saleId) === saleSourceId) return true;
+                if (saleSourceId && String(p.eventId) === saleSourceId) return true;
+                if (p.sourceType === 'auto' && sale && p.eventName === sale.eventName && p.eventDate === sale.eventDate) return true;
+                return false;
             });
 
             // Build warning message

@@ -68,19 +68,7 @@ window.Mazelab.Modules.ImportModule = (function () {
     // --- Utility functions ---
 
     function parseAmount(val) {
-        if (!val || val === '.' || val === '0') return 0;
-        let str = String(val).replace(/[$\s]/g, '');
-        if (str.includes('#') || str.includes('REF')) return 0;
-        const commaCount = (str.match(/,/g) || []).length;
-        const dotCount = (str.match(/\./g) || []).length;
-        if (commaCount > 1) str = str.replace(/,/g, '');
-        else if (dotCount > 1) str = str.replace(/\./g, '');
-        else if (commaCount === 1 && dotCount === 0) {
-            const afterComma = str.split(',')[1];
-            if (afterComma && afterComma.length === 3) str = str.replace(',', '');
-            else str = str.replace(',', '.');
-        }
-        return Number(str) || 0;
+        return window.Mazelab.Money.parseAmountCL(val);
     }
 
     function parseDate(val) {

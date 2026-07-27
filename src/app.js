@@ -15,6 +15,7 @@ window.Mazelab.Modules = window.Mazelab.Modules || {};
         cotizador: 'CotizadorModule',
         cashflow: 'CashflowModule',
         analytics: 'AnalyticsModule',
+        'cxc-kanban': 'CxcKanbanModule',
         settings: 'SettingsModule',
         import: 'ImportModule'
     };
@@ -63,7 +64,17 @@ window.Mazelab.Modules = window.Mazelab.Modules || {};
             setTimeout(() => {
                 wrapTables();
                 const p = mod.init();
-                if (p && p.then) p.then(wrapTables);
+                if (p && p.then) p.then(function () {
+                    wrapTables();
+                    // Refresh alerts badge after data loads
+                    if (window.Mazelab.AlertsService) window.Mazelab.AlertsService.invalidate();
+                    if (window.Mazelab.AlertsPanel) window.Mazelab.AlertsPanel.refresh();
+                }).catch(function (e) {
+                    // mod.init() ya debería manejar sus propios errores de carga y pintar
+                    // un mensaje visible en su contenedor — esto es solo la red de seguridad
+                    // para que un rechazo no gestionado no quede como unhandled rejection.
+                    console.warn('navigateTo: mod.init() rechazó para la ruta "' + route + '":', e);
+                });
                 setTimeout(wrapTables, 500);
             }, 0);
         }
@@ -114,8 +125,24 @@ window.Mazelab.Modules = window.Mazelab.Modules || {};
             try {
                 await window.Mazelab.DataService.init();
             } catch (e) {
-                console.warn('DataService init failed, using localStorage fallback:', e);
+                // init() está diseñado para NO lanzar nunca (maneja conexión fallida
+                // activando readOnly, no hay fallback a localStorage fuera de ?localdev=1).
+                // Si de todos modos lanza, es un bug real — no lo disfracemos de fallback.
+                console.error('DataService.init() lanzó inesperadamente:', e);
             }
+        }
+
+        // Initialize alerts panel (bell + badge)
+        if (window.Mazelab.AlertsPanel) {
+            var alertsInit = window.Mazelab.AlertsPanel.init();
+            if (alertsInit && alertsInit.catch) {
+                alertsInit.catch(function (e) { console.warn('AlertsPanel.init() rechazó:', e); });
+            }
+        }
+
+        // Initialize chatbot (only if AI service has API key)
+        if (window.Mazelab.Chatbot) {
+            window.Mazelab.Chatbot.init();
         }
 
         // Set up nav clicks + mobile sidebar close
