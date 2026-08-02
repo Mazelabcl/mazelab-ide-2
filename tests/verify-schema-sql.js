@@ -75,6 +75,57 @@ function parseSchema(sqlText) {
     return { tables: tables, rlsEnabled: rlsEnabled, policyBlocks: policyBlocks, grantBlocks: grantBlocks };
 }
 
+// --------------------------------------------------------------------------
+// Parser de politicas: extrae nombre + roles de USING/WITH CHECK de un bloque
+// CREATE POLICY. No es un parser SQL general — hace matching de parentesis
+// balanceados (no un regex ingenuo) porque el contenido real tiene parentesis
+// anidados, ej. USING ((SELECT public.get_role()) IN ('a', 'b')).
+// --------------------------------------------------------------------------
+function extractParenAfter(text, keywordRegex) {
+    const m = keywordRegex.exec(text);
+    if (!m) return null;
+    let i = m.index + m[0].length;
+    while (i < text.length && text[i] !== '(') i++;
+    if (text[i] !== '(') return null;
+    let depth = 0;
+    const start = i;
+    for (; i < text.length; i++) {
+        if (text[i] === '(') depth++;
+        else if (text[i] === ')') {
+            depth--;
+            if (depth === 0) return text.slice(start + 1, i);
+        }
+    }
+    return null;
+}
+
+// Devuelve 'any' (USING/WITH CHECK true, sin gating por rol), un array de
+// roles ordenado (de un IN (...) o un = 'rol'), o null si no reconoce el patron.
+function parsePolicyRoles(clauseText) {
+    const trimmed = clauseText.trim();
+    if (/^true$/i.test(trimmed)) return 'any';
+    const inMatch = trimmed.match(/IN\s*\(([^)]*)\)/i);
+    if (inMatch) {
+        return inMatch[1].split(',').map(function (s) {
+            return s.trim().replace(/^'|'$/g, '');
+        }).sort();
+    }
+    const eqMatch = trimmed.match(/=\s*'([^']*)'/);
+    if (eqMatch) return [eqMatch[1]];
+    return null;
+}
+
+function parsePolicyBlock(block) {
+    const nameMatch = block.match(/CREATE POLICY\s+"([^"]+)"/);
+    const name = nameMatch ? nameMatch[1] : '(sin nombre)';
+    const result = { name: name };
+    const usingContent = extractParenAfter(block, /\bUSING\s*/i);
+    const checkContent = extractParenAfter(block, /\bWITH\s+CHECK\s*/i);
+    if (usingContent !== null) result.USING = parsePolicyRoles(usingContent);
+    if (checkContent !== null) result['WITH CHECK'] = parsePolicyRoles(checkContent);
+    return result;
+}
+
 function buildNumericFieldsByTable(parsed) {
     const numeric = {};
     const bigint = {};
@@ -118,6 +169,30 @@ const EXPECTED_NUMERIC_FIELDS = {
     cotizaciones: ['descuento', 'descuentoPct', 'subtotal', 'totalNeto', 'validezDias', 'version']
 };
 
+// Matriz exacta de roles esperados por politica y clausula (USING / WITH
+// CHECK). 'any' = sin gating por rol (USING/WITH CHECK true, cualquier
+// authenticated). Si alguien agrega o quita un rol de una politica de
+// escritura (o cambia una politica de lectura abierta a una con gating), esta
+// prueba lo detecta explicitamente en vez de dejarlo pasar en silencio.
+const EXPECTED_POLICY_MATRIX = {
+    ventas_select_authenticated:       { USING: 'any' },
+    ventas_write_comercial:            { USING: ['comercial', 'socio', 'superadmin'], 'WITH CHECK': ['comercial', 'socio', 'superadmin'] },
+    facturas_select_authenticated:     { USING: 'any' },
+    facturas_write_comercial:          { USING: ['comercial', 'socio', 'superadmin'], 'WITH CHECK': ['comercial', 'socio', 'superadmin'] },
+    cotizaciones_select_authenticated: { USING: 'any' },
+    cotizaciones_write_comercial:      { USING: ['comercial', 'socio', 'superadmin'], 'WITH CHECK': ['comercial', 'socio', 'superadmin'] },
+    costos_select_authenticated:       { USING: 'any' },
+    costos_write_socios:               { USING: ['socio', 'superadmin'], 'WITH CHECK': ['socio', 'superadmin'] },
+    servicios_all_authenticated:       { USING: 'any', 'WITH CHECK': 'any' },
+    personal_all_authenticated:        { USING: 'any', 'WITH CHECK': 'any' },
+    clientes_all_authenticated:        { USING: 'any', 'WITH CHECK': 'any' },
+    equipos_all_authenticated:         { USING: 'any', 'WITH CHECK': 'any' },
+    config_select_authenticated:       { USING: 'any' },
+    config_write_socios:               { USING: ['socio', 'superadmin'], 'WITH CHECK': ['socio', 'superadmin'] },
+    profiles_select_authenticated:     { USING: 'any' },
+    profiles_update_superadmin:        { USING: ['superadmin'], 'WITH CHECK': ['superadmin'] }
+};
+
 // --------------------------------------------------------------------------
 // Runner
 // --------------------------------------------------------------------------
@@ -155,9 +230,17 @@ function runVerification() {
         } catch (e) {
             console.error('No se pudo parsear el respaldo en ' + backupPath + ': ' + e.message);
         }
-    } else {
+    } else if (process.env.SKIP_BACKUP_CHECK === '1') {
         console.error('AVISO: no se encontró el respaldo real en ' + backupPath +
-            ' — se omiten los checks (b)/(e) contra datos reales. Pasa --backup=<ruta> para apuntar a otro lugar.');
+            ' — SKIP_BACKUP_CHECK=1 activo, se omiten intencionalmente los checks (b)/(e) contra datos reales.');
+    } else {
+        console.error('ERROR: no se encontró el respaldo real en ' + backupPath + '.');
+        console.error('Este verificador requiere el respaldo para validar la cobertura de columnas (check b) y');
+        console.error('el conteo de filas esperado contra datos reales — no se puede omitir en silencio.');
+        console.error('Opciones: pasa --backup=<ruta> o la variable de entorno MAZELAB_BACKUP_PATH para apuntar');
+        console.error('a otro lugar, o exporta SKIP_BACKUP_CHECK=1 para omitir esta verificación a propósito');
+        console.error('(solo para máquinas que no tienen el respaldo — no usar por defecto).');
+        process.exit(1);
     }
 
     console.log('=== Verificación supabase/schema.sql ===\n');
@@ -229,6 +312,81 @@ function runVerification() {
     t('(e) boardOrder es BIGINT (único caso, epoch-millis)', function () {
         const big = numericInfo.bigint.ventas || [];
         assert(big.indexOf('boardOrder') !== -1, 'ventas."boardOrder" no está declarado BIGINT en schema.sql');
+    });
+
+    // (f) Matriz exacta de roles por política — falla si se agrega/quita un rol
+    t('(f) matriz exacta de roles permitidos por política (USING / WITH CHECK)', function () {
+        const found = {};
+        parsed.policyBlocks.forEach(function (block) {
+            const p = parsePolicyBlock(block);
+            found[p.name] = p;
+        });
+        const errors = [];
+        Object.keys(EXPECTED_POLICY_MATRIX).forEach(function (name) {
+            const expected = EXPECTED_POLICY_MATRIX[name];
+            const actual = found[name];
+            if (!actual) { errors.push(name + ': política no encontrada en schema.sql'); return; }
+            ['USING', 'WITH CHECK'].forEach(function (clause) {
+                if (!(clause in expected)) return;
+                const expRoles = expected[clause];
+                const actRoles = actual[clause];
+                if (expRoles === 'any') {
+                    if (actRoles !== 'any') {
+                        errors.push(name + '.' + clause + ': se esperaba acceso abierto (true), se encontró ' + JSON.stringify(actRoles));
+                    }
+                } else {
+                    const a = Array.isArray(actRoles) ? actRoles.slice().sort() : null;
+                    const e = expRoles.slice().sort();
+                    if (!a || a.join('|') !== e.join('|')) {
+                        errors.push(name + '.' + clause + ': se esperaban roles [' + e.join(', ') + '], se encontraron [' +
+                            (a ? a.join(', ') : 'ninguno / patrón no reconocido') + ']');
+                    }
+                }
+            });
+        });
+        Object.keys(found).forEach(function (name) {
+            if (!EXPECTED_POLICY_MATRIX[name]) {
+                errors.push(name + ': política presente en schema.sql pero no está en EXPECTED_POLICY_MATRIX (actualizar el verificador)');
+            }
+        });
+        assert(errors.length === 0, errors.join(' || '));
+    });
+
+    // (g) Toda política declara "TO authenticated" explícito
+    t('(g) toda CREATE POLICY declara "TO authenticated" (ni anon, ni public, ni ausente)', function () {
+        const offenders = [];
+        parsed.policyBlocks.forEach(function (block) {
+            const nameMatch = block.match(/CREATE POLICY\s+"([^"]+)"/);
+            const name = nameMatch ? nameMatch[1] : '(sin nombre)';
+            if (/\bTO\s+anon\b/i.test(block)) { offenders.push(name + ': declara TO anon'); return; }
+            if (/\bTO\s+public\b/i.test(block)) { offenders.push(name + ': declara TO public'); return; }
+            if (!/\bTO\s+authenticated\b/i.test(block)) {
+                offenders.push(name + ': no declara TO authenticated (la ausencia de TO implica PUBLIC en Postgres)');
+            }
+        });
+        assert(offenders.length === 0, offenders.join(' || '));
+    });
+
+    // (h) Transacción completa + orden del trigger sobre auth.users
+    t('(h) el archivo abre con BEGIN; y cierra con COMMIT;', function () {
+        // La primera sentencia SQL real (ignorando líneas en blanco y
+        // comentarios de cabecera "--") debe ser BEGIN;
+        const lines = sqlText.split(/\r?\n/);
+        let i = 0;
+        while (i < lines.length && (lines[i].trim() === '' || lines[i].trim().indexOf('--') === 0)) i++;
+        const firstStatement = lines.slice(i).join('\n').trim();
+        assert(/^BEGIN\s*;/i.test(firstStatement), 'la primera sentencia SQL (ignorando comentarios) no es BEGIN;');
+
+        const trimmed = sqlText.trim();
+        assert(/COMMIT\s*;\s*$/i.test(trimmed), 'el archivo no cierra con COMMIT; (última sentencia)');
+    });
+
+    t('(h) el trigger on_auth_user_created (sobre auth.users) está después de los REVOKE', function () {
+        const revokeIdx = sqlText.lastIndexOf('REVOKE');
+        const triggerIdx = sqlText.indexOf('CREATE TRIGGER on_auth_user_created');
+        assert(revokeIdx !== -1, 'no se encontró ningún REVOKE en schema.sql');
+        assert(triggerIdx !== -1, 'no se encontró CREATE TRIGGER on_auth_user_created en schema.sql');
+        assert(triggerIdx > revokeIdx, 'CREATE TRIGGER on_auth_user_created debe estar después del último REVOKE — es la sentencia más propensa a fallar (permisos sobre auth.users) y no debe dejar tablas con RLS a medio aplicar si falla');
     });
 
     console.log('\n' + pass + ' OK, ' + fail + ' FAIL');

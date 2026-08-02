@@ -61,7 +61,45 @@ vuelve a pegarlo", simplemente repite el paso 2 completo (selecciona todo el
 archivo de nuevo, no solo la parte que cambió). No hay riesgo de duplicar
 nada ni de perder las filas que ya existan en las tablas.
 
-## 5. Antes de que la app funcione — pasos pendientes (no son de este lote)
+**Importante — qué NO hace un re-pegado:** `CREATE TABLE IF NOT EXISTS` no
+toca una tabla que ya existe, ni siquiera si `schema.sql` le agregó una
+columna nueva en el archivo. Volver a pegar el esquema actualiza políticas
+RLS, funciones (`get_role`, `handle_new_user`, `protect_profile_columns`) y
+permisos — pero **no agrega columnas nuevas a tablas que ya existan** en tu
+proyecto Supabase. Si una tabla necesita una columna nueva, ese cambio llega
+como un `ALTER TABLE ... ADD COLUMN IF NOT EXISTS ...` aparte que entrega el
+orquestador (o lo corres tú mismo con su guía) — nunca asumas que re-pegar
+`schema.sql` sincroniza columnas.
+
+## 5. Editar un profile directo desde el SQL Editor (solo superadmin)
+
+El trigger `profiles_protect_columns` bloquea cualquier `UPDATE` que toque
+`id`, `email` o `name` en `public.profiles` — y lo bloquea **incluso si lo
+ejecutas tú mismo desde el SQL Editor** como superadmin, porque el trigger
+corre a nivel de base de datos, no distingue quién mandó el `UPDATE`. Es
+intencional (ver matriz de permisos abajo), pero si alguna vez necesitas
+corregir a mano el nombre o el email de un usuario (por ejemplo, un typo al
+crearlo), sigue estos 3 pasos en el SQL Editor:
+
+1. Desactiva el trigger temporalmente:
+   ```sql
+   ALTER TABLE public.profiles DISABLE TRIGGER profiles_protect_columns;
+   ```
+2. Corrige el dato (ejemplo cambiando el nombre):
+   ```sql
+   UPDATE public.profiles SET "name" = 'Nombre Correcto' WHERE "email" = 'persona@mazelab.cl';
+   ```
+3. **Reactiva el trigger de inmediato** (no lo dejes apagado):
+   ```sql
+   ALTER TABLE public.profiles ENABLE TRIGGER profiles_protect_columns;
+   ```
+
+Si te saltas el paso 3, cualquier `UPDATE` posterior a `profiles` — incluso
+desde la app, vía la política `profiles_update_superadmin` — podría tocar
+`id`/`email`/`name` sin la protección puesta, así que siempre corre los 3
+pasos juntos, en la misma sesión del SQL Editor.
+
+## 6. Antes de que la app funcione — pasos pendientes (no son de este lote)
 
 Estos los guía el orquestador cuando corresponda, quedan anotados aquí para
 que sepas que existen:
@@ -102,11 +140,15 @@ Notas:
 - "Cualquier usuario con sesión" = el usuario inició sesión con
   `signInWithPassword` (login normal de la app) y su cuenta está en
   `profiles`. No importa su rol específico para esas filas.
-- La fila de `profiles` en "Escritura" es la única con una restricción
-  además del rol: aunque seas superadmin, un `UPDATE` que intente tocar
-  `email` o `name` es rechazado por un trigger (`protect_profile_columns`),
-  no solo por la política RLS. Es una segunda capa de seguridad porque RLS
-  por sí sola no puede limitar un `UPDATE` a columnas específicas.
+- La fila de `profiles` en "Escritura" es la única con tres capas de
+  seguridad en vez de una: la política RLS decide QUIÉN puede hacer
+  `UPDATE` (solo superadmin); el `GRANT UPDATE ("role", "active")` limita a
+  nivel de base de datos QUÉ columnas puede tocar ese `UPDATE` (ni
+  `email` ni `name` están en la lista, así que Postgres rechaza el intento
+  antes de llegar a evaluar la fila); y el trigger `protect_profile_columns`
+  es la tercera capa, defensa en profundidad por si algo se cuela por las
+  dos anteriores. RLS por sí sola no puede limitar un `UPDATE` a columnas
+  específicas — por eso hacen falta las otras dos capas.
 - Nadie (ni superadmin) puede insertar o borrar filas de `profiles`
   directamente — esas filas las crea automáticamente el trigger
   `handle_new_user` cuando alguien se registra en Supabase Auth.

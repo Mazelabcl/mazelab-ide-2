@@ -32,10 +32,17 @@
 --
 -- Idempotencia: CREATE TABLE IF NOT EXISTS, DROP POLICY IF EXISTS + CREATE
 -- POLICY, CREATE OR REPLACE FUNCTION, DROP TRIGGER IF EXISTS + CREATE
--- TRIGGER. Todo el archivo se puede volver a pegar y correr sin error.
+-- TRIGGER. Todo el archivo se puede volver a pegar y correr sin error (ver
+-- nota en README sobre columnas nuevas en tablas ya existentes). Todo el
+-- archivo corre dentro de una unica transaccion (BEGIN/COMMIT): si algo
+-- falla a mitad de camino, Postgres revierte TODO, nunca deja tablas con
+-- RLS habilitado pero sin sus politicas, o politicas sin sus grants. El
+-- trigger sobre auth.users va al final, despues de GRANT/REVOKE, por ser la
+-- sentencia mas propensa a fallar por permisos (el schema auth no es de
+-- este proyecto) — si falla, no debe arrastrar al resto de la migracion.
 -- ============================================================================
 
-create extension if not exists pgcrypto;
+BEGIN;
 
 -- ============================================================================
 -- 1. TABLAS DE NEGOCIO (8, derivadas del respaldo real)
@@ -281,7 +288,15 @@ CREATE TABLE IF NOT EXISTS public.profiles (
 );
 
 CREATE TABLE IF NOT EXISTS public.config (
-    "key"    TEXT PRIMARY KEY,
+    -- Contrato del adaptador generico: TODAS las tablas se operan por "id"
+    -- (DataService.getAll/create/update/remove asumen PK "id" en todas las
+    -- tablas). config es la unica tabla de este archivo cuyo identificador
+    -- de negocio natural es "key" (no un id arbitrario) — se preserva "key"
+    -- como UNIQUE NOT NULL para las lecturas por nombre de config, y se
+    -- agrega "id" TEXT PRIMARY KEY para que el adaptador generico funcione
+    -- igual que en el resto de las tablas.
+    "id"     TEXT PRIMARY KEY,
+    "key"    TEXT UNIQUE NOT NULL,
     "value"  JSONB
 );
 
@@ -294,7 +309,9 @@ CREATE TABLE IF NOT EXISTS public.config (
 -- en auth.users. El rol inicial se asigna por email. Auto-registro esta
 -- CERRADO en Supabase (Auth > Providers > Email > disable signups), asi que
 -- en la practica solo el superadmin crea usuarios desde el dashboard — pero
--- el trigger igual corre para esos altas.
+-- el trigger igual corre para esos altas. El trigger que la conecta a
+-- auth.users (on_auth_user_created) se define al FINAL de este archivo, no
+-- aqui — ver seccion 7.
 -- ---------------------------------------------------------------------------
 CREATE OR REPLACE FUNCTION public.handle_new_user()
 RETURNS TRIGGER
@@ -309,7 +326,7 @@ BEGIN
         NEW.email,
         COALESCE(NEW.raw_user_meta_data->>'name', ''),
         -- ORQUESTADOR: completar emails
-        CASE NEW.email
+        CASE lower(NEW.email)
             WHEN 'aldo@mazelab.cl' THEN 'superadmin'
             -- WHEN 'socio@mazelab.cl'      THEN 'socio'
             -- WHEN 'comercial@mazelab.cl'  THEN 'comercial'
@@ -320,13 +337,21 @@ BEGIN
     )
     ON CONFLICT ("id") DO NOTHING;
     RETURN NEW;
+EXCEPTION
+    WHEN unique_violation THEN
+        -- Colision en un unique distinto de "id" (tipicamente "email": un
+        -- profile huerfano con el mismo correo, de un alta previa que quedo
+        -- desincronizada de auth.users). Crear un usuario NUNCA debe morir
+        -- con "Database error saving new user": se actualiza el profile
+        -- existente para que quede enlazado al nuevo id.
+        UPDATE public.profiles
+        SET "id" = NEW.id,
+            "name" = COALESCE(NULLIF(NEW.raw_user_meta_data->>'name', ''), "name"),
+            "active" = true
+        WHERE "email" = NEW.email;
+        RETURN NEW;
 END;
 $$;
-
-DROP TRIGGER IF EXISTS on_auth_user_created ON auth.users;
-CREATE TRIGGER on_auth_user_created
-    AFTER INSERT ON auth.users
-    FOR EACH ROW EXECUTE FUNCTION public.handle_new_user();
 
 -- ---------------------------------------------------------------------------
 -- get_role(): helper de RLS. SECURITY DEFINER + search_path fijado a
@@ -335,6 +360,10 @@ CREATE TRIGGER on_auth_user_created
 -- rol inyecte un objeto con el mismo nombre en un schema que quede antes de
 -- "public" en el search_path del llamador (hoyo de seguridad conocido y
 -- documentado por Postgres/Supabase para funciones SECURITY DEFINER).
+-- "AND active": un usuario desactivado (profiles.active = false) pierde su
+-- rol a nivel de base de datos al instante — get_role() devuelve NULL y
+-- ninguna politica de escritura lo reconoce como superadmin/socio/comercial,
+-- sin depender de que el frontend respete el flag.
 -- ---------------------------------------------------------------------------
 CREATE OR REPLACE FUNCTION public.get_role()
 RETURNS TEXT
@@ -343,7 +372,7 @@ SECURITY DEFINER
 STABLE
 SET search_path = public
 AS $$
-    SELECT role FROM public.profiles WHERE id = auth.uid();
+    SELECT role FROM public.profiles WHERE id = auth.uid() AND active;
 $$;
 
 -- ---------------------------------------------------------------------------
@@ -403,6 +432,10 @@ ALTER TABLE public.config       ENABLE ROW LEVEL SECURITY;
 --     profiles -> SELECT authenticated; UPDATE (solo role/active) superadmin;
 --                 INSERT/DELETE bloqueados para todos (los crea el trigger).
 --   anon: cero politicas en ningun lado -> cero acceso a todo.
+--   Rendimiento: toda llamada a get_role() dentro de USING/WITH CHECK va
+--   envuelta en subselect — (SELECT public.get_role()) — patron InitPlan
+--   recomendado por Supabase: Postgres la evalua una sola vez por consulta
+--   en vez de una vez por fila.
 -- ============================================================================
 
 -- ---- ventas / facturas / cotizaciones: superadmin, socio, comercial ----
@@ -412,8 +445,8 @@ CREATE POLICY "ventas_select_authenticated" ON public.ventas
 DROP POLICY IF EXISTS "ventas_write_comercial" ON public.ventas;
 CREATE POLICY "ventas_write_comercial" ON public.ventas
     FOR ALL TO authenticated
-    USING (public.get_role() IN ('superadmin', 'socio', 'comercial'))
-    WITH CHECK (public.get_role() IN ('superadmin', 'socio', 'comercial'));
+    USING ((SELECT public.get_role()) IN ('superadmin', 'socio', 'comercial'))
+    WITH CHECK ((SELECT public.get_role()) IN ('superadmin', 'socio', 'comercial'));
 
 DROP POLICY IF EXISTS "facturas_select_authenticated" ON public.facturas;
 CREATE POLICY "facturas_select_authenticated" ON public.facturas
@@ -421,8 +454,8 @@ CREATE POLICY "facturas_select_authenticated" ON public.facturas
 DROP POLICY IF EXISTS "facturas_write_comercial" ON public.facturas;
 CREATE POLICY "facturas_write_comercial" ON public.facturas
     FOR ALL TO authenticated
-    USING (public.get_role() IN ('superadmin', 'socio', 'comercial'))
-    WITH CHECK (public.get_role() IN ('superadmin', 'socio', 'comercial'));
+    USING ((SELECT public.get_role()) IN ('superadmin', 'socio', 'comercial'))
+    WITH CHECK ((SELECT public.get_role()) IN ('superadmin', 'socio', 'comercial'));
 
 DROP POLICY IF EXISTS "cotizaciones_select_authenticated" ON public.cotizaciones;
 CREATE POLICY "cotizaciones_select_authenticated" ON public.cotizaciones
@@ -430,8 +463,8 @@ CREATE POLICY "cotizaciones_select_authenticated" ON public.cotizaciones
 DROP POLICY IF EXISTS "cotizaciones_write_comercial" ON public.cotizaciones;
 CREATE POLICY "cotizaciones_write_comercial" ON public.cotizaciones
     FOR ALL TO authenticated
-    USING (public.get_role() IN ('superadmin', 'socio', 'comercial'))
-    WITH CHECK (public.get_role() IN ('superadmin', 'socio', 'comercial'));
+    USING ((SELECT public.get_role()) IN ('superadmin', 'socio', 'comercial'))
+    WITH CHECK ((SELECT public.get_role()) IN ('superadmin', 'socio', 'comercial'));
 
 -- ---- costos: solo superadmin, socio ----
 DROP POLICY IF EXISTS "costos_select_authenticated" ON public.costos;
@@ -440,8 +473,8 @@ CREATE POLICY "costos_select_authenticated" ON public.costos
 DROP POLICY IF EXISTS "costos_write_socios" ON public.costos;
 CREATE POLICY "costos_write_socios" ON public.costos
     FOR ALL TO authenticated
-    USING (public.get_role() IN ('superadmin', 'socio'))
-    WITH CHECK (public.get_role() IN ('superadmin', 'socio'));
+    USING ((SELECT public.get_role()) IN ('superadmin', 'socio'))
+    WITH CHECK ((SELECT public.get_role()) IN ('superadmin', 'socio'));
 
 -- ---- servicios / personal / clientes / equipos: cualquier authenticated ----
 DROP POLICY IF EXISTS "servicios_all_authenticated" ON public.servicios;
@@ -467,8 +500,8 @@ CREATE POLICY "config_select_authenticated" ON public.config
 DROP POLICY IF EXISTS "config_write_socios" ON public.config;
 CREATE POLICY "config_write_socios" ON public.config
     FOR ALL TO authenticated
-    USING (public.get_role() IN ('superadmin', 'socio'))
-    WITH CHECK (public.get_role() IN ('superadmin', 'socio'));
+    USING ((SELECT public.get_role()) IN ('superadmin', 'socio'))
+    WITH CHECK ((SELECT public.get_role()) IN ('superadmin', 'socio'));
 
 -- ---- profiles: SELECT authenticated; UPDATE role/active solo superadmin;
 -- INSERT/DELETE sin politica -> bloqueados para authenticated/anon (los
@@ -480,8 +513,8 @@ CREATE POLICY "profiles_select_authenticated" ON public.profiles
 DROP POLICY IF EXISTS "profiles_update_superadmin" ON public.profiles;
 CREATE POLICY "profiles_update_superadmin" ON public.profiles
     FOR UPDATE TO authenticated
-    USING (public.get_role() = 'superadmin')
-    WITH CHECK (public.get_role() = 'superadmin');
+    USING ((SELECT public.get_role()) = 'superadmin')
+    WITH CHECK ((SELECT public.get_role()) = 'superadmin');
 
 -- ============================================================================
 -- 6. GRANTS — anon nunca aparece: cero grants = cero acceso, ademas de RLS.
@@ -495,10 +528,40 @@ GRANT SELECT, INSERT, UPDATE, DELETE ON
     public.config
 TO authenticated;
 
-GRANT SELECT, UPDATE ON public.profiles TO authenticated;
+-- profiles: SELECT completo, pero UPDATE solo a nivel de columna (role,
+-- active) — el resto de columnas (id/email/name) queda protegido incluso a
+-- nivel de GRANT, no solo por RLS. El trigger protect_profile_columns sigue
+-- vigente como defensa en profundidad: la politica RLS decide QUIEN puede
+-- hacer UPDATE, este GRANT limita QUE columnas puede tocar ese UPDATE, y el
+-- trigger es la tercera capa por si algo se cuela.
+GRANT SELECT ON public.profiles TO authenticated;
+GRANT UPDATE ("role", "active") ON public.profiles TO authenticated;
+
+-- service_role explicito: la migracion de datos (Lote M1-C) y cualquier
+-- proceso backend que use la service key no deben depender de privilegios
+-- por defecto de Supabase — se otorgan aqui sin ambiguedad.
+GRANT ALL ON ALL TABLES IN SCHEMA public TO service_role;
+GRANT ALL ON ALL SEQUENCES IN SCHEMA public TO service_role;
 
 REVOKE ALL ON
     public.ventas, public.facturas, public.costos, public.servicios,
     public.personal, public.clientes, public.equipos, public.cotizaciones,
     public.config, public.profiles
 FROM anon;
+
+-- ============================================================================
+-- 7. TRIGGER SOBRE auth.users — al FINAL, despues de GRANT/REVOKE
+-- ============================================================================
+-- Se deja para el final a proposito: es la sentencia con mas probabilidad de
+-- fallar (auth.users vive en un schema que no es de este proyecto, sujeto a
+-- permisos que pueden variar entre entornos de Supabase). Al estar envuelta
+-- en la misma transaccion (BEGIN/COMMIT) y ser lo ultimo del archivo, si
+-- falla aqui, Postgres revierte TODO lo anterior — nunca queda una tabla con
+-- RLS habilitado pero sin sus politicas, o politicas sin sus grants.
+-- ---------------------------------------------------------------------------
+DROP TRIGGER IF EXISTS on_auth_user_created ON auth.users;
+CREATE TRIGGER on_auth_user_created
+    AFTER INSERT ON auth.users
+    FOR EACH ROW EXECUTE FUNCTION public.handle_new_user();
+
+COMMIT;
