@@ -14,7 +14,12 @@ const SUITES = [
     'verify-lote-e.js',
     'verify-e-fixes.js',
     'verify-lote-f.js',
-    'adv-round2.js'
+    'adv-round2.js',
+    'verify-schema-sql.js',
+    'verify-adapter.js',
+    'verify-auth.js',
+    'verify-config-helper.js',
+    'verify-migrate-backup.js'
 ];
 
 const SUMMARY_RE = /(\d+)\s*OK,\s*(\d+)\s*FAIL/;

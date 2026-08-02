@@ -288,8 +288,9 @@ window.Mazelab.Modules.SettingsModule = (function () {
     }
 
     function renderEmpresaTab() {
-        var info = {};
-        try { info = JSON.parse(localStorage.getItem('mazelab_company_info') || '{}'); } catch (e) {}
+        var info = (window.Mazelab.CompanyInfo && window.Mazelab.CompanyInfo.getCompanyInfoSync)
+            ? window.Mazelab.CompanyInfo.getCompanyInfoSync()
+            : {};
         return `
         <div class="card" style="max-width:640px">
             <div class="card-header"><h3 class="card-title">Datos de la Empresa</h3></div>
@@ -415,7 +416,8 @@ window.Mazelab.Modules.SettingsModule = (function () {
                 var roleLabel = roleLabels[u.role] || u.role;
                 var roleSelect = isSelf
                     ? '<span class="badge badge-info">' + escapeHtml(roleLabel) + '</span>'
-                    : '<select class="form-control users-role-select" data-id="' + u.id + '" style="font-size:12px;padding:2px 6px;width:auto;">' +
+                    : '<select class="form-control users-role-select" data-id="' + u.id + '" style="font-size:12px;padding:2px 6px;width:auto;"' +
+                      (isSuperAdmin ? '' : ' disabled title="Solo el superadmin cambia roles"') + '>' +
                       '<option value="operaciones"' + (u.role === 'operaciones' ? ' selected' : '') + '>Operaciones</option>' +
                       '<option value="comercial"' + (u.role === 'comercial' ? ' selected' : '') + '>Comercial</option>' +
                       '<option value="socio"' + (u.role === 'socio' ? ' selected' : '') + '>Socio</option>' +
@@ -1323,9 +1325,36 @@ window.Mazelab.Modules.SettingsModule = (function () {
                     numeroCuenta: (document.getElementById('emp-cuenta').value || '').trim(),
                     email:        (document.getElementById('emp-email').value || '').trim()
                 };
-                localStorage.setItem('mazelab_company_info', JSON.stringify(info));
                 var msg = document.getElementById('emp-save-msg');
-                if (msg) { msg.style.display = 'inline'; setTimeout(function () { msg.style.display = 'none'; }, 2000); }
+                // Éxito: mensaje verde original ("Guardado"). Error de upsert remoto
+                // (revisión final Sprint M1, hallazgo 1): saveCompanyInfo() ya dejó el
+                // espejo en cache+localStorage, pero un rol sin permiso de escritura
+                // sobre `config` (comercial/operaciones — la política es
+                // superadmin/socio) recibe rechazo RLS. Antes esa promesa se atrapaba
+                // en silencio y el usuario veía "Guardado" aunque el dato solo viviera
+                // en su navegador — ahora la promesa PROPAGA el error y avisamos con
+                // un mensaje rojo explícito.
+                var showSuccess = function () {
+                    if (!msg) return;
+                    msg.style.color = 'var(--success)';
+                    msg.innerHTML = '&#10003; Guardado';
+                    msg.style.display = 'inline';
+                    setTimeout(function () { msg.style.display = 'none'; }, 2000);
+                };
+                var showError = function (err) {
+                    if (!msg) return;
+                    var detail = (err && err.message) || 'error desconocido';
+                    msg.style.color = 'var(--danger)';
+                    msg.textContent = 'No se guardó en la base (¿permisos?): ' + detail + ' — el dato quedó solo en este navegador';
+                    msg.style.display = 'inline';
+                    setTimeout(function () { msg.style.display = 'none'; }, 5000);
+                };
+                if (window.Mazelab.CompanyInfo && window.Mazelab.CompanyInfo.saveCompanyInfo) {
+                    window.Mazelab.CompanyInfo.saveCompanyInfo(info).then(showSuccess).catch(showError);
+                } else {
+                    localStorage.setItem('mazelab_company_info', JSON.stringify(info));
+                    showSuccess();
+                }
             });
         }
 
@@ -1433,27 +1462,34 @@ window.Mazelab.Modules.SettingsModule = (function () {
                         refreshTabContent();
                     } catch (err) { alert(err.message); }
                 }
-                // Delete
+                // Delete (desactivación lógica — el borrado definitivo de auth.users
+                // se hace desde el panel de Supabase, ver Auth.deleteUser())
                 var deleteBtn = e.target.closest('.users-delete-btn');
                 if (deleteBtn) {
                     var userId2 = deleteBtn.getAttribute('data-id');
-                    if (!confirm('Eliminar este usuario permanentemente?')) return;
+                    if (!confirm('¿Desactivar este usuario? No se elimina de forma permanente — el borrado definitivo de auth.users se hace desde el panel de Supabase.')) return;
                     try {
                         await window.Mazelab.Auth.deleteUser(userId2);
+                    } catch (err) {
+                        // deleteUser() SIEMPRE lanza (explica el límite: desactiva
+                        // pero no borra auth.users) — igual refrescamos la lista
+                        // porque la desactivación sí se aplicó antes del throw.
+                        alert(err.message);
+                    } finally {
                         usersData = await window.Mazelab.Auth.getAllUsers();
                         refreshTabContent();
-                    } catch (err) { alert(err.message); }
+                    }
                 }
-                // Reset password
+                // Reset password — ya no recibe una contraseña nueva: dispara el
+                // correo de restablecimiento de Supabase Auth al email del usuario.
                 var resetBtn = e.target.closest('.users-reset-pwd-btn');
                 if (resetBtn) {
                     var resetUserId = resetBtn.getAttribute('data-id');
                     var userName = resetBtn.getAttribute('data-name');
-                    var newPwd = prompt('Nueva contraseña para ' + userName + ' (min 6 caracteres):');
-                    if (!newPwd) return;
+                    if (!confirm('Enviar correo de restablecimiento de contraseña a ' + userName + '?')) return;
                     try {
-                        await window.Mazelab.Auth.resetPassword(resetUserId, newPwd);
-                        alert('Contraseña actualizada para ' + userName);
+                        await window.Mazelab.Auth.resetPassword(resetUserId);
+                        alert('Correo de restablecimiento enviado a ' + userName);
                     } catch (err) { alert(err.message); }
                 }
             });

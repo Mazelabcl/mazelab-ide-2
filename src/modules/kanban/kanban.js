@@ -14,6 +14,14 @@ window.Mazelab.Modules.KanbanModule = (function () {
     var filters = { client: '', service: '', seller: '', financial: '' };
     var bodegaEquipos = [];
 
+    // Feedback visual (toast) — defensivo: los harnesses de Node cargan este
+    // módulo con window mockeado y sin window.Mazelab.UI, así que no debe romper.
+    var UI = (window.Mazelab && window.Mazelab.UI) || {
+        toast: function () {},
+        showOfflineBanner: function () {},
+        showTestModeBanner: function () {}
+    };
+
     // ---- column definitions ----
 
     var PRE_COLUMNS = [
@@ -393,10 +401,19 @@ window.Mazelab.Modules.KanbanModule = (function () {
         var DS = window.Mazelab.DataService;
         var sale = sales.find(function (s) { return String(s.id) === String(saleId); });
         if (!sale) return;
+        var prevCol = sale.boardColumn;
+        var prevOrder = sale.boardOrder;
         sale.boardColumn = newCol;
         sale.boardOrder = Date.now();
-        await DS.update('sales', saleId, { boardColumn: newCol, boardOrder: sale.boardOrder });
-        refreshContent();
+        try {
+            await DS.update('sales', saleId, { boardColumn: newCol, boardOrder: sale.boardOrder });
+            refreshContent();
+        } catch (err) {
+            sale.boardColumn = prevCol;
+            sale.boardOrder = prevOrder;
+            UI.toast('ERROR: no se guardó — ' + err.message, 'error');
+            refreshContent();
+        }
     }
 
     // ---- filtering ----
@@ -2127,9 +2144,10 @@ window.Mazelab.Modules.KanbanModule = (function () {
 
         // Resumen tab: hito N/A toggle
         document.querySelectorAll('.kb-hito-na-toggle').forEach(function (btn) {
-            btn.addEventListener('click', function () {
+            btn.addEventListener('click', async function () {
                 var key = this.dataset.key;
                 var setNa = this.dataset.na === '1';
+                var prevChecklist = JSON.parse(JSON.stringify(sale.checklist || []));
                 var cl = sale.checklist || [];
                 var item = cl.find(function (i) { return i.key === key; });
                 if (item) {
@@ -2139,10 +2157,16 @@ window.Mazelab.Modules.KanbanModule = (function () {
                 }
                 sale.checklist = cl;
                 var prevDone = getHitoStatus(sale).pct;
-                window.Mazelab.DataService.update('sales', sale.id, { checklist: cl });
-                var newStatus = getHitoStatus(sale);
-                if (newStatus.pct === 1 && newStatus.total > 0 && prevDone < 1) fireConfetti();
-                refreshContent();
+                try {
+                    await window.Mazelab.DataService.update('sales', sale.id, { checklist: cl });
+                    var newStatus = getHitoStatus(sale);
+                    if (newStatus.pct === 1 && newStatus.total > 0 && prevDone < 1) fireConfetti();
+                    refreshContent();
+                } catch (err) {
+                    sale.checklist = prevChecklist;
+                    UI.toast('ERROR: no se guardó — ' + err.message, 'error');
+                    refreshContent();
+                }
             });
         });
 
@@ -2169,12 +2193,19 @@ window.Mazelab.Modules.KanbanModule = (function () {
         });
 
         var removeBtn = document.getElementById('kb-remove-board-btn');
-        if (removeBtn) removeBtn.addEventListener('click', function () {
+        if (removeBtn) removeBtn.addEventListener('click', async function () {
             if (!confirm('¿Quitar "' + (sale.eventName || 'este evento') + '" del board operativo?\n\nEl evento seguirá en Ventas y no se perderá ningún dato.')) return;
+            var prevCol = sale.boardColumn;
             sale.boardColumn = 99;
-            window.Mazelab.DataService.update('sales', sale.id, { boardColumn: 99 });
-            currentSaleId = null;
-            refreshContent();
+            try {
+                await window.Mazelab.DataService.update('sales', sale.id, { boardColumn: 99 });
+                currentSaleId = null;
+                refreshContent();
+            } catch (err) {
+                sale.boardColumn = prevCol;
+                UI.toast('ERROR: no se guardó — ' + err.message, 'error');
+                refreshContent();
+            }
         });
 
         document.querySelectorAll('.kanban-detail .tab').forEach(function (tab) {
@@ -2488,6 +2519,7 @@ window.Mazelab.Modules.KanbanModule = (function () {
 
     async function toggleChecklistItem(sale, key, checked) {
         var DS = window.Mazelab.DataService;
+        var prevChecklist = JSON.parse(JSON.stringify(sale.checklist || []));
         var cl = Array.isArray(sale.checklist) ? sale.checklist.slice() : [];
         var item = cl.find(function (c) { return c.key === key; });
         if (!item) {
@@ -2501,52 +2533,97 @@ window.Mazelab.Modules.KanbanModule = (function () {
         item.done = checked;
         item.checkedAt = checked ? new Date().toISOString() : null;
         sale.checklist = cl;
-        await DS.update('sales', sale.id, { checklist: cl });
-        var newStatus = getHitoStatus(sale);
-        if (newStatus.pct === 1 && newStatus.total > 0 && prevStatus.pct < 1) fireConfetti();
-        refreshContent();
+        try {
+            await DS.update('sales', sale.id, { checklist: cl });
+            var newStatus = getHitoStatus(sale);
+            if (newStatus.pct === 1 && newStatus.total > 0 && prevStatus.pct < 1) fireConfetti();
+            refreshContent();
+        } catch (err) {
+            sale.checklist = prevChecklist;
+            UI.toast('ERROR: no se guardó — ' + err.message, 'error');
+            refreshContent();
+        }
     }
 
     async function saveEncargado(sale, value) {
+        var prevValue = sale.encargado;
         sale.encargado = value;
-        await window.Mazelab.DataService.update('sales', sale.id, { encargado: value });
+        try {
+            await window.Mazelab.DataService.update('sales', sale.id, { encargado: value });
+        } catch (err) {
+            sale.encargado = prevValue;
+            UI.toast('ERROR: no se guardó — ' + err.message, 'error');
+            refreshContent();
+        }
     }
 
     async function saveNotes(sale, value) {
+        var prevValue = sale.kanbanNotes;
         sale.kanbanNotes = value;
-        await window.Mazelab.DataService.update('sales', sale.id, { kanbanNotes: value });
+        try {
+            await window.Mazelab.DataService.update('sales', sale.id, { kanbanNotes: value });
+        } catch (err) {
+            sale.kanbanNotes = prevValue;
+            UI.toast('ERROR: no se guardó — ' + err.message, 'error');
+            refreshContent();
+        }
     }
 
     async function saveTraspaso(sale, data) {
+        var prevTraspaso = sale.traspaso;
         sale.traspaso = data;
         try {
             await window.Mazelab.DataService.update('sales', sale.id, { traspaso: data });
             refreshContent();
-        } catch (e) {
-            alert('Error al guardar traspaso: ' + e.message);
+        } catch (err) {
+            sale.traspaso = prevTraspaso;
+            UI.toast('ERROR: no se guardó — ' + err.message, 'error');
+            refreshContent();
         }
     }
 
     async function addCustomChecklistItem(sale, group, label) {
         var key = 'custom_' + Date.now();
-        var cl = Array.isArray(sale.checklist) ? sale.checklist.slice() : [];
+        var prevChecklist = Array.isArray(sale.checklist) ? sale.checklist.slice() : [];
+        var cl = prevChecklist.slice();
         cl.push({ key: key, label: label, group: group, checked: false, checkedAt: null });
         sale.checklist = cl;
-        await window.Mazelab.DataService.update('sales', sale.id, { checklist: cl });
-        refreshContent();
+        try {
+            await window.Mazelab.DataService.update('sales', sale.id, { checklist: cl });
+            refreshContent();
+        } catch (err) {
+            sale.checklist = prevChecklist;
+            UI.toast('ERROR: no se guardó — ' + err.message, 'error');
+            refreshContent();
+        }
     }
 
     async function deleteCustomChecklistItem(sale, key) {
-        var cl = Array.isArray(sale.checklist) ? sale.checklist.slice() : [];
-        sale.checklist = cl.filter(function (c) { return c.key !== key; });
-        await window.Mazelab.DataService.update('sales', sale.id, { checklist: sale.checklist });
-        refreshContent();
+        var prevChecklist = Array.isArray(sale.checklist) ? sale.checklist.slice() : [];
+        var cl = prevChecklist.filter(function (c) { return c.key !== key; });
+        sale.checklist = cl;
+        try {
+            await window.Mazelab.DataService.update('sales', sale.id, { checklist: sale.checklist });
+            refreshContent();
+        } catch (err) {
+            sale.checklist = prevChecklist;
+            UI.toast('ERROR: no se guardó — ' + err.message, 'error');
+            refreshContent();
+        }
     }
 
     async function saveEquiposAsignados(sale, items) {
+        var prevItems = Array.isArray(sale.equiposAsignados) ? sale.equiposAsignados.slice() : [];
         sale.equiposAsignados = items;
-        await window.Mazelab.DataService.update('sales', sale.id, { equiposAsignados: items });
-        // Update global occupation count for bodega
+        try {
+            await window.Mazelab.DataService.update('sales', sale.id, { equiposAsignados: items });
+        } catch (err) {
+            sale.equiposAsignados = prevItems;
+            UI.toast('ERROR: no se guardó — ' + err.message, 'error');
+            refreshContent();
+            return;
+        }
+        // Update global occupation count for bodega (solo si la escritura fue exitosa)
         var today = todayStr();
         window.Mazelab.BodegaOccupied = window.Mazelab.BodegaOccupied || {};
         items.forEach(function (it) {
@@ -2572,12 +2649,22 @@ window.Mazelab.Modules.KanbanModule = (function () {
         if (item.equipoId) {
             var eq = bodegaEquipos.find(function (e) { return String(e.id) === String(item.equipoId); });
             if (eq) {
+                var prevEstado = eq.estado;
+                var prevNotas = eq.notas;
                 eq.estado = estadoRetorno;
                 var appendNote = notaRetorno ? '[Retorno ' + (sale.eventName || '') + ']: ' + notaRetorno : '';
-                await window.Mazelab.DataService.update('bodega', item.equipoId, {
-                    estado: estadoRetorno,
-                    notas: (eq.notas ? eq.notas + (appendNote ? '\n' + appendNote : '') : appendNote) || ''
-                });
+                try {
+                    await window.Mazelab.DataService.update('bodega', item.equipoId, {
+                        estado: estadoRetorno,
+                        notas: (prevNotas ? prevNotas + (appendNote ? '\n' + appendNote : '') : appendNote) || ''
+                    });
+                } catch (err) {
+                    eq.estado = prevEstado;
+                    eq.notas = prevNotas;
+                    UI.toast('ERROR: no se guardó — ' + err.message, 'error');
+                    refreshContent();
+                    return;
+                }
             }
         }
         await saveEquiposAsignados(sale, items);

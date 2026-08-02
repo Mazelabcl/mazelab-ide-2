@@ -6,6 +6,24 @@ const path = require('path');
 
 const REPO = path.join(__dirname, '..');
 
+// ---- Reloj congelado — 2026-07-26T12:00:00 hora local ----
+// finance.js resuelve "mes en curso" y "IVA declarado" con new Date() real
+// (getCurrentMonthKey, isIvaPaid). Los fixtures de este archivo (billingMonth
+// "05/07/2026" / "26/07/2026") solo son "del mes en curso" el día en que se
+// escribieron. Se congela el reloj global de Node a esa fecha ANTES de requerir
+// finance.js para que los asserts de mes/IVA sean deterministas sin importar
+// cuándo se corra la suite. Con argumentos, FixedDate delega en el Date real.
+const REAL_DATE = Date;
+const FROZEN_ISO = '2026-07-26T12:00:00';
+class FixedDate extends REAL_DATE {
+    constructor(...args) {
+        if (args.length === 0) super(FROZEN_ISO);
+        else super(...args);
+    }
+    static now() { return new REAL_DATE(FROZEN_ISO).getTime(); }
+}
+global.Date = FixedDate;
+
 // ---- Bootstrap de entorno browser mínimo (finance.js no toca DOM al cargar) ----
 global.window = global;
 window.Mazelab = { Modules: {}, Money: require(REPO + '/src/shared/money.js') };

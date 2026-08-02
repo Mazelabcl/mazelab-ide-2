@@ -1141,54 +1141,99 @@ window.Mazelab.Modules.SalesModule = (function () {
 
     async function handleDelete(id) {
         const DS = window.Mazelab.DataService;
+        const Auth = window.Mazelab.Auth;
+
+        var sale, linkedCXC = [], linkedCXP = [];
 
         try {
             // Find the sale being deleted
-            const sale = sales.find(s => String(s.id) === String(id));
+            sale = sales.find(s => String(s.id) === String(id));
 
             // Find linked CXC and CXP records (by saleId or by event+sourceType)
             const allReceivables = await DS.getAll('receivables') || [];
             const allPayables = await DS.getAll('payables') || [];
 
             var saleSourceId = sale ? String(sale.sourceId || '') : '';
-            const linkedCXC = allReceivables.filter(function (r) {
+            linkedCXC = allReceivables.filter(function (r) {
                 if (String(r.saleId) === String(id)) return true;
                 if (saleSourceId && String(r.saleId) === saleSourceId) return true;
                 if (saleSourceId && String(r.sourceId) === saleSourceId) return true;
                 if (r.sourceType === 'auto' && sale && r.eventName === sale.eventName && r.eventDate === sale.eventDate) return true;
                 return false;
             });
-            const linkedCXP = allPayables.filter(function (p) {
+            linkedCXP = allPayables.filter(function (p) {
                 if (String(p.saleId) === String(id)) return true;
                 if (saleSourceId && String(p.saleId) === saleSourceId) return true;
                 if (saleSourceId && String(p.eventId) === saleSourceId) return true;
                 if (p.sourceType === 'auto' && sale && p.eventName === sale.eventName && p.eventDate === sale.eventDate) return true;
                 return false;
             });
-
-            // Build warning message
-            const lines = ['¿Estás seguro de eliminar este evento?', ''];
-            if (sale) lines.push('Evento: ' + (sale.eventName || '(sin nombre)'));
-            lines.push('');
-            lines.push('También se eliminarán:');
-            lines.push('  • ' + linkedCXC.length + ' CXC asociada' + (linkedCXC.length !== 1 ? 's' : '') + (linkedCXC.some(r => r.amountPaid > 0) ? ' (¡con abonos registrados!)' : ''));
-            lines.push('  • ' + linkedCXP.length + ' CXP asociada' + (linkedCXP.length !== 1 ? 's' : ''));
-            lines.push('');
-            lines.push('Esta acción no se puede deshacer.');
-
-            if (!confirm(lines.join('\n'))) return;
-
-            // Delete linked records first
-            for (const r of linkedCXC) await DS.remove('receivables', r.id);
-            for (const p of linkedCXP) await DS.remove('payables', p.id);
-
-            // Delete the sale
-            await DS.remove('sales', id);
-            sales = await DS.getAll('sales') || [];
-            refreshTable();
         } catch (err) {
-            console.error('Error eliminando venta:', err);
+            console.error('Error buscando registros vinculados a la venta:', err);
             alert('Error al eliminar la venta.');
+            return;
+        }
+
+        // N1 (fix round): con RLS, solo superadmin/socio pueden escribir en
+        // costos (tabla "costos" — ver supabase/schema.sql, política
+        // costos_write_socios). Un comercial SÍ puede borrar CXC y la venta,
+        // pero NO los CXP vinculados — antes esto se descubría a mitad de la
+        // cascada (CXC ya borrados, CXP fallando), dejando estado parcial y un
+        // mensaje opaco. Se corta ANTES de tocar nada si el rol no alcanza.
+        if (linkedCXP.length > 0) {
+            var role = (Auth && typeof Auth.getUser === 'function' && Auth.getUser()) ? Auth.getUser().role : null;
+            if (role !== 'superadmin' && role !== 'socio') {
+                alert('No puedes eliminar esta venta: tiene ' + linkedCXP.length + ' costo' + (linkedCXP.length !== 1 ? 's' : '') +
+                    ' asociado' + (linkedCXP.length !== 1 ? 's' : '') + ' y tu rol no permite borrarlos. Pídele a un socio.');
+                return;
+            }
+        }
+
+        // Build warning message
+        const lines = ['¿Estás seguro de eliminar este evento?', ''];
+        if (sale) lines.push('Evento: ' + (sale.eventName || '(sin nombre)'));
+        lines.push('');
+        lines.push('También se eliminarán:');
+        lines.push('  • ' + linkedCXC.length + ' CXC asociada' + (linkedCXC.length !== 1 ? 's' : '') + (linkedCXC.some(r => r.amountPaid > 0) ? ' (¡con abonos registrados!)' : ''));
+        lines.push('  • ' + linkedCXP.length + ' CXP asociada' + (linkedCXP.length !== 1 ? 's' : ''));
+        lines.push('');
+        lines.push('Esta acción no se puede deshacer.');
+
+        if (!confirm(lines.join('\n'))) return;
+
+        // N1(b)/(c): la cascada corre en su propio try/finally — el refresh de
+        // la tabla SIEMPRE corre al final (finally), incluso si una etapa
+        // falla a mitad, para que la UI nunca quede mostrando datos ya
+        // borrados en el servidor. Si algo falla, el mensaje dice exactamente
+        // qué se alcanzó a borrar en vez de un "Error al eliminar" genérico.
+        try {
+            var cxcDeleted = 0, cxpDeleted = 0;
+            try {
+                for (const r of linkedCXC) { await DS.remove('receivables', r.id); cxcDeleted++; }
+                for (const p of linkedCXP) { await DS.remove('payables', p.id); cxpDeleted++; }
+                await DS.remove('sales', id);
+            } catch (err) {
+                console.error('Error eliminando venta (cascada parcial):', err);
+                var errMsg = (err && err.message) ? err.message : String(err);
+                var msg;
+                if (cxcDeleted < linkedCXC.length) {
+                    msg = 'Se eliminaron ' + cxcDeleted + ' de ' + linkedCXC.length + ' CXC, pero falló el borrado: ' + errMsg +
+                        ' — no se llegó a borrar los costos ni la venta.';
+                } else if (cxpDeleted < linkedCXP.length) {
+                    msg = 'Se eliminaron ' + linkedCXC.length + ' CXC pero falló el borrado de costos: ' + errMsg +
+                        ' — la venta NO se eliminó.';
+                } else {
+                    msg = 'Se eliminaron ' + linkedCXC.length + ' CXC y ' + linkedCXP.length + ' costos, pero falló el borrado de la venta: ' + errMsg;
+                }
+                alert(msg);
+            }
+        } finally {
+            try {
+                sales = await DS.getAll('sales') || [];
+                refreshTable();
+            } catch (refreshErr) {
+                console.error('Error refrescando la tabla tras eliminar venta:', refreshErr);
+            }
         }
     }
 

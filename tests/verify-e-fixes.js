@@ -1,6 +1,17 @@
 // Verificación de los hallazgos de la revisión adversarial sobre db17baa/e17ef86
 // (B1, I1-I5, M1-M2) — carga el código REAL en Node con fetch/DOM mockeados.
 // Correr con: node verify-e-fixes.js
+//
+// NOTA (Sprint M1, Lote M1-B, actualizada en el fix round — hallazgo I9): los
+// escenarios (a)/(b) probaban data-service.js contra un shim local que
+// replicaba el contrato EXTERNO viejo (fetch a /api/db) — "teatro" que no
+// ejercitaba src/shared/supabase.js real. Ahora cargan supabase.js REAL con
+// window.supabase.createClient mockeado (mismo patrón que tests/verify-adapter.js:
+// query builder encadenable que registra llamadas y resuelve según un guion
+// tabla+método). Ninguna aserción de (a)/(b) cambió de intención — solo el
+// mecanismo de scripting (antes fetch, ahora el cliente mockeado). Los
+// escenarios (c),(d),(e) construyen su propio window.Mazelab.DataService
+// inline y nunca pasaron por el shim — quedan intactos.
 'use strict';
 const assert = require('assert');
 const fs = require('fs');
@@ -8,12 +19,70 @@ const path = require('path');
 const { JSDOM } = require('jsdom');
 
 const REPO = path.join(__dirname, '..');
-const SUPABASE_PATH  = path.join(REPO, 'src/shared/supabase.js');
 const DS_PATH        = path.join(REPO, 'src/shared/data-service.js');
+const SUPABASE_PATH  = path.join(REPO, 'src/shared/supabase.js');
 const MONEY_PATH     = path.join(REPO, 'src/shared/money.js');
 const PAYABLES_PATH  = path.join(REPO, 'src/modules/payables/payables.js');
 const PAGOS_PATH     = path.join(REPO, 'src/modules/pagos/pagos.js');
 const SALES_PATH     = path.join(REPO, 'src/modules/sales/sales.js');
+
+// Mock de supabase-js — copiado del patrón de tests/verify-adapter.js: query
+// builder encadenable mínimo que registra las llamadas hechas (tabla, método,
+// args) y resuelve según un guion configurable por tabla+método.
+function makeMockSupabaseClient(script) {
+    const calls = [];
+
+    function makeBuilder(table) {
+        const state = { table: table, method: null, args: [] };
+        const builder = {
+            select: function (col, opts) {
+                state.selectArgs = [col, opts];
+                if (state.method === null) state.method = 'select';
+                return builder;
+            },
+            insert: function (record) { state.method = 'insert'; state.args = [record]; return builder; },
+            update: function (updates) { state.method = 'update'; state.args = [updates]; return builder; },
+            upsert: function (records, opts) { state.method = 'upsert'; state.args = [records, opts]; return builder; },
+            delete: function () { state.method = 'delete'; return builder; },
+            eq: function (col, val) { state.eq = { col: col, val: val }; return builder; },
+            order: function (col) { state.order = col; return builder; },
+            limit: function (n) { state.limitArgs = n; return builder; },
+            single: function () { state.single = true; return resolveFor(state); },
+            then: function (resolve, reject) { return resolveFor(state).then(resolve, reject); }
+        };
+        return builder;
+    }
+
+    function resolveFor(state) {
+        calls.push({ table: state.table, method: state.method, args: state.args, eq: state.eq, order: state.order, limitArgs: state.limitArgs, single: !!state.single, selectArgs: state.selectArgs });
+        const key = state.table + '.' + state.method;
+        const scripted = script[key];
+        const result = typeof scripted === 'function' ? scripted(state) : (scripted || { data: null, error: null });
+        return Promise.resolve(result);
+    }
+
+    const client = { from: function (table) { return makeBuilder(table); } };
+    return { client: client, calls: calls };
+}
+
+// ---- Reloj congelado — 2026-07-26T12:00:00 hora local ----
+// El escenario (e) usa una venta con eventDate "2026-08-01" para verificar el
+// flujo de edición (sales.js deriva el estado efectivo con new Date() real vía
+// getEffectiveStatus: eventDate pasado => "realizada" => cae fuera del filtro
+// default "pendiente" => el botón editar no se renderiza). Se congela el reloj
+// global de Node ANTES de requerir los módulos para que "2026-08-01" siga
+// siendo una fecha futura sin importar cuándo se corra la suite. Con
+// argumentos, FixedDate delega en el Date real (usado por Date.now() para IDs).
+const REAL_DATE = Date;
+const FROZEN_ISO = '2026-07-26T12:00:00';
+class FixedDate extends REAL_DATE {
+    constructor(...args) {
+        if (args.length === 0) super(FROZEN_ISO);
+        else super(...args);
+    }
+    static now() { return new REAL_DATE(FROZEN_ISO).getTime(); }
+}
+global.Date = FixedDate;
 
 let pass = 0, fail = 0;
 async function at(name, fn) {
@@ -46,10 +115,11 @@ function fakeStorageService(seed) {
 
 // Mismo patrón que verify-lote-e.js: simula una carga de página nueva para
 // supabase.js/data-service.js (limpia su require cache y reconstruye window.Mazelab).
+// opts.script: guion tabla.método -> respuesta, para el cliente supabase-js mockeado.
 function freshDSEnv(opts) {
     opts = opts || {};
-    delete require.cache[require.resolve(SUPABASE_PATH)];
     delete require.cache[require.resolve(DS_PATH)];
+    delete require.cache[require.resolve(SUPABASE_PATH)];
 
     global.window = {};
     global.window.location = { search: opts.search || '' };
@@ -73,40 +143,39 @@ function freshDSEnv(opts) {
             CotizacionesService: fakeStorageService()
         }
     };
-    global.fetch = opts.fetch || function () { return Promise.reject(new Error('fetch no mockeado en este escenario')); };
+
+    var mock = makeMockSupabaseClient(opts.script || {});
+    global.window.supabase = { createClient: function () { return mock.client; } };
 
     require(SUPABASE_PATH);
     require(DS_PATH);
 
-    return { window: global.window, uiCalls: uiCalls, DS: global.window.Mazelab.DataService, Supabase: global.window.Mazelab.Supabase };
+    return { window: global.window, uiCalls: uiCalls, DS: global.window.Mazelab.DataService, Supabase: global.window.Mazelab.Supabase, calls: mock.calls };
 }
 
 (async function () {
 
     // ================= (a) importMany en readOnly lanza sin tocar red (B1) =================
-    await at('(a) importMany en modo readOnly lanza ANTES de tocar la red', async function () {
-        var env = freshDSEnv({ fetch: function () { throw new Error('NO debió llamarse a fetch'); } });
+    await at('(a) importMany en modo readOnly lanza ANTES de tocar el cliente Supabase', async function () {
+        var env = freshDSEnv({});
         env.window.Mazelab.Supabase.testConnection = function () { return Promise.resolve(false); };
         await env.DS.init();
         assert.strictEqual(env.DS.readOnly, true, 'readOnly debe quedar activo tras fallo de conexión inicial');
         await assertRejects(env.DS.importMany('sales', [{ id: 'x' }]), /solo lectura/);
+        assert.strictEqual(env.calls.length, 0, 'importMany no debió tocar el cliente Supabase real estando en readOnly');
     });
 
     // ================= (b) getAll ANTES de init() no cae a localStorage en silencio (I1) =================
     await at('(b) getAll() llamado ANTES de init() no lee localStorage en silencio (useSupabase default = true)', async function () {
         var localCalled = false;
-        var fetchCalls = 0;
-        var env = freshDSEnv({ fetch: function () {
-            fetchCalls++;
-            return Promise.resolve({ ok: true, status: 200, json: function () { return Promise.resolve([{ id: 'server-1' }]); } });
-        }});
+        var env = freshDSEnv({ script: { 'ventas.select': { data: [{ id: 'server-1' }], error: null } } });
         env.window.Mazelab.Storage.SalesService.getAll = function () { localCalled = true; return [{ id: 'local-fantasma' }]; };
         // A propósito: NO se llama env.DS.init() — simula un getAll() disparado antes
         // de que el bootstrap de la app corra init() (I1: mina latente por orden de llamadas).
         var result = await env.DS.getAll('sales');
         assert.deepStrictEqual(result, [{ id: 'server-1' }], 'debe leer del servidor, no del localStorage fantasma');
         assert.strictEqual(localCalled, false, 'NO debió leer localStorage en silencio antes de init()');
-        assert.ok(fetchCalls > 0, 'debió intentar el servidor (useSupabase default = true)');
+        assert.ok(env.calls.length > 0, 'debió intentar el servidor (useSupabase default = true)');
     });
 
     // ================= (c) delete de payables fallando → toast de error (I2) =================
@@ -237,6 +306,122 @@ function freshDSEnv(opts) {
         assert.ok(successToast, 'debe haberse mostrado el toast de éxito ("Guardado en la base de datos"). Toasts: ' + JSON.stringify(toastCalls));
         assert.ok(!noSeGuardoToast, 'JAMÁS debe decir "no se guardó" cuando la escritura sí funcionó. Toasts: ' + JSON.stringify(toastCalls));
         assert.ok(reloadFailToast, 'debe reportarse que la recarga falló, con mensaje propio. Toasts: ' + JSON.stringify(toastCalls));
+    });
+
+    // ================= (f) N1: comercial con CXP vinculados → bloquea ANTES de borrar nada =================
+    await at('(f) N1: sales.handleDelete — comercial con CXP vinculados, gate bloquea ANTES de tocar receivables/payables/sales', async function () {
+        delete require.cache[require.resolve(SALES_PATH)];
+        var dom = new JSDOM('<!doctype html><html><body><div id="app"></div></body></html>', { url: 'http://localhost/' });
+        global.window = dom.window;
+        global.document = dom.window.document;
+
+        var alertCalls = [];
+        global.alert = function (msg) { alertCalls.push(msg); };
+        var confirmCalled = false;
+        global.confirm = function () { confirmCalled = true; return true; };
+
+        var VENTA = { id: '201', sourceId: '201', clientName: 'ACME SpA', eventName: 'Gala Comercial',
+            eventDate: '2026-08-01', amount: 500000, serviceIds: [], status: 'pendiente' };
+        var CXC = { id: 'cxc-1', saleId: '201', amountPaid: 0 };
+        var CXP = { id: 'cxp-1', saleId: '201' };
+
+        var removeCalls = [];
+        window.Mazelab = {
+            Modules: {},
+            Storage: { generateId: function () { return 'gen-1'; } },
+            UI: { toast: function () {}, showOfflineBanner: function () {}, showTestModeBanner: function () {} },
+            Auth: { getUser: function () { return { id: 'u-1', email: 'com@mazelab.cl', role: 'comercial' }; } },
+            DataService: {
+                getAll: async function (table) {
+                    if (table === 'sales') return [Object.assign({}, VENTA)];
+                    if (table === 'receivables') return [CXC];
+                    if (table === 'payables') return [CXP];
+                    return [];
+                },
+                remove: async function (table, id) { removeCalls.push({ table: table, id: id }); return true; }
+            }
+        };
+        require(SALES_PATH);
+        var SM = window.Mazelab.Modules.SalesModule;
+
+        document.getElementById('app').innerHTML = SM.render();
+        await SM.init();
+
+        var delBtn = document.querySelector('.btn-delete-sale[data-id="201"]');
+        assert.ok(delBtn, 'debe existir el botón eliminar para la venta de prueba');
+        delBtn.dispatchEvent(new window.MouseEvent('click', { bubbles: true }));
+        await new Promise(function (r) { setTimeout(r, 50); });
+
+        assert.strictEqual(removeCalls.length, 0, 'NO debe haber llamado DS.remove en absoluto — el gate de rol debe frenar ANTES de iniciar la cascada');
+        assert.strictEqual(confirmCalled, false, 'ni siquiera debe mostrar el confirm de la cascada — el gate corta antes de llegar ahí');
+        assert.strictEqual(alertCalls.length, 1, 'debe mostrar exactamente un alert explicando el bloqueo. Alerts: ' + JSON.stringify(alertCalls));
+        assert.ok(/No puedes eliminar esta venta/.test(alertCalls[0]), 'mensaje real: ' + alertCalls[0]);
+        assert.ok(/rol no permite/.test(alertCalls[0]), 'el mensaje debe explicar que el rol no permite borrar los costos asociados. mensaje real: ' + alertCalls[0]);
+    });
+
+    // ================= (g) N1: falla a mitad de la cascada → mensaje honesto + refresh en finally =================
+    await at('(g) N1: sales.handleDelete — falla al borrar CXP a mitad de la cascada, mensaje dice qué se alcanzó a borrar y la tabla se refresca igual', async function () {
+        delete require.cache[require.resolve(SALES_PATH)];
+        var dom = new JSDOM('<!doctype html><html><body><div id="app"></div></body></html>', { url: 'http://localhost/' });
+        global.window = dom.window;
+        global.document = dom.window.document;
+
+        var alertCalls = [];
+        global.alert = function (msg) { alertCalls.push(msg); };
+        global.confirm = function () { return true; };
+
+        var VENTA = { id: '202', sourceId: '202', clientName: 'ACME SpA', eventName: 'Gala Socio',
+            eventDate: '2026-08-01', amount: 500000, serviceIds: [], status: 'pendiente' };
+        var CXC1 = { id: 'cxc-1', saleId: '202', amountPaid: 0 };
+        var CXC2 = { id: 'cxc-2', saleId: '202', amountPaid: 0 };
+        var CXP1 = { id: 'cxp-1', saleId: '202' };
+
+        var salesGetAllCount = 0;
+        var removeCalls = [];
+        window.Mazelab = {
+            Modules: {},
+            Storage: { generateId: function () { return 'gen-1'; } },
+            UI: { toast: function () {}, showOfflineBanner: function () {}, showTestModeBanner: function () {} },
+            // superadmin: pasa el gate de N1 (sí puede borrar costos) — la falla de abajo
+            // es una falla real (ej. red), no un problema de permisos.
+            Auth: { getUser: function () { return { id: 'u-2', email: 'admin@mazelab.cl', role: 'superadmin' }; } },
+            DataService: {
+                getAll: async function (table) {
+                    if (table === 'sales') { salesGetAllCount++; return [Object.assign({}, VENTA)]; }
+                    if (table === 'receivables') return [CXC1, CXC2];
+                    if (table === 'payables') return [CXP1];
+                    return [];
+                },
+                remove: async function (table, id) {
+                    removeCalls.push({ table: table, id: id });
+                    if (table === 'payables') throw new Error('DB caída (simulado)');
+                    return true;
+                }
+            }
+        };
+        require(SALES_PATH);
+        var SM = window.Mazelab.Modules.SalesModule;
+
+        document.getElementById('app').innerHTML = SM.render();
+        await SM.init();
+
+        var delBtn = document.querySelector('.btn-delete-sale[data-id="202"]');
+        assert.ok(delBtn, 'debe existir el botón eliminar para la venta de prueba');
+        delBtn.dispatchEvent(new window.MouseEvent('click', { bubbles: true }));
+        await new Promise(function (r) { setTimeout(r, 80); });
+
+        var salesRemoveCalls = removeCalls.filter(function (c) { return c.table === 'sales'; });
+        assert.strictEqual(salesRemoveCalls.length, 0, 'la venta NO debe haberse borrado si falló el borrado de costos a mitad de camino');
+        var cxcRemoveCalls = removeCalls.filter(function (c) { return c.table === 'receivables'; });
+        assert.strictEqual(cxcRemoveCalls.length, 2, 'los 2 CXC sí debieron alcanzar a borrarse antes de que fallara la etapa de costos');
+
+        assert.strictEqual(alertCalls.length, 1, 'debe mostrar exactamente un alert de error. Alerts: ' + JSON.stringify(alertCalls));
+        assert.ok(/Se eliminaron 2 CXC/.test(alertCalls[0]), 'el mensaje debe decir cuántos CXC se alcanzaron a borrar. mensaje real: ' + alertCalls[0]);
+        assert.ok(/fall[óo] el borrado de costos/.test(alertCalls[0]), 'mensaje real: ' + alertCalls[0]);
+        assert.ok(/venta NO se elimin/.test(alertCalls[0]), 'debe aclarar que la venta no se eliminó. mensaje real: ' + alertCalls[0]);
+
+        assert.ok(salesGetAllCount >= 2,
+            'el finally debe haber recargado sales (DS.getAll("sales")) tras el fallo parcial, para que la tabla no quede desactualizada');
     });
 
     console.log('\n' + pass + ' OK, ' + fail + ' FAIL');

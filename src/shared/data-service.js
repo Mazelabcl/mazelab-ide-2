@@ -18,7 +18,8 @@ window.Mazelab = window.Mazelab || {};
         receivables: 'facturas',
         payables: 'costos',
         bodega: 'equipos',
-        cotizaciones: 'cotizaciones'
+        cotizaciones: 'cotizaciones',
+        config: 'config'
     };
 
     // ── In-memory cache ──────────────────────────────────────────────────

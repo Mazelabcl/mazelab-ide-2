@@ -900,6 +900,7 @@ window.Mazelab.Modules.ImportModule = (function () {
 
                     // 2. Borrar en lotes paralelos (20 a la vez) con contador de progreso
                     var deleted = 0;
+                    var alreadyGone = 0;
                     var BATCH = 20;
                     clearBtn.textContent = 'Eliminando... (0 / ' + total + ')';
 
@@ -908,8 +909,26 @@ window.Mazelab.Modules.ImportModule = (function () {
                         var tableKey = tables[i];
                         for (var b = 0; b < tableItems.length; b += BATCH) {
                             var batch = tableItems.slice(b, b + BATCH);
-                            await Promise.all(batch.map(function(item) { return DS.remove(tableKey, item.id); }));
+                            // N2 (fix round): DS.remove ahora lanza si el id ya no existe o RLS
+                            // lo filtra (I4 del adaptador — supabase.js remove()). En ESTE flujo
+                            // (solo superadmin, borrado destructivo deliberado de TODO) un id ya
+                            // borrado por otra pestaña/lote no debe abortar el resto — se cuenta
+                            // como "ya no existía". Cualquier OTRO error sí se propaga (revienta
+                            // el Promise.all y cae al catch de afuera).
+                            var results = await Promise.all(batch.map(function(item) {
+                                return DS.remove(tableKey, item.id).then(
+                                    function () { return { alreadyGone: false }; },
+                                    function (err) {
+                                        var msg = (err && err.message) || '';
+                                        if (/no existe o no tienes permiso/.test(msg)) {
+                                            return { alreadyGone: true };
+                                        }
+                                        throw err;
+                                    }
+                                );
+                            }));
                             deleted += batch.length;
+                            alreadyGone += results.filter(function (r) { return r.alreadyGone; }).length;
                             clearBtn.textContent = 'Eliminando... (' + deleted + ' / ' + total + ')';
                         }
                     }
@@ -923,7 +942,8 @@ window.Mazelab.Modules.ImportModule = (function () {
                     tables.forEach(function(t) { if (lsKeys[t]) localStorage.removeItem(lsKeys[t]); });
                     if (window.Mazelab.DataService.invalidateAll) window.Mazelab.DataService.invalidateAll();
 
-                    alert('\u2705 ' + deleted + ' registros eliminados correctamente.');
+                    var realDeleted = deleted - alreadyGone;
+                    alert('\u2705 ' + realDeleted + ' borrados' + (alreadyGone > 0 ? ', ' + alreadyGone + ' ya no exist\u00edan' : '') + '.');
                 } catch (err) {
                     alert('Error al limpiar datos: ' + err.message);
                 } finally {

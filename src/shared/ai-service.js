@@ -151,7 +151,7 @@
             serviceCatalog.forEach(function (svc) {
                 catalogStr += '\n--- ' + (svc.nombre || svc.name) + ' ---\n';
                 if (svc.descripcion) catalogStr += 'Descripción: ' + svc.descripcion.substring(0, 150) + '\n';
-                catalogStr += 'Precio base: $' + (svc.precio_base || 0).toLocaleString('es-CL') + '\n';
+                catalogStr += 'Precio base: $' + Number(svc.precio_base || 0).toLocaleString('es-CL') + '\n';
                 if (svc.tarifario) {
                     try {
                         var t = typeof svc.tarifario === 'string' ? JSON.parse(svc.tarifario) : svc.tarifario;

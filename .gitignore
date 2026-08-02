@@ -23,3 +23,9 @@ branding/
 diff.txt
 test.txt
 *.png
+# Excepcion: logo versionado del app shell (Sprint M1, Lote M1-D)
+!src/assets/*.png
+
+# Secretos locales (Sprint M1) — JAMAS commitear
+.env
+.env.*

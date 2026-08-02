@@ -15,10 +15,29 @@ const CLIENTS = [{ id: 'c1', name: 'ACME SpA' }];
 const SERVICES = [{ id: 's1', name: 'Glambot', categoria: 'Foto' }];
 const STAFF = [{ id: 'st1', name: 'Pedro' }];
 
+// ---- Reloj congelado — 2026-07-26T12:00:00 hora local ----
+// VENTA usa eventDate "2026-08-01": sales.js deriva el estado efectivo con
+// new Date() real (getEffectiveStatus: eventDate pasado => "realizada" => cae
+// fuera del filtro default "pendiente" => .btn-edit-sale no se renderiza y
+// editar() revienta con dispatchEvent sobre null). sales.js se carga por
+// win.eval(), es decir corre en el realm de la ventana jsdom, así que hay que
+// congelar win.Date (no el Date global de Node) ANTES de evaluarlo. Con
+// argumentos, FixedDate delega en el Date real de esa ventana.
+const FROZEN_ISO = '2026-07-26T12:00:00';
+
 function env(salesData, receivables) {
     const dom = new JSDOM('<!doctype html><html><body><div id="app"></div></body></html>',
         { runScripts: 'outside-only', pretendToBeVisual: true });
     const win = dom.window;
+    const RealWinDate = win.Date;
+    class FixedDate extends RealWinDate {
+        constructor(...args) {
+            if (args.length === 0) super(FROZEN_ISO);
+            else super(...args);
+        }
+        static now() { return new RealWinDate(FROZEN_ISO).getTime(); }
+    }
+    win.Date = FixedDate;
     const ops = { u: [], c: [], warns: [] };
     win.console = Object.assign({}, console, { warn: function (m) { ops.warns.push(String(m)); } });
     win.Mazelab = {

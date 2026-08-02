@@ -791,8 +791,9 @@ window.Mazelab.Modules.CotizadorModule = (function () {
         html += '  <p style="margin:0.2rem 0;"><strong>Condiciones:</strong> ' + escapeHtml(formState.condiciones || '50% adelanto, 50% a 30 dias') + '</p>';
 
         // Company bank details
-        var companyInfo = {};
-        try { companyInfo = JSON.parse(localStorage.getItem('mazelab_company_info') || '{}'); } catch (e) {}
+        var companyInfo = (window.Mazelab.CompanyInfo && window.Mazelab.CompanyInfo.getCompanyInfoSync)
+            ? window.Mazelab.CompanyInfo.getCompanyInfoSync()
+            : {};
         if (companyInfo.banco) {
             html += '<p style="margin:0.5rem 0;"><strong>Datos de transferencia:</strong><br>';
             html += escapeHtml(companyInfo.nombre || '') + '<br>';

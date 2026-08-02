@@ -132,6 +132,18 @@ window.Mazelab.Modules = window.Mazelab.Modules || {};
             }
         }
 
+        // Precargar company_info (tabla config) en cache sincrónica — settings.js,
+        // finance.js y cotizador.js lo leen dentro de renders sincrónicos y no
+        // pueden esperar una promesa a mitad de un render(). Best-effort: si falla,
+        // getCompanyInfoSync() cae a localStorage directo (ver company-info.js).
+        if (window.Mazelab.CompanyInfo && window.Mazelab.CompanyInfo.preload) {
+            try {
+                await window.Mazelab.CompanyInfo.preload();
+            } catch (e) {
+                console.warn('CompanyInfo.preload() rechazó:', e);
+            }
+        }
+
         // Initialize alerts panel (bell + badge)
         if (window.Mazelab.AlertsPanel) {
             var alertsInit = window.Mazelab.AlertsPanel.init();
@@ -208,24 +220,101 @@ window.Mazelab.Modules = window.Mazelab.Modules || {};
         _modalMouseDownInside = false;
     }, true);
 
+    // Bloquea el acceso con un mensaje visible — usado cuando Auth/AuthUI no
+    // cargaron. Nunca se debe entrar a la app sin poder verificar login/rol
+    // (Sprint M1, Lote M1-B: antes esto entraba sin login si AuthUI fallaba).
+    function showFatalAuthError(message) {
+        var appContainer = document.querySelector('.app-container');
+        if (appContainer) appContainer.style.display = 'none';
+        var el = document.createElement('div');
+        el.id = 'fatal-auth-error';
+        el.style.cssText = 'position:fixed;inset:0;z-index:9999;display:flex;align-items:center;justify-content:center;' +
+            'background:var(--bg-primary,#0b0b12);color:var(--text-primary,#fff);font-family:Inter,system-ui,sans-serif;padding:2rem;';
+        el.innerHTML = '<div style="max-width:420px;text-align:center;">' +
+            '<h2 style="margin:0 0 8px;font-size:1.3rem;">Error critico</h2>' +
+            '<p style="margin:0;color:var(--text-secondary,#9a9aa8);font-size:0.9rem;">' + message + '</p>' +
+        '</div>';
+        document.body.appendChild(el);
+    }
+
     document.addEventListener('DOMContentLoaded', async () => {
         var Auth = window.Mazelab.Auth;
 
+        if (!Auth) {
+            // Sin el módulo de Auth no hay forma segura de verificar sesión/rol —
+            // bloquear siempre, nunca entrar a la app directamente.
+            console.error('Auth module not available — bloqueando el acceso.');
+            showFatalAuthError('No se pudo cargar el modulo de autenticacion. Recarga la pagina o contacta al administrador.');
+            return;
+        }
+
+        // I2: ?localdev=1 es una vía de escape EXPLÍCITA para desarrollo local —
+        // nunca implícita, nunca un fallback de error. Antes el gate exigía una
+        // sesión real de Supabase incluso en este modo (roto si no había red o
+        // proyecto configurado); ahora salta la autenticación por completo e
+        // inyecta un usuario local superadmin en el cache síncrono de Auth.
+        // data-service.js ya maneja el modo local de forma independiente (su
+        // propio init() detecta el mismo parámetro y usa localStorage).
+        var urlParams = new URLSearchParams(window.location.search);
+        // N8 (fix round): ?localdev=1 solo debe funcionar en desarrollo local
+        // (localhost/127.0.0.1 o abriendo el archivo directo con file://) —
+        // sin este acotamiento, cualquiera que agregue ?localdev=1 a la URL de
+        // Vercel en producción entraría como superadmin sin pasar por
+        // Supabase Auth. En cualquier otro hostname el parámetro se ignora.
+        var isLocalHost = ['localhost', '127.0.0.1'].includes(window.location.hostname) || window.location.protocol === 'file:';
+        if (urlParams.get('localdev') === '1' && !isLocalHost) {
+            console.warn('?localdev=1 ignorado — solo funciona en localhost/127.0.0.1 o file:// (hostname actual: ' + window.location.hostname + ').');
+        }
+        if (urlParams.get('localdev') === '1' && isLocalHost) {
+            if (typeof Auth._setLocalDevUser === 'function') {
+                Auth._setLocalDevUser({ id: 'localdev', email: 'localdev@local', name: 'Modo Prueba', role: 'superadmin' });
+            } else {
+                console.warn('Auth._setLocalDevUser no está disponible — ?localdev=1 no pudo inyectar un usuario local.');
+            }
+            await initApp();
+            return;
+        }
+
+        // Restaura la sesión (si existe) y puebla el cache síncrono de Auth
+        // (getUser/isLoggedIn/canAccess) ANTES de decidir login vs app — de lo
+        // contrario isLoggedIn() vería el cache todavía vacío aunque exista una
+        // sesión válida en Supabase.
+        //
+        // I1: si Auth.init() lanza (ej. el CDN de supabase-js no cargó, o la
+        // red falla de una forma que el propio init() no atrapó), antes esto
+        // dejaba una excepción sin manejar en el listener de DOMContentLoaded
+        // y la app quedaba en blanco sin ningún mensaje — ahora se bloquea con
+        // un error visible, igual que las otras ramas de este gate.
+        try {
+            await Auth.init();
+        } catch (e) {
+            console.error('Auth.init() lanzó inesperadamente:', e);
+            showFatalAuthError('No se pudo cargar el sistema de autenticacion' + (e && e.message ? ': ' + e.message : '.') + ' Recarga la pagina o contacta al administrador.');
+            return;
+        }
+
         // If not logged in, show login screen
-        if (!Auth || !Auth.isLoggedIn()) {
+        if (!Auth.isLoggedIn()) {
             if (window.Mazelab.AuthUI) {
                 var appContainer = document.querySelector('.app-container');
                 if (appContainer) appContainer.style.display = 'none';
                 window.Mazelab.AuthUI.show();
             } else {
-                // AuthUI not loaded — skip auth and show app directly
-                console.warn('AuthUI not available, skipping login screen.');
-                await initApp();
+                // AuthUI no disponible — bloquear con error visible. Antes esto
+                // entraba a la app sin login; con Supabase Auth + RLS reales, un
+                // ingreso sin sesión no vería datos igual (o vería datos anónimos
+                // que RLS no debería exponer), así que el bypass silencioso ya no
+                // es una degradación aceptable — debe fallar de forma visible.
+                console.error('AuthUI not available — bloqueando el acceso (no se puede mostrar el login).');
+                showFatalAuthError('No se pudo cargar la pantalla de inicio de sesion. Recarga la pagina o contacta al administrador.');
             }
             return;
         }
 
-        // Already logged in — init app directly
+        // Ya había sesión activa (restaurada por Auth.init()) — init app directo.
+        // DataService.init() (y su testConnection) solo se llama DENTRO de
+        // initApp(), que solo se alcanza tras pasar este gate — nunca corre
+        // antes de tener una sesión autenticada.
         await initApp();
     });
 })();
