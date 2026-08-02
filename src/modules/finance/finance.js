@@ -254,7 +254,9 @@ window.Mazelab.Modules.FinanceModule = (function () {
     }
 
     function getCompanyInfo() {
-        try { return JSON.parse(localStorage.getItem('mazelab_company_info') || '{}'); } catch (e) { return {}; }
+        return (window.Mazelab.CompanyInfo && window.Mazelab.CompanyInfo.getCompanyInfoSync)
+            ? window.Mazelab.CompanyInfo.getCompanyInfoSync()
+            : {};
     }
 
     function getOverdueDays(r) {

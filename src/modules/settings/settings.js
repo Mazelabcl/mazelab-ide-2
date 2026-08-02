@@ -288,8 +288,9 @@ window.Mazelab.Modules.SettingsModule = (function () {
     }
 
     function renderEmpresaTab() {
-        var info = {};
-        try { info = JSON.parse(localStorage.getItem('mazelab_company_info') || '{}'); } catch (e) {}
+        var info = (window.Mazelab.CompanyInfo && window.Mazelab.CompanyInfo.getCompanyInfoSync)
+            ? window.Mazelab.CompanyInfo.getCompanyInfoSync()
+            : {};
         return `
         <div class="card" style="max-width:640px">
             <div class="card-header"><h3 class="card-title">Datos de la Empresa</h3></div>
@@ -1323,9 +1324,16 @@ window.Mazelab.Modules.SettingsModule = (function () {
                     numeroCuenta: (document.getElementById('emp-cuenta').value || '').trim(),
                     email:        (document.getElementById('emp-email').value || '').trim()
                 };
-                localStorage.setItem('mazelab_company_info', JSON.stringify(info));
                 var msg = document.getElementById('emp-save-msg');
-                if (msg) { msg.style.display = 'inline'; setTimeout(function () { msg.style.display = 'none'; }, 2000); }
+                var showMsg = function () {
+                    if (msg) { msg.style.display = 'inline'; setTimeout(function () { msg.style.display = 'none'; }, 2000); }
+                };
+                if (window.Mazelab.CompanyInfo && window.Mazelab.CompanyInfo.saveCompanyInfo) {
+                    window.Mazelab.CompanyInfo.saveCompanyInfo(info).then(showMsg);
+                } else {
+                    localStorage.setItem('mazelab_company_info', JSON.stringify(info));
+                    showMsg();
+                }
             });
         }
 

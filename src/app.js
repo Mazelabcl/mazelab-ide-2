@@ -132,6 +132,18 @@ window.Mazelab.Modules = window.Mazelab.Modules || {};
             }
         }
 
+        // Precargar company_info (tabla config) en cache sincrónica — settings.js,
+        // finance.js y cotizador.js lo leen dentro de renders sincrónicos y no
+        // pueden esperar una promesa a mitad de un render(). Best-effort: si falla,
+        // getCompanyInfoSync() cae a localStorage directo (ver company-info.js).
+        if (window.Mazelab.CompanyInfo && window.Mazelab.CompanyInfo.preload) {
+            try {
+                await window.Mazelab.CompanyInfo.preload();
+            } catch (e) {
+                console.warn('CompanyInfo.preload() rechazó:', e);
+            }
+        }
+
         // Initialize alerts panel (bell + badge)
         if (window.Mazelab.AlertsPanel) {
             var alertsInit = window.Mazelab.AlertsPanel.init();
