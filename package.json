@@ -1,10 +1,12 @@
 {
   "private": true,
   "scripts": {
-    "test": "node tests/run-all.js"
+    "test": "node tests/run-all.js",
+    "e2e:smoke": "node tests/e2e/smoke.e2e.js"
   },
   "devDependencies": {
-    "jsdom": "^24.0.0"
+    "jsdom": "^24.0.0",
+    "playwright": "^1.62.1"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.111.0"

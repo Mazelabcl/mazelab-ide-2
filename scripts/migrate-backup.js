@@ -77,44 +77,14 @@ function baselineNote(table, fileCount) {
 }
 
 // ============================================================================
-// Parser de .env — sin dependencias (no dotenv). El archivo lo crea el dueño
-// a mano con Bloc de notas en Windows, así que debe tolerar:
-//   - BOM UTF-8 al inicio del archivo (Notepad lo agrega por defecto).
-//   - Fin de línea CRLF (\r\n).
-//   - Espacios alrededor de la clave, del "=" y del valor.
-//   - Comillas simples o dobles envolviendo el valor (opcional).
-//   - Líneas vacías y comentarios ("# ...").
+// Parser de .env — sin dependencias (no dotenv). Extraído a scripts/lib/env.js
+// en el Sprint E2E para que provision-e2e-users.js y cleanup-e2e-data.js usen
+// el mismo parser (ver ese archivo para el detalle de qué formatos tolera:
+// BOM UTF-8, CRLF, comillas opcionales, comentarios). Se re-exporta aquí
+// tal cual (mismo nombre, mismo comportamiento) para no romper a quien ya
+// hace require('./migrate-backup.js').parseEnvFile.
 // ============================================================================
-function parseEnvFile(filePath) {
-    const raw = fs.readFileSync(filePath);
-    let text = raw.toString('utf8');
-    // BOM UTF-8: al decodificar como utf8, el BOM queda como el carácter
-    // U+FEFF al inicio del string — quitarlo antes de partir en líneas.
-    if (text.charCodeAt(0) === 0xFEFF) {
-        text = text.slice(1);
-    }
-
-    const out = {};
-    text.split(/\r?\n/).forEach(function (line) {
-        const trimmedLine = line.trim();
-        if (trimmedLine === '' || trimmedLine.indexOf('#') === 0) return;
-
-        const eqIdx = trimmedLine.indexOf('=');
-        if (eqIdx === -1) return; // línea sin "=" — se ignora, no es un KEY=VALUE válido
-
-        const key = trimmedLine.slice(0, eqIdx).trim();
-        let value = trimmedLine.slice(eqIdx + 1).trim();
-        if (value.length >= 2) {
-            const first = value.charAt(0);
-            const last = value.charAt(value.length - 1);
-            if ((first === '"' && last === '"') || (first === '\'' && last === '\'')) {
-                value = value.slice(1, -1);
-            }
-        }
-        if (key !== '') out[key] = value;
-    });
-    return out;
-}
+const parseEnvFile = require('./lib/env.js').parseEnvFile;
 
 function loadEnv() {
     if (!fs.existsSync(ENV_PATH)) {

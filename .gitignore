@@ -29,3 +29,11 @@ test.txt
 # Secretos locales (Sprint M1) — JAMAS commitear
 .env
 .env.*
+# Nota explicita (ya cubierto por ".env.*" arriba, pero documentado a proposito):
+# .env.e2e trae las contrasenas de los 4 usuarios de prueba E2E — JAMAS commitear.
+
+# Banco de experimentos E2E (Sprint E2E) — evidencia local, nunca al repo
+tests/e2e/artifacts/
+
+# scripts/provision-e2e-users.js — guard explicito (defensa en profundidad)
+.env.e2e
