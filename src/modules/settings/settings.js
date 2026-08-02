@@ -1,3 +1,6 @@
+window.Mazelab = window.Mazelab || {};
+window.Mazelab.Modules = window.Mazelab.Modules || {};
+
 window.Mazelab.Modules.SettingsModule = (function () {
     let servicesData = [];
     let staffData = [];
