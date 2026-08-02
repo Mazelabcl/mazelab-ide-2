@@ -1,0 +1,504 @@
+-- ============================================================================
+-- MazeLab OS — Esquema Supabase (Sprint M1, Lote M1-A)
+-- ============================================================================
+-- Origen de las columnas: union de campos observados en TODAS las filas del
+-- respaldo real (mazelab-backup-2026-07-25.json — 8 tablas, 6.446 filas) +
+-- DDL documentales del repo (REPLIT_DEPLOY.md, DATABASE_INFO.md,
+-- SYNC_FROM_GITHUB.md, memory/replit-pending-sql.md) + grep de escrituras
+-- DataService.create/update en src/ (no se encontraron campos nuevos que el
+-- código escriba y el respaldo no tenga).
+--
+-- Convenciones:
+--   - id TEXT PRIMARY KEY en las 8 tablas de negocio.
+--   - Identificadores camelCase SIEMPRE entre comillas dobles (Postgres los
+--     pliega a minusculas si no se citan, y PostgREST exige case-sensitivity
+--     exacto). Tambien se citan los snake_case heredados (equipos.created_at,
+--     facturas.monto_venta, etc.) para mantener consistencia visual.
+--   - Montos y porcentajes -> NUMERIC (incluye contadores no monetarios como
+--     jornadas/paymentTerms/validezDias/version/boardColumn: el respaldo real
+--     los trae como numero via el driver `pg`, que ademas devuelve NUMERIC y
+--     BIGINT como string — PostgREST en cambio serializa toda la familia
+--     numeric/bigint/integer como numero JSON nativo via to_json(), asi que
+--     no hay perdida de compatibilidad al usar NUMERIC de forma amplia).
+--   - boardOrder -> BIGINT (unico caso: epoch-millis, puede exceder el rango
+--     seguro de un JS number si se declarara NUMERIC-int64 sin cuidado).
+--   - BOOLEAN para flags.
+--   - JSONB para arrays/objetos, con DEFAULT '[]'::jsonb en los campos de
+--     forma-arreglo (listas de items/pagos/notas). Los campos de forma-objeto
+--     (ventas.traspaso) quedan JSONB nullable sin default.
+--   - createdAt/updatedAt -> TEXT en las 6 tablas donde el respaldo los trae
+--     100% NULL y la app los maneja como string. cotizaciones y equipos SI
+--     traen timestamps reales (ISO con Z) -> TIMESTAMPTZ DEFAULT NOW().
+--
+-- Idempotencia: CREATE TABLE IF NOT EXISTS, DROP POLICY IF EXISTS + CREATE
+-- POLICY, CREATE OR REPLACE FUNCTION, DROP TRIGGER IF EXISTS + CREATE
+-- TRIGGER. Todo el archivo se puede volver a pegar y correr sin error.
+-- ============================================================================
+
+create extension if not exists pgcrypto;
+
+-- ============================================================================
+-- 1. TABLAS DE NEGOCIO (8, derivadas del respaldo real)
+-- ============================================================================
+
+-- ---------------------------------------------------------------------------
+-- ventas (992 filas en el respaldo) — TABLE_MAP: sales -> ventas
+-- ---------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS public.ventas (
+    "id"                      TEXT PRIMARY KEY,
+    "sourceId"                TEXT,
+    "clientId"                TEXT,
+    "clientName"              TEXT,
+    "eventName"               TEXT,
+    "eventDate"               TEXT,
+    "closingDate"             TEXT,
+    "serviceIds"              JSONB DEFAULT '[]'::jsonb,
+    "serviceNames"            TEXT,
+    "jornadas"                NUMERIC,
+    "amount"                  NUMERIC DEFAULT 0,
+    "costAmount"              NUMERIC,
+    "utility"                 NUMERIC,
+    "refundAmount"            NUMERIC DEFAULT 0,
+    "comisionPct"             NUMERIC DEFAULT 0,
+    "staffId"                 TEXT,
+    "staffName"               TEXT,
+    "status"                  TEXT,
+    "comments"                TEXT DEFAULT '',
+    "hasIssue"                BOOLEAN DEFAULT false,
+    -- Board Operativo (kanban)
+    "boardColumn"             NUMERIC,
+    "boardOrder"              BIGINT,
+    "checklist"               JSONB DEFAULT '[]'::jsonb,
+    "encargado"               TEXT DEFAULT '',
+    "kanbanNotes"             TEXT DEFAULT '',
+    "equiposAsignados"        JSONB DEFAULT '[]'::jsonb,
+    -- Traspaso (ficha operativa), consolidado en un solo objeto JSONB
+    "traspaso"                JSONB,
+    -- Columnas planas legacy de traspaso: siempre NULL en el respaldo real,
+    -- superadas por el objeto "traspaso" de arriba, pero existen como
+    -- columnas reales y deben preservarse (verificador exige cobertura 1:1).
+    "traspaso_contactoNombre" TEXT,
+    "traspaso_contactoTel"    TEXT,
+    "traspaso_contactoEmail"  TEXT,
+    "traspaso_lugarEvento"    TEXT,
+    "traspaso_horaMontaje"    TEXT,
+    "traspaso_horaInicio"     TEXT,
+    "traspaso_horaTermino"    TEXT,
+    "traspaso_pax"            TEXT,
+    "traspaso_vestimenta"     TEXT,
+    "traspaso_notaVendedor"   TEXT,
+    "createdAt"               TEXT,
+    "updatedAt"               TEXT
+);
+
+-- ---------------------------------------------------------------------------
+-- facturas (1150 filas) — TABLE_MAP: receivables -> facturas (CXC)
+-- ---------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS public.facturas (
+    "id"              TEXT PRIMARY KEY,
+    "sourceId"        TEXT,
+    "sourceType"      TEXT,
+    "saleId"          TEXT,
+    "clientName"      TEXT,
+    "eventName"       TEXT,
+    "eventDate"       TEXT,
+    "tipoDoc"         TEXT,
+    "invoiceNumber"   TEXT,
+    "billingMonth"    TEXT,
+    "paymentTerms"    NUMERIC DEFAULT 30,
+    "monto_venta"     NUMERIC,
+    "montoNeto"       NUMERIC,
+    "montoFacturado"  NUMERIC,
+    "invoicedAmount"  NUMERIC DEFAULT 0,
+    "amount"          NUMERIC,
+    "amountPaid"      NUMERIC,
+    "pendingAmount"   NUMERIC,
+    "status"          TEXT,
+    "ncAsociada"      TEXT,
+    "comments"        TEXT DEFAULT '',
+    "payments"        JSONB DEFAULT '[]'::jsonb,
+    "cobros"          JSONB DEFAULT '[]'::jsonb,
+    "avisos_factura"  JSONB DEFAULT '[]'::jsonb,
+    "notas_cobranza"  JSONB DEFAULT '[]'::jsonb,
+    "createdAt"       TEXT,
+    "updatedAt"       TEXT
+);
+
+-- ---------------------------------------------------------------------------
+-- costos (3615 filas) — TABLE_MAP: payables -> costos (CXP)
+-- ---------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS public.costos (
+    "id"           TEXT PRIMARY KEY,
+    "eventId"      TEXT,
+    "eventName"    TEXT,
+    "clientName"   TEXT,
+    "eventDate"    TEXT,
+    "billingDate"  TEXT,
+    "category"     TEXT,
+    "concept"      TEXT,
+    "vendorName"   TEXT,
+    "docType"      TEXT,
+    "docNumber"    TEXT,
+    "amount"       NUMERIC DEFAULT 0,
+    "amountPaid"   NUMERIC,
+    "status"       TEXT,
+    "payments"     JSONB DEFAULT '[]'::jsonb,
+    "comments"     TEXT DEFAULT '',
+    "nominaDate"   TEXT,
+    "paymentDate"  TEXT,
+    "createdAt"    TEXT,
+    "updatedAt"    TEXT
+);
+
+-- ---------------------------------------------------------------------------
+-- servicios (70 filas) — TABLE_MAP: services -> servicios
+-- ---------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS public.servicios (
+    "id"                   TEXT PRIMARY KEY,
+    "name"                 TEXT,
+    "nombre"               TEXT,
+    "categoria"            TEXT,
+    "descripcion"          TEXT,
+    "precio_base"          NUMERIC,
+    "costo_base_estimado"  NUMERIC,
+    "cost_template"        JSONB DEFAULT '[]'::jsonb,
+    "duracion_tipo"        TEXT,
+    "duracion_default"     NUMERIC,
+    "activo"               BOOLEAN DEFAULT true,
+    "featured"             BOOLEAN DEFAULT false,
+    "specs"                TEXT,
+    "notas_ops"            TEXT,
+    "faq"                  TEXT,
+    "template_saludo"      TEXT,
+    "template_diseno"      TEXT,
+    "link_fotos"           TEXT,
+    "link_landing"         TEXT,
+    -- Guardados como JSON.stringify(...) por el frontend (no objetos nativos)
+    "tarifario"            TEXT,
+    "equipos_checklist"    TEXT,
+    "comments"             TEXT DEFAULT '',
+    "createdAt"            TEXT,
+    "updatedAt"            TEXT
+);
+
+-- ---------------------------------------------------------------------------
+-- personal (2 filas) — TABLE_MAP: staff -> personal
+-- ---------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS public.personal (
+    "id"              TEXT PRIMARY KEY,
+    "name"            TEXT,
+    "nombre"          TEXT,
+    "tipo"            TEXT,
+    "especialidad"    TEXT,
+    "tipo_documento"  TEXT,
+    "rut"             TEXT,
+    "banco"           TEXT,
+    "tipo_cuenta"     TEXT,
+    "numero_cuenta"   TEXT,
+    "email"           TEXT,
+    "telefono"        TEXT,
+    "comments"        TEXT DEFAULT '',
+    "createdAt"       TEXT,
+    "updatedAt"       TEXT
+);
+
+-- ---------------------------------------------------------------------------
+-- clientes (599 filas) — TABLE_MAP: clients -> clientes
+-- ---------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS public.clientes (
+    "id"           TEXT PRIMARY KEY,
+    "name"         TEXT,
+    "nombre"       TEXT,
+    "rut"          TEXT,
+    "plazo_pago"   NUMERIC DEFAULT 30,
+    "ejecutivos"   JSONB DEFAULT '[]'::jsonb,
+    "contactos"    JSONB DEFAULT '[]'::jsonb,
+    "activo"       BOOLEAN DEFAULT true,
+    "notas"        TEXT DEFAULT '',
+    "comments"     TEXT DEFAULT '',
+    "createdAt"    TEXT,
+    "updatedAt"    TEXT
+);
+
+-- ---------------------------------------------------------------------------
+-- equipos (2 filas) — TABLE_MAP: bodega -> equipos.
+-- Unica tabla de negocio con columnas snake_case y timestamptz real (ya
+-- traia created_at como TIMESTAMPTZ en el respaldo original — se preserva
+-- tal cual, sin forzar camelCase ni TEXT sobre un dato que ya es timestamp).
+-- ---------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS public.equipos (
+    "id"          TEXT PRIMARY KEY,
+    "equipo_id"   TEXT,
+    "nombre"      TEXT,
+    "categoria"   TEXT,
+    "estado"      TEXT,
+    "notas"       TEXT DEFAULT '',
+    "created_at"  TIMESTAMPTZ DEFAULT NOW()
+);
+
+-- ---------------------------------------------------------------------------
+-- cotizaciones (16 filas) — ya definida en REPLIT_DEPLOY.md; se reproduce
+-- aqui identica + el campo nuevo "cotMode" (Sprint S02, toggle
+-- Paquete/Opciones, ya presente en el 100% de las filas del respaldo).
+-- ---------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS public.cotizaciones (
+    "id"             TEXT PRIMARY KEY,
+    "codigo"         TEXT,
+    "version"        NUMERIC DEFAULT 1,
+    "clientName"     TEXT,
+    "contactName"    TEXT,
+    "contactEmail"   TEXT,
+    "contactTel"     TEXT,
+    "eventName"      TEXT,
+    "eventDate"      TEXT,
+    "lugar"          TEXT,
+    "validezDias"    NUMERIC DEFAULT 7,
+    "condiciones"    TEXT DEFAULT '50% adelanto, 50% a 30 dias',
+    "estado"         TEXT DEFAULT 'borrador',
+    "cotMode"        TEXT DEFAULT 'paquete',
+    "bloques"        JSONB DEFAULT '[]'::jsonb,
+    "subtotal"       NUMERIC DEFAULT 0,
+    "descuento"      NUMERIC DEFAULT 0,
+    "descuentoPct"   NUMERIC DEFAULT 0,
+    "descuentoNota"  TEXT,
+    "totalNeto"      NUMERIC DEFAULT 0,
+    "notas"          TEXT,
+    "saleId"         TEXT,
+    "createdAt"      TIMESTAMPTZ DEFAULT NOW(),
+    "updatedAt"      TIMESTAMPTZ DEFAULT NOW()
+);
+
+-- ============================================================================
+-- 2. TABLAS NUEVAS (auth + config)
+-- ============================================================================
+
+CREATE TABLE IF NOT EXISTS public.profiles (
+    "id"      UUID PRIMARY KEY REFERENCES auth.users(id) ON DELETE CASCADE,
+    "email"   TEXT UNIQUE,
+    "name"    TEXT DEFAULT '',
+    "role"    TEXT DEFAULT 'operaciones',
+    "active"  BOOLEAN DEFAULT true
+);
+
+CREATE TABLE IF NOT EXISTS public.config (
+    "key"    TEXT PRIMARY KEY,
+    "value"  JSONB
+);
+
+-- ============================================================================
+-- 3. FUNCIONES + TRIGGERS
+-- ============================================================================
+
+-- ---------------------------------------------------------------------------
+-- handle_new_user: crea el profile automaticamente al registrarse un usuario
+-- en auth.users. El rol inicial se asigna por email. Auto-registro esta
+-- CERRADO en Supabase (Auth > Providers > Email > disable signups), asi que
+-- en la practica solo el superadmin crea usuarios desde el dashboard — pero
+-- el trigger igual corre para esos altas.
+-- ---------------------------------------------------------------------------
+CREATE OR REPLACE FUNCTION public.handle_new_user()
+RETURNS TRIGGER
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+BEGIN
+    INSERT INTO public.profiles ("id", "email", "name", "role", "active")
+    VALUES (
+        NEW.id,
+        NEW.email,
+        COALESCE(NEW.raw_user_meta_data->>'name', ''),
+        -- ORQUESTADOR: completar emails
+        CASE NEW.email
+            WHEN 'aldo@mazelab.cl' THEN 'superadmin'
+            -- WHEN 'socio@mazelab.cl'      THEN 'socio'
+            -- WHEN 'comercial@mazelab.cl'  THEN 'comercial'
+            -- WHEN 'operaciones@mazelab.cl' THEN 'operaciones'
+            ELSE 'operaciones'
+        END,
+        true
+    )
+    ON CONFLICT ("id") DO NOTHING;
+    RETURN NEW;
+END;
+$$;
+
+DROP TRIGGER IF EXISTS on_auth_user_created ON auth.users;
+CREATE TRIGGER on_auth_user_created
+    AFTER INSERT ON auth.users
+    FOR EACH ROW EXECUTE FUNCTION public.handle_new_user();
+
+-- ---------------------------------------------------------------------------
+-- get_role(): helper de RLS. SECURITY DEFINER + search_path fijado a
+-- 'public' — sin el SET search_path, una funcion SECURITY DEFINER es
+-- vulnerable a que alguien con permiso de CREATE en otro schema del mismo
+-- rol inyecte un objeto con el mismo nombre en un schema que quede antes de
+-- "public" en el search_path del llamador (hoyo de seguridad conocido y
+-- documentado por Postgres/Supabase para funciones SECURITY DEFINER).
+-- ---------------------------------------------------------------------------
+CREATE OR REPLACE FUNCTION public.get_role()
+RETURNS TEXT
+LANGUAGE sql
+SECURITY DEFINER
+STABLE
+SET search_path = public
+AS $$
+    SELECT role FROM public.profiles WHERE id = auth.uid();
+$$;
+
+-- ---------------------------------------------------------------------------
+-- protect_profile_columns: RLS por si sola no puede restringir un UPDATE a
+-- columnas especificas (USING/WITH CHECK ven la fila completa, no columna a
+-- columna). La politica de abajo ya limita QUIEN puede hacer UPDATE
+-- (superadmin), y este trigger asegura QUE columnas puede tocar ese UPDATE
+-- (solo role/active — id/email/name quedan inmutables por esta via).
+-- ---------------------------------------------------------------------------
+CREATE OR REPLACE FUNCTION public.protect_profile_columns()
+RETURNS TRIGGER
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+BEGIN
+    IF NEW.id IS DISTINCT FROM OLD.id
+       OR NEW.email IS DISTINCT FROM OLD.email
+       OR NEW.name IS DISTINCT FROM OLD.name THEN
+        RAISE EXCEPTION 'Solo se pueden actualizar los campos role y active en profiles';
+    END IF;
+    RETURN NEW;
+END;
+$$;
+
+DROP TRIGGER IF EXISTS profiles_protect_columns ON public.profiles;
+CREATE TRIGGER profiles_protect_columns
+    BEFORE UPDATE ON public.profiles
+    FOR EACH ROW EXECUTE FUNCTION public.protect_profile_columns();
+
+-- ============================================================================
+-- 4. ROW LEVEL SECURITY — habilitar en las 10 tablas
+-- ============================================================================
+
+ALTER TABLE public.ventas       ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.facturas     ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.costos       ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.servicios    ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.personal     ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.clientes     ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.equipos      ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.cotizaciones ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.profiles     ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.config       ENABLE ROW LEVEL SECURITY;
+
+-- ============================================================================
+-- 5. POLITICAS RLS
+-- ============================================================================
+-- Matriz completa documentada en supabase/README.md. Resumen:
+--   Lectura: authenticated en TODO (kanban/bodega/dashboard son rutas
+--   abiertas hoy y necesitan leer ventas/facturas/etc.; el ocultamiento
+--   visual por rol sigue viviendo en el cliente, como hoy).
+--   Escritura (INSERT/UPDATE/DELETE) por tabla:
+--     ventas, facturas, cotizaciones -> superadmin, socio, comercial
+--     costos, config                 -> superadmin, socio
+--     servicios, personal, clientes, equipos -> cualquier authenticated
+--     profiles -> SELECT authenticated; UPDATE (solo role/active) superadmin;
+--                 INSERT/DELETE bloqueados para todos (los crea el trigger).
+--   anon: cero politicas en ningun lado -> cero acceso a todo.
+-- ============================================================================
+
+-- ---- ventas / facturas / cotizaciones: superadmin, socio, comercial ----
+DROP POLICY IF EXISTS "ventas_select_authenticated" ON public.ventas;
+CREATE POLICY "ventas_select_authenticated" ON public.ventas
+    FOR SELECT TO authenticated USING (true);
+DROP POLICY IF EXISTS "ventas_write_comercial" ON public.ventas;
+CREATE POLICY "ventas_write_comercial" ON public.ventas
+    FOR ALL TO authenticated
+    USING (public.get_role() IN ('superadmin', 'socio', 'comercial'))
+    WITH CHECK (public.get_role() IN ('superadmin', 'socio', 'comercial'));
+
+DROP POLICY IF EXISTS "facturas_select_authenticated" ON public.facturas;
+CREATE POLICY "facturas_select_authenticated" ON public.facturas
+    FOR SELECT TO authenticated USING (true);
+DROP POLICY IF EXISTS "facturas_write_comercial" ON public.facturas;
+CREATE POLICY "facturas_write_comercial" ON public.facturas
+    FOR ALL TO authenticated
+    USING (public.get_role() IN ('superadmin', 'socio', 'comercial'))
+    WITH CHECK (public.get_role() IN ('superadmin', 'socio', 'comercial'));
+
+DROP POLICY IF EXISTS "cotizaciones_select_authenticated" ON public.cotizaciones;
+CREATE POLICY "cotizaciones_select_authenticated" ON public.cotizaciones
+    FOR SELECT TO authenticated USING (true);
+DROP POLICY IF EXISTS "cotizaciones_write_comercial" ON public.cotizaciones;
+CREATE POLICY "cotizaciones_write_comercial" ON public.cotizaciones
+    FOR ALL TO authenticated
+    USING (public.get_role() IN ('superadmin', 'socio', 'comercial'))
+    WITH CHECK (public.get_role() IN ('superadmin', 'socio', 'comercial'));
+
+-- ---- costos: solo superadmin, socio ----
+DROP POLICY IF EXISTS "costos_select_authenticated" ON public.costos;
+CREATE POLICY "costos_select_authenticated" ON public.costos
+    FOR SELECT TO authenticated USING (true);
+DROP POLICY IF EXISTS "costos_write_socios" ON public.costos;
+CREATE POLICY "costos_write_socios" ON public.costos
+    FOR ALL TO authenticated
+    USING (public.get_role() IN ('superadmin', 'socio'))
+    WITH CHECK (public.get_role() IN ('superadmin', 'socio'));
+
+-- ---- servicios / personal / clientes / equipos: cualquier authenticated ----
+DROP POLICY IF EXISTS "servicios_all_authenticated" ON public.servicios;
+CREATE POLICY "servicios_all_authenticated" ON public.servicios
+    FOR ALL TO authenticated USING (true) WITH CHECK (true);
+
+DROP POLICY IF EXISTS "personal_all_authenticated" ON public.personal;
+CREATE POLICY "personal_all_authenticated" ON public.personal
+    FOR ALL TO authenticated USING (true) WITH CHECK (true);
+
+DROP POLICY IF EXISTS "clientes_all_authenticated" ON public.clientes;
+CREATE POLICY "clientes_all_authenticated" ON public.clientes
+    FOR ALL TO authenticated USING (true) WITH CHECK (true);
+
+DROP POLICY IF EXISTS "equipos_all_authenticated" ON public.equipos;
+CREATE POLICY "equipos_all_authenticated" ON public.equipos
+    FOR ALL TO authenticated USING (true) WITH CHECK (true);
+
+-- ---- config: solo superadmin, socio ----
+DROP POLICY IF EXISTS "config_select_authenticated" ON public.config;
+CREATE POLICY "config_select_authenticated" ON public.config
+    FOR SELECT TO authenticated USING (true);
+DROP POLICY IF EXISTS "config_write_socios" ON public.config;
+CREATE POLICY "config_write_socios" ON public.config
+    FOR ALL TO authenticated
+    USING (public.get_role() IN ('superadmin', 'socio'))
+    WITH CHECK (public.get_role() IN ('superadmin', 'socio'));
+
+-- ---- profiles: SELECT authenticated; UPDATE role/active solo superadmin;
+-- INSERT/DELETE sin politica -> bloqueados para authenticated/anon (los
+-- crea unicamente el trigger handle_new_user, via SECURITY DEFINER) ----
+DROP POLICY IF EXISTS "profiles_select_authenticated" ON public.profiles;
+CREATE POLICY "profiles_select_authenticated" ON public.profiles
+    FOR SELECT TO authenticated USING (true);
+
+DROP POLICY IF EXISTS "profiles_update_superadmin" ON public.profiles;
+CREATE POLICY "profiles_update_superadmin" ON public.profiles
+    FOR UPDATE TO authenticated
+    USING (public.get_role() = 'superadmin')
+    WITH CHECK (public.get_role() = 'superadmin');
+
+-- ============================================================================
+-- 6. GRANTS — anon nunca aparece: cero grants = cero acceso, ademas de RLS.
+-- ============================================================================
+
+GRANT USAGE ON SCHEMA public TO authenticated;
+
+GRANT SELECT, INSERT, UPDATE, DELETE ON
+    public.ventas, public.facturas, public.costos, public.servicios,
+    public.personal, public.clientes, public.equipos, public.cotizaciones,
+    public.config
+TO authenticated;
+
+GRANT SELECT, UPDATE ON public.profiles TO authenticated;
+
+REVOKE ALL ON
+    public.ventas, public.facturas, public.costos, public.servicios,
+    public.personal, public.clientes, public.equipos, public.cotizaciones,
+    public.config, public.profiles
+FROM anon;
