@@ -14,7 +14,14 @@ t('tasa 2025 = 14,5%',  () => assert.strictEqual(M.bhRetentionRate('2025-06-15')
 t('tasa 2026 = 15,25%', () => assert.strictEqual(M.bhRetentionRate('2026-06-15'), 0.1525));
 t('tasa 2027 = 16%',    () => assert.strictEqual(M.bhRetentionRate('2027-06-15'), 0.16));
 t('tasa 2028+ = 17%',   () => assert.strictEqual(M.bhRetentionRate('2029-01-01'), 0.17));
-t('sin fecha usa año actual', () => assert.strictEqual(typeof M.bhRetentionRate(null), 'number'));
+// Legítimamente dependiente del año real: sin fecha, bhRetentionRate cae a
+// new Date().getFullYear() internamente. Se compara contra ese mismo cálculo
+// hecho aquí (no contra un valor fijo) para que el assert sea correcto sin
+// importar en qué año corra la suite.
+t('sin fecha usa año actual', () => assert.strictEqual(
+    M.bhRetentionRate(null),
+    M.bhRetentionRate(new Date().getFullYear() + '-01-01')
+));
 t('ISO date-only 1-ene no se corre de año por timezone', () => assert.strictEqual(M.bhRetentionRate('2026-01-01'), 0.1525));
 t('año-mes "2026-01" → 15,25%', () => assert.strictEqual(M.bhRetentionRate('2026-01'), 0.1525));
 t('formato chileno "15-03-2024" → 13,75%', () => assert.strictEqual(M.bhRetentionRate('15-03-2024'), 0.1375));

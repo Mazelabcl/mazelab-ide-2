@@ -15,6 +15,25 @@ const PAYABLES_PATH  = path.join(REPO, 'src/modules/payables/payables.js');
 const PAGOS_PATH     = path.join(REPO, 'src/modules/pagos/pagos.js');
 const SALES_PATH     = path.join(REPO, 'src/modules/sales/sales.js');
 
+// ---- Reloj congelado — 2026-07-26T12:00:00 hora local ----
+// El escenario (e) usa una venta con eventDate "2026-08-01" para verificar el
+// flujo de edición (sales.js deriva el estado efectivo con new Date() real vía
+// getEffectiveStatus: eventDate pasado => "realizada" => cae fuera del filtro
+// default "pendiente" => el botón editar no se renderiza). Se congela el reloj
+// global de Node ANTES de requerir los módulos para que "2026-08-01" siga
+// siendo una fecha futura sin importar cuándo se corra la suite. Con
+// argumentos, FixedDate delega en el Date real (usado por Date.now() para IDs).
+const REAL_DATE = Date;
+const FROZEN_ISO = '2026-07-26T12:00:00';
+class FixedDate extends REAL_DATE {
+    constructor(...args) {
+        if (args.length === 0) super(FROZEN_ISO);
+        else super(...args);
+    }
+    static now() { return new REAL_DATE(FROZEN_ISO).getTime(); }
+}
+global.Date = FixedDate;
+
 let pass = 0, fail = 0;
 async function at(name, fn) {
     try { await fn(); pass++; console.log('  OK  ' + name); }
