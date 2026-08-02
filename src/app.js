@@ -256,7 +256,16 @@ window.Mazelab.Modules = window.Mazelab.Modules || {};
         // data-service.js ya maneja el modo local de forma independiente (su
         // propio init() detecta el mismo parámetro y usa localStorage).
         var urlParams = new URLSearchParams(window.location.search);
-        if (urlParams.get('localdev') === '1') {
+        // N8 (fix round): ?localdev=1 solo debe funcionar en desarrollo local
+        // (localhost/127.0.0.1 o abriendo el archivo directo con file://) —
+        // sin este acotamiento, cualquiera que agregue ?localdev=1 a la URL de
+        // Vercel en producción entraría como superadmin sin pasar por
+        // Supabase Auth. En cualquier otro hostname el parámetro se ignora.
+        var isLocalHost = ['localhost', '127.0.0.1'].includes(window.location.hostname) || window.location.protocol === 'file:';
+        if (urlParams.get('localdev') === '1' && !isLocalHost) {
+            console.warn('?localdev=1 ignorado — solo funciona en localhost/127.0.0.1 o file:// (hostname actual: ' + window.location.hostname + ').');
+        }
+        if (urlParams.get('localdev') === '1' && isLocalHost) {
             if (typeof Auth._setLocalDevUser === 'function') {
                 Auth._setLocalDevUser({ id: 'localdev', email: 'localdev@local', name: 'Modo Prueba', role: 'superadmin' });
             } else {

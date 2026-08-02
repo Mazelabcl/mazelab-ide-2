@@ -86,6 +86,21 @@ window.Mazelab = window.Mazelab || {};
         return res.data;
     }
 
+    // N3 (fix round): tras completar (éxito, error real, o contraseña muy
+    // corta) o cancelar el flujo de recuperación, la URL sigue trayendo la
+    // marca que lo delata (#access_token=...&type=recovery o ?code=...). Sin
+    // limpiarla, un F5 reprocesa esa misma URL y vuelve a disparar todo el
+    // flujo (nuevo prompt) aunque el usuario ya haya terminado o cancelado.
+    // replaceState no toca la sesión — solo la barra de direcciones — y es
+    // best-effort: si no hay window.history (Node/tests sin mock) no hace nada.
+    function clearRecoveryUrlParams() {
+        if (typeof window === 'undefined' || !window.location) return;
+        if (!window.history || typeof window.history.replaceState !== 'function') return;
+        try {
+            window.history.replaceState(null, '', window.location.pathname);
+        } catch (e) { /* best-effort */ }
+    }
+
     // Flujo mínimo viable para el link de recuperación de contraseña: Supabase
     // redirige a la app con una sesión de tipo PASSWORD_RECOVERY activa. Sin
     // pantalla dedicada en este sprint — se pide la contraseña nueva por
@@ -96,31 +111,35 @@ window.Mazelab = window.Mazelab || {};
     // autenticado con una sesión de recuperación a medias que nadie completó.
     // Se cierra la sesión y se avisa que puede volver a pedir el correo.
     async function handlePasswordRecovery() {
-        var newPassword = (typeof window.prompt === 'function')
-            ? window.prompt('Ingresa tu nueva contraseña (mínimo 6 caracteres):')
-            : null;
-        if (!newPassword) {
-            if (typeof window.alert === 'function') {
-                window.alert('No se cambió la contraseña. Puedes volver a pedir el correo de recuperación cuando quieras.');
+        try {
+            var newPassword = (typeof window.prompt === 'function')
+                ? window.prompt('Ingresa tu nueva contraseña (mínimo 6 caracteres):')
+                : null;
+            if (!newPassword) {
+                if (typeof window.alert === 'function') {
+                    window.alert('No se cambió la contraseña. Puedes volver a pedir el correo de recuperación cuando quieras.');
+                }
+                try {
+                    var clientCancel = getClient();
+                    await clientCancel.auth.signOut();
+                } catch (e) { /* best-effort */ }
+                _cachedUser = null;
+                return;
+            }
+            if (newPassword.length < 6) {
+                if (typeof window.alert === 'function') window.alert('La contraseña debe tener al menos 6 caracteres. Vuelve a abrir el link del correo para intentar de nuevo.');
+                return;
             }
             try {
-                var clientCancel = getClient();
-                await clientCancel.auth.signOut();
-            } catch (e) { /* best-effort */ }
-            _cachedUser = null;
-            return;
-        }
-        if (newPassword.length < 6) {
-            if (typeof window.alert === 'function') window.alert('La contraseña debe tener al menos 6 caracteres. Vuelve a abrir el link del correo para intentar de nuevo.');
-            return;
-        }
-        try {
-            var client = getClient();
-            var res = await client.auth.updateUser({ password: newPassword });
-            if (res.error) throw new Error(res.error.message);
-            if (typeof window.alert === 'function') window.alert('Contraseña actualizada. Ya puedes iniciar sesión con tu nueva contraseña.');
-        } catch (e) {
-            if (typeof window.alert === 'function') window.alert('No se pudo actualizar la contraseña: ' + e.message);
+                var client = getClient();
+                var res = await client.auth.updateUser({ password: newPassword });
+                if (res.error) throw new Error(res.error.message);
+                if (typeof window.alert === 'function') window.alert('Contraseña actualizada. Ya puedes iniciar sesión con tu nueva contraseña.');
+            } catch (e) {
+                if (typeof window.alert === 'function') window.alert('No se pudo actualizar la contraseña: ' + e.message);
+            }
+        } finally {
+            clearRecoveryUrlParams();
         }
     }
 
@@ -182,6 +201,12 @@ window.Mazelab = window.Mazelab || {};
                         return;
                     }
                     if (event === 'PASSWORD_RECOVERY') {
+                        // N4 (fix round): guard simétrico con el cinturón de más abajo — si
+                        // el flujo ya se disparó (por este mismo evento repetido, o porque el
+                        // cinturón ya lo disparó primero), NO volver a llamar
+                        // handlePasswordRecovery() — el SDK puede reemitir el evento y no debe
+                        // abrir un segundo prompt sobre una recuperación ya en curso/resuelta.
+                        if (recoveryHandled) return;
                         recoveryHandled = true;
                         handlePasswordRecovery();
                         return;

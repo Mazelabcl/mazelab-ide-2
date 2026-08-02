@@ -169,6 +169,37 @@ const EXPECTED_NUMERIC_FIELDS = {
     cotizaciones: ['descuento', 'descuentoPct', 'subtotal', 'totalNeto', 'validezDias', 'version']
 };
 
+// N5 (fix round): lista "libre" documentada de columnas de ventas que el
+// trigger protect_ventas_operational_columns (supabase/schema.sql) NO protege
+// a propósito — son las columnas operativas/kanban que operaciones sí puede
+// tocar. Es la contraparte de parseVentasProtectedColumns() (columnas SÍ
+// protegidas, parseadas del propio trigger): protegidas ∪ libres debe cubrir
+// el 100% de las columnas reales de ventas — si alguien agrega una columna
+// nueva a la tabla sin clasificarla en ninguna de las dos listas, el check
+// (i) de abajo falla en vez de dejar el fail-open del trigger en silencio.
+const EXPECTED_FREE_VENTAS_COLUMNS = [
+    'boardColumn', 'boardOrder', 'checklist', 'encargado', 'kanbanNotes', 'equiposAsignados',
+    'traspaso',
+    'traspaso_contactoNombre', 'traspaso_contactoTel', 'traspaso_contactoEmail',
+    'traspaso_lugarEvento', 'traspaso_horaMontaje', 'traspaso_horaInicio', 'traspaso_horaTermino',
+    'traspaso_pax', 'traspaso_vestimenta', 'traspaso_notaVendedor'
+];
+
+// Parsea las columnas que SÍ protege el trigger protect_ventas_operational_columns
+// directamente de su propio cuerpo (patrón NEW."col" IS DISTINCT FROM OLD."col")
+// — no una copia a mano que pueda desincronizarse del trigger real.
+function parseVentasProtectedColumns(sqlText) {
+    const fnRe = /CREATE OR REPLACE FUNCTION public\.protect_ventas_operational_columns\(\)[\s\S]*?\$\$;/;
+    const m = fnRe.exec(sqlText);
+    if (!m) return null;
+    const body = m[0];
+    const colRe = /NEW\."(\w+)"\s+IS DISTINCT FROM OLD\."\1"/g;
+    const cols = [];
+    let cm;
+    while ((cm = colRe.exec(body))) cols.push(cm[1]);
+    return cols;
+}
+
 // Matriz exacta de roles esperados por politica y clausula (USING / WITH
 // CHECK). 'any' = sin gating por rol (USING/WITH CHECK true, cualquier
 // authenticated). Si alguien agrega o quita un rol de una politica de
@@ -388,6 +419,28 @@ function runVerification() {
         assert(revokeIdx !== -1, 'no se encontró ningún REVOKE en schema.sql');
         assert(triggerIdx !== -1, 'no se encontró CREATE TRIGGER on_auth_user_created en schema.sql');
         assert(triggerIdx > revokeIdx, 'CREATE TRIGGER on_auth_user_created debe estar después del último REVOKE — es la sentencia más propensa a fallar (permisos sobre auth.users) y no debe dejar tablas con RLS a medio aplicar si falla');
+    });
+
+    // (i) N5 — protect_ventas_operational_columns: protegidas ∪ libres cubre
+    // el 100% de las columnas reales de ventas (fail-open documentado, no olvidado)
+    t('(i) protect_ventas_operational_columns: columnas protegidas + libres documentadas cubren el 100% de ventas', function () {
+        const protectedCols = parseVentasProtectedColumns(sqlText);
+        assert(protectedCols && protectedCols.length > 0,
+            'no se pudo parsear la lista de columnas protegidas del trigger protect_ventas_operational_columns');
+
+        const ventasCols = Object.keys(parsed.tables.ventas ? parsed.tables.ventas.columns : {});
+        assert(ventasCols.length > 0, 'no se encontraron columnas de la tabla ventas en el DDL');
+
+        const overlap = protectedCols.filter(function (c) { return EXPECTED_FREE_VENTAS_COLUMNS.indexOf(c) !== -1; });
+        assert(overlap.length === 0,
+            'columna(s) presentes en AMBAS listas (protegida por el trigger Y en la lista de libres) — clasificación ambigua: ' + overlap.join(', '));
+
+        const union = new Set(protectedCols.concat(EXPECTED_FREE_VENTAS_COLUMNS));
+        const missing = ventasCols.filter(function (c) { return !union.has(c); });
+        assert(missing.length === 0,
+            'columna(s) de ventas SIN clasificar (ni protegidas por el trigger, ni en EXPECTED_FREE_VENTAS_COLUMNS de este test): ' +
+            missing.join(', ') + ' — el fail-open del trigger es una decisión documentada, no un olvido: clasifica la columna nueva ' +
+            'en el IF de protect_ventas_operational_columns (protegida) o agrégala a EXPECTED_FREE_VENTAS_COLUMNS (libre/operativa)');
     });
 
     console.log('\n' + pass + ' OK, ' + fail + ' FAIL');

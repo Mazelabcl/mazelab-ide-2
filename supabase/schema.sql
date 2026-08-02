@@ -422,6 +422,17 @@ CREATE TRIGGER profiles_protect_columns
 -- siguen siendo terreno exclusivo de ventas_write_comercial (superadmin,
 -- socio, comercial). Si el rol no es operaciones, el trigger no hace nada
 -- (esos roles ya pasaron por ventas_write_comercial sin esta restriccion).
+--
+-- Fail-open documentado (fix round, N5): si alguien agrega una columna nueva
+-- a ventas y NO la agrega al IF de abajo, ese campo queda "libre" para
+-- operaciones por omision — el trigger no la protege porque no la conoce.
+-- Es una decision aceptada (no se vuelve el trigger fail-closed) siempre que
+-- la columna nueva se clasifique a proposito como protegida o como libre.
+-- tests/verify-schema-sql.js check (i) hace ese chequeo automatico: parsea
+-- las columnas protegidas de este trigger + la lista de libres documentada
+-- en el test, y falla si la union no cubre el 100% de las columnas reales de
+-- ventas — asi una columna nueva sin clasificar rompe el test en vez de
+-- quedar en silencio.
 -- ---------------------------------------------------------------------------
 CREATE OR REPLACE FUNCTION public.protect_ventas_operational_columns()
 RETURNS TRIGGER

@@ -467,6 +467,67 @@ const PROFILE_ROW = { id: 'u-1', email: 'comercial@mazelab.cl', name: 'Vale', ro
         assert.strictEqual(env.authMock.wasSignedOut(), true, 'cancelar el prompt debe cerrar la sesión de recuperación (no debe quedar viva)');
     });
 
+    // ================= N3 (fix round): limpieza de URL tras recovery (evita repetir con F5) =================
+    await at('N3: tras completar handlePasswordRecovery() con éxito, limpia la URL con history.replaceState', async function () {
+        const env = freshAuthEnv({
+            getSession: function () { return { data: { session: null }, error: null }; }
+        });
+        await env.Auth.init();
+
+        var replaceStateCalls = [];
+        global.window.history = { replaceState: function (state, title, url) { replaceStateCalls.push({ state: state, title: title, url: url }); } };
+        global.window.location.pathname = '/app.html';
+        global.window.prompt = function () { return 'nuevaClave123'; };
+        global.window.alert = function () {};
+
+        env.authMock._subscriber('PASSWORD_RECOVERY', { user: { id: 'u-1' } });
+        await new Promise(function (r) { setTimeout(r, 20); });
+
+        assert.strictEqual(replaceStateCalls.length, 1, 'debe haber llamado history.replaceState exactamente una vez tras completar el flujo');
+        assert.strictEqual(replaceStateCalls[0].url, '/app.html', 'debe limpiar la URL al pathname actual (sin hash ni query de recuperación)');
+    });
+
+    await at('N3: al cancelar el prompt de recuperación, también limpia la URL con history.replaceState', async function () {
+        const env = freshAuthEnv({
+            getSession: function () { return { data: { session: null }, error: null }; }
+        });
+        await env.Auth.init();
+
+        var replaceStateCalls = [];
+        global.window.history = { replaceState: function (state, title, url) { replaceStateCalls.push(url); } };
+        global.window.location.pathname = '/app.html';
+        global.window.prompt = function () { return null; }; // Cancelar
+        global.window.alert = function () {};
+
+        env.authMock._subscriber('PASSWORD_RECOVERY', { user: { id: 'u-1' } });
+        await new Promise(function (r) { setTimeout(r, 20); });
+
+        assert.strictEqual(replaceStateCalls.length, 1,
+            'cancelar el prompt también debe limpiar la URL — sin esto, un F5 vuelve a mostrar el prompt de recuperación aunque ya se canceló');
+    });
+
+    // ================= N4 (fix round): guard simétrico en el suscriptor PASSWORD_RECOVERY =================
+    await at('N4: el suscriptor de PASSWORD_RECOVERY no dispara dos veces si el evento se repite (guard recoveryHandled simétrico)', async function () {
+        const env = freshAuthEnv({
+            getSession: function () { return { data: { session: null }, error: null }; }
+        });
+        await env.Auth.init();
+
+        global.window.history = { replaceState: function () {} };
+        var promptCalls = 0;
+        global.window.prompt = function () { promptCalls++; return 'nuevaClave123'; };
+        global.window.alert = function () {};
+
+        env.authMock._subscriber('PASSWORD_RECOVERY', { user: { id: 'u-1' } });
+        await new Promise(function (r) { setTimeout(r, 20); });
+        env.authMock._subscriber('PASSWORD_RECOVERY', { user: { id: 'u-1' } }); // evento repetido por el SDK
+        await new Promise(function (r) { setTimeout(r, 20); });
+
+        assert.strictEqual(promptCalls, 1, 'un segundo evento PASSWORD_RECOVERY no debe volver a pedir la contraseña — la recuperación ya se manejó');
+        var updateCalls = env.calls.auth.filter(function (c) { return c.method === 'updateUser'; });
+        assert.strictEqual(updateCalls.length, 1, 'updateUser solo debe llamarse una vez aunque el evento PASSWORD_RECOVERY se repita');
+    });
+
     // ================= I5 (fix round): SIGNED_OUT en caliente limpia cache Y re-muestra login =================
     await at('SIGNED_OUT (evento en caliente) limpia el cache Y vuelve a mostrar el login (I5)', async function () {
         const env = freshAuthEnv({

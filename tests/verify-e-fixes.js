@@ -308,6 +308,122 @@ function freshDSEnv(opts) {
         assert.ok(reloadFailToast, 'debe reportarse que la recarga falló, con mensaje propio. Toasts: ' + JSON.stringify(toastCalls));
     });
 
+    // ================= (f) N1: comercial con CXP vinculados → bloquea ANTES de borrar nada =================
+    await at('(f) N1: sales.handleDelete — comercial con CXP vinculados, gate bloquea ANTES de tocar receivables/payables/sales', async function () {
+        delete require.cache[require.resolve(SALES_PATH)];
+        var dom = new JSDOM('<!doctype html><html><body><div id="app"></div></body></html>', { url: 'http://localhost/' });
+        global.window = dom.window;
+        global.document = dom.window.document;
+
+        var alertCalls = [];
+        global.alert = function (msg) { alertCalls.push(msg); };
+        var confirmCalled = false;
+        global.confirm = function () { confirmCalled = true; return true; };
+
+        var VENTA = { id: '201', sourceId: '201', clientName: 'ACME SpA', eventName: 'Gala Comercial',
+            eventDate: '2026-08-01', amount: 500000, serviceIds: [], status: 'pendiente' };
+        var CXC = { id: 'cxc-1', saleId: '201', amountPaid: 0 };
+        var CXP = { id: 'cxp-1', saleId: '201' };
+
+        var removeCalls = [];
+        window.Mazelab = {
+            Modules: {},
+            Storage: { generateId: function () { return 'gen-1'; } },
+            UI: { toast: function () {}, showOfflineBanner: function () {}, showTestModeBanner: function () {} },
+            Auth: { getUser: function () { return { id: 'u-1', email: 'com@mazelab.cl', role: 'comercial' }; } },
+            DataService: {
+                getAll: async function (table) {
+                    if (table === 'sales') return [Object.assign({}, VENTA)];
+                    if (table === 'receivables') return [CXC];
+                    if (table === 'payables') return [CXP];
+                    return [];
+                },
+                remove: async function (table, id) { removeCalls.push({ table: table, id: id }); return true; }
+            }
+        };
+        require(SALES_PATH);
+        var SM = window.Mazelab.Modules.SalesModule;
+
+        document.getElementById('app').innerHTML = SM.render();
+        await SM.init();
+
+        var delBtn = document.querySelector('.btn-delete-sale[data-id="201"]');
+        assert.ok(delBtn, 'debe existir el botón eliminar para la venta de prueba');
+        delBtn.dispatchEvent(new window.MouseEvent('click', { bubbles: true }));
+        await new Promise(function (r) { setTimeout(r, 50); });
+
+        assert.strictEqual(removeCalls.length, 0, 'NO debe haber llamado DS.remove en absoluto — el gate de rol debe frenar ANTES de iniciar la cascada');
+        assert.strictEqual(confirmCalled, false, 'ni siquiera debe mostrar el confirm de la cascada — el gate corta antes de llegar ahí');
+        assert.strictEqual(alertCalls.length, 1, 'debe mostrar exactamente un alert explicando el bloqueo. Alerts: ' + JSON.stringify(alertCalls));
+        assert.ok(/No puedes eliminar esta venta/.test(alertCalls[0]), 'mensaje real: ' + alertCalls[0]);
+        assert.ok(/rol no permite/.test(alertCalls[0]), 'el mensaje debe explicar que el rol no permite borrar los costos asociados. mensaje real: ' + alertCalls[0]);
+    });
+
+    // ================= (g) N1: falla a mitad de la cascada → mensaje honesto + refresh en finally =================
+    await at('(g) N1: sales.handleDelete — falla al borrar CXP a mitad de la cascada, mensaje dice qué se alcanzó a borrar y la tabla se refresca igual', async function () {
+        delete require.cache[require.resolve(SALES_PATH)];
+        var dom = new JSDOM('<!doctype html><html><body><div id="app"></div></body></html>', { url: 'http://localhost/' });
+        global.window = dom.window;
+        global.document = dom.window.document;
+
+        var alertCalls = [];
+        global.alert = function (msg) { alertCalls.push(msg); };
+        global.confirm = function () { return true; };
+
+        var VENTA = { id: '202', sourceId: '202', clientName: 'ACME SpA', eventName: 'Gala Socio',
+            eventDate: '2026-08-01', amount: 500000, serviceIds: [], status: 'pendiente' };
+        var CXC1 = { id: 'cxc-1', saleId: '202', amountPaid: 0 };
+        var CXC2 = { id: 'cxc-2', saleId: '202', amountPaid: 0 };
+        var CXP1 = { id: 'cxp-1', saleId: '202' };
+
+        var salesGetAllCount = 0;
+        var removeCalls = [];
+        window.Mazelab = {
+            Modules: {},
+            Storage: { generateId: function () { return 'gen-1'; } },
+            UI: { toast: function () {}, showOfflineBanner: function () {}, showTestModeBanner: function () {} },
+            // superadmin: pasa el gate de N1 (sí puede borrar costos) — la falla de abajo
+            // es una falla real (ej. red), no un problema de permisos.
+            Auth: { getUser: function () { return { id: 'u-2', email: 'admin@mazelab.cl', role: 'superadmin' }; } },
+            DataService: {
+                getAll: async function (table) {
+                    if (table === 'sales') { salesGetAllCount++; return [Object.assign({}, VENTA)]; }
+                    if (table === 'receivables') return [CXC1, CXC2];
+                    if (table === 'payables') return [CXP1];
+                    return [];
+                },
+                remove: async function (table, id) {
+                    removeCalls.push({ table: table, id: id });
+                    if (table === 'payables') throw new Error('DB caída (simulado)');
+                    return true;
+                }
+            }
+        };
+        require(SALES_PATH);
+        var SM = window.Mazelab.Modules.SalesModule;
+
+        document.getElementById('app').innerHTML = SM.render();
+        await SM.init();
+
+        var delBtn = document.querySelector('.btn-delete-sale[data-id="202"]');
+        assert.ok(delBtn, 'debe existir el botón eliminar para la venta de prueba');
+        delBtn.dispatchEvent(new window.MouseEvent('click', { bubbles: true }));
+        await new Promise(function (r) { setTimeout(r, 80); });
+
+        var salesRemoveCalls = removeCalls.filter(function (c) { return c.table === 'sales'; });
+        assert.strictEqual(salesRemoveCalls.length, 0, 'la venta NO debe haberse borrado si falló el borrado de costos a mitad de camino');
+        var cxcRemoveCalls = removeCalls.filter(function (c) { return c.table === 'receivables'; });
+        assert.strictEqual(cxcRemoveCalls.length, 2, 'los 2 CXC sí debieron alcanzar a borrarse antes de que fallara la etapa de costos');
+
+        assert.strictEqual(alertCalls.length, 1, 'debe mostrar exactamente un alert de error. Alerts: ' + JSON.stringify(alertCalls));
+        assert.ok(/Se eliminaron 2 CXC/.test(alertCalls[0]), 'el mensaje debe decir cuántos CXC se alcanzaron a borrar. mensaje real: ' + alertCalls[0]);
+        assert.ok(/fall[óo] el borrado de costos/.test(alertCalls[0]), 'mensaje real: ' + alertCalls[0]);
+        assert.ok(/venta NO se elimin/.test(alertCalls[0]), 'debe aclarar que la venta no se eliminó. mensaje real: ' + alertCalls[0]);
+
+        assert.ok(salesGetAllCount >= 2,
+            'el finally debe haber recargado sales (DS.getAll("sales")) tras el fallo parcial, para que la tabla no quede desactualizada');
+    });
+
     console.log('\n' + pass + ' OK, ' + fail + ' FAIL');
     process.exit(fail ? 1 : 0);
 })().catch(function (e) {
