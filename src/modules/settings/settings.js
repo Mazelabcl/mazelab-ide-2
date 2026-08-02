@@ -1326,14 +1326,34 @@ window.Mazelab.Modules.SettingsModule = (function () {
                     email:        (document.getElementById('emp-email').value || '').trim()
                 };
                 var msg = document.getElementById('emp-save-msg');
-                var showMsg = function () {
-                    if (msg) { msg.style.display = 'inline'; setTimeout(function () { msg.style.display = 'none'; }, 2000); }
+                // Éxito: mensaje verde original ("Guardado"). Error de upsert remoto
+                // (revisión final Sprint M1, hallazgo 1): saveCompanyInfo() ya dejó el
+                // espejo en cache+localStorage, pero un rol sin permiso de escritura
+                // sobre `config` (comercial/operaciones — la política es
+                // superadmin/socio) recibe rechazo RLS. Antes esa promesa se atrapaba
+                // en silencio y el usuario veía "Guardado" aunque el dato solo viviera
+                // en su navegador — ahora la promesa PROPAGA el error y avisamos con
+                // un mensaje rojo explícito.
+                var showSuccess = function () {
+                    if (!msg) return;
+                    msg.style.color = 'var(--success)';
+                    msg.innerHTML = '&#10003; Guardado';
+                    msg.style.display = 'inline';
+                    setTimeout(function () { msg.style.display = 'none'; }, 2000);
+                };
+                var showError = function (err) {
+                    if (!msg) return;
+                    var detail = (err && err.message) || 'error desconocido';
+                    msg.style.color = 'var(--danger)';
+                    msg.textContent = 'No se guardó en la base (¿permisos?): ' + detail + ' — el dato quedó solo en este navegador';
+                    msg.style.display = 'inline';
+                    setTimeout(function () { msg.style.display = 'none'; }, 5000);
                 };
                 if (window.Mazelab.CompanyInfo && window.Mazelab.CompanyInfo.saveCompanyInfo) {
-                    window.Mazelab.CompanyInfo.saveCompanyInfo(info).then(showMsg);
+                    window.Mazelab.CompanyInfo.saveCompanyInfo(info).then(showSuccess).catch(showError);
                 } else {
                     localStorage.setItem('mazelab_company_info', JSON.stringify(info));
-                    showMsg();
+                    showSuccess();
                 }
             });
         }

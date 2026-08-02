@@ -16,10 +16,15 @@
 //     devuelve un string de HTML). Si preload() nunca corrió, cae a leer
 //     localStorage directo para no romper el primer render.
 //   - saveCompanyInfo(obj): Promise<object> — guarda en memoria + localStorage
-//     de inmediato (no depende de la red), e intenta upsert a la base en
-//     background. Si el upsert falla (sin conexión, modo solo lectura), el
-//     espejo en localStorage ya quedó guardado — no se pierde el dato del
-//     usuario, se reintentará sincronizar en el próximo save.
+//     de inmediato (no depende de la red), y luego intenta upsert a la base.
+//     El espejo en cache+localStorage queda escrito SIEMPRE (no se pierde el
+//     dato del usuario), pero si el upsert remoto falla (revisión final
+//     Sprint M1, hallazgo 1: un rol sin permiso de escritura sobre `config`
+//     —comercial/operaciones; la política es superadmin/socio— recibe
+//     rechazo RLS) la promesa devuelta se RECHAZA con ese error. Antes se
+//     atrapaba en silencio y el usuario veía "Guardado" aunque el dato solo
+//     viviera en su navegador; ahora quien llama (settings.js) debe manejar
+//     el rechazo y avisar que no se guardó en la base.
 window.Mazelab = window.Mazelab || {};
 
 (function () {
@@ -97,6 +102,10 @@ window.Mazelab = window.Mazelab || {};
         var DS = window.Mazelab.DataService;
         if (!DS || !DS.getAll) return Promise.resolve(value);
 
+        // Sin .catch() aquí a propósito: si el upsert remoto falla, la promesa
+        // debe RECHAZAR (ver contrato arriba) para que settings.js lo detecte y
+        // avise al usuario — el espejo local ya quedó escrito antes de este
+        // punto, así que el dato del usuario no se pierde de todas formas.
         return DS.getAll('config')
             .then(function (rows) {
                 var existing = findConfigRow(rows);
@@ -104,12 +113,6 @@ window.Mazelab = window.Mazelab || {};
                     return DS.update('config', existing.id, { value: value });
                 }
                 return DS.create('config', { id: CONFIG_KEY, key: CONFIG_KEY, value: value });
-            })
-            .catch(function (e) {
-                // Sin conexión o solo lectura: el espejo en localStorage ya quedó
-                // guardado arriba — se sincroniza a la base la próxima vez que
-                // haya conexión y el usuario vuelva a guardar.
-                console.warn('No se pudo guardar company_info en la base de datos:', e && e.message);
             })
             .then(function () { return value; });
     }

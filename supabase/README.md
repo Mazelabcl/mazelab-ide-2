@@ -99,19 +99,58 @@ desde la app, vía la política `profiles_update_superadmin` — podría tocar
 `id`/`email`/`name` sin la protección puesta, así que siempre corre los 3
 pasos juntos, en la misma sesión del SQL Editor.
 
-## 6. Antes de que la app funcione — pasos pendientes (no son de este lote)
+## 6. Configuración de Authentication (dashboard Supabase)
+
+Estos 3 pasos se hacen una sola vez, en el dashboard de Supabase (no son SQL).
+Sin ellos la app funciona a medias: el login entra, pero el registro queda
+abierto, el correo de recuperación de contraseña redirige a cualquier parte
+menos a la URL de Vercel, y los usuarios recién creados no pueden entrar.
+
+1. **Cerrar el auto-registro.** Entra a **Authentication → Providers →
+   Email** y apaga el toggle **"Enable email signups"**. Sin este paso,
+   cualquiera que llegue a la app puede crearse una cuenta sola — el registro
+   de MazeLab OS es cerrado, los usuarios los crea un superadmin a mano (paso
+   siguiente).
+2. **Fijar la Site URL.** Entra a **Authentication → URL Configuration** y
+   pon en **Site URL** la URL real de Vercel (por ejemplo
+   `https://mazelab-os.vercel.app`, no `localhost`). Luego, en **Redirect
+   URLs**, agrega esa misma URL a la lista (con `/**` al final si el campo lo
+   pide, para cubrir subrutas). Sin este paso, el correo de "recuperar
+   contraseña" (`resetPasswordForEmail`) redirige al usuario a la URL por
+   defecto de Supabase (o a `localhost`) en vez de a la app real — el enlace
+   del correo "funciona" pero lo deja en una pantalla en blanco.
+3. **Marcar "Auto Confirm User" al crear cada usuario.** Al crear los 4
+   usuarios reales en **Authentication → Users → Add user** (paso siguiente),
+   marca la casilla **"Auto Confirm User"** antes de guardar. Si se te
+   olvida, ese usuario no podrá iniciar sesión — la app le va a mostrar un
+   error de "correo no confirmado" hasta que confirmes el correo a mano (o
+   reenvíes la confirmación) desde el mismo panel de Users.
+
+**Nota sobre el límite de envío del SMTP integrado:** Supabase trae un
+servidor de correo propio para desarrollo (el que manda los emails de
+confirmación/recuperación) pero tiene un límite bajo de envíos por hora (unos
+pocos correos/hora en el plan gratuito) — suficiente para probar con el
+equipo de 4 personas de MazeLab, pero si en algún momento se necesitan más
+envíos (por ejemplo, muchos resets de contraseña seguidos durante pruebas) los
+correos empiezan a demorar o a no llegar. Para producción real, Supabase
+recomienda configurar un proveedor SMTP propio en **Authentication → SMTP
+Settings** (aparte de este sprint — anotado para no sorprenderse si un correo
+"no llega" durante pruebas intensivas).
+
+## 7. Antes de que la app funcione — pasos pendientes (no son de este lote)
 
 Estos los guía el orquestador cuando corresponda, quedan anotados aquí para
 que sepas que existen:
 
 1. Crear los 4 usuarios reales en **Authentication → Users → Add user**
-   (con contraseña temporal) — hoy el `schema.sql` solo tiene el email de
-   `aldo@mazelab.cl` resuelto a `superadmin` en el trigger; los otros 3
-   quedan como comentario (`-- ORQUESTADOR: completar emails`) hasta que se
-   sepan los emails reales del resto del equipo.
-2. Desactivar el auto-registro en **Authentication → Providers → Email →
-   "Enable email signups"** (apagar el toggle) — si no, cualquiera que
-   entre a la app puede crearse una cuenta sola.
+   (con contraseña temporal, marcando "Auto Confirm User" — ver sección 6)
+   — hoy el `schema.sql` solo tiene el email de `aldo@mazelab.cl` resuelto a
+   `superadmin` en el trigger; los otros 3 quedan como comentario
+   (`-- ORQUESTADOR: completar emails`) hasta que se sepan los emails reales
+   del resto del equipo.
+2. Aplicar la configuración de Authentication completa de la sección 6
+   (signups cerrados, Site URL, Auto Confirm User) — sin esto el login y la
+   recuperación de contraseña no quedan listos para la URL de Vercel.
 3. Correr el script de migración (`scripts/migrate-backup.js`, Lote M1-C)
    para copiar los datos reales del respaldo a estas tablas vacías.
 
@@ -124,7 +163,7 @@ escritura.
 
 | Tabla | Lectura | Escritura |
 |---|---|---|
-| `ventas` | cualquier usuario con sesión | superadmin, socio, comercial |
+| `ventas` | cualquier usuario con sesión | superadmin, socio, comercial (todos los campos); además **operaciones** puede hacer `UPDATE` (política `ventas_update_operaciones`), pero SOLO sobre las columnas operativas del board — ver nota abajo |
 | `facturas` | cualquier usuario con sesión | superadmin, socio, comercial |
 | `cotizaciones` | cualquier usuario con sesión | superadmin, socio, comercial |
 | `costos` | cualquier usuario con sesión | superadmin, socio |
@@ -157,3 +196,18 @@ Notas:
   frontend (`src/shared/auth.js`, mapa `RESTRICTED`) — esta matriz es la
   capa de seguridad real en la base de datos, por si alguien intenta saltarse
   la interfaz y pegarle directo a la API.
+- **`ventas` + operaciones — dos capas, igual que `profiles`:** la política
+  `ventas_update_operaciones` le abre `UPDATE` al rol operaciones porque el
+  kanban lo necesita (mover tarjetas, marcar checklist, asignar equipos,
+  completar el traspaso), pero la política RLS por sí sola no distingue QUÉ
+  columnas se tocan dentro de esa fila — por eso existe el trigger
+  `ventas_protect_operational_columns`
+  (`protect_ventas_operational_columns()`), que corre en cada `UPDATE` y
+  rechaza el intento si operaciones toca cualquier columna que no sea
+  operativa. Columnas que operaciones SÍ puede editar: `checklist`,
+  `boardColumn`, `boardOrder`, `encargado`, `kanbanNotes`, `traspaso`,
+  `equiposAsignados` y las columnas planas `traspaso_*`. Todo lo demás
+  (`amount`, `status`, `clientName`, `staffId`, `costAmount`, etc.) sigue
+  siendo terreno exclusivo de superadmin/socio/comercial vía
+  `ventas_write_comercial` — si operaciones intenta tocar uno de esos campos,
+  el trigger lanza una excepción explícita en vez de guardar en silencio.

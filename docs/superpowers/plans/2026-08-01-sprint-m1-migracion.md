@@ -62,7 +62,7 @@ Proyecto Supabase: `https://xitbarrinioswpyjiwyc.supabase.co` (anon key en `memo
 
 ## Lote M1-E: Verificación E2E + revisión final
 
-1. Con esquema aplicado + datos migrados + Vercel conectado (pasos del dueño): correr contra la URL de Vercel el checklist: login de los 4 roles, KPIs vs tabla de números esperados del Sprint 1, flujo venta→factura parcial→NC de prueba sobre la copia, usuario operaciones no ve finanzas, `?localdev=1` sigue funcionando, offline banner.
+1. Con esquema aplicado + datos migrados + Vercel conectado (pasos del dueño): correr contra la URL de Vercel el checklist: login de los 4 roles, KPIs vs tabla de números esperados del Sprint 1, flujo venta→factura parcial→NC de prueba sobre la copia, usuario operaciones no ve finanzas, offline banner, y localmente (`localhost`/`file:`) `?localdev=1` entra en modo prueba con banner naranja; contra la URL de Vercel DEBE ser ignorado (aserción de seguridad — verificar que NO entra).
 2. Revisión final Opus del diff completo del sprint.
 3. Actualizar memoria (sprint-m1-migracion.md estado) + reporte a Aldo.
 

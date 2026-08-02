@@ -137,11 +137,31 @@ function freshEnv(dsScript, localStorageInitial) {
         assert.ok(!createCall, 'no debió llamar a create() habiendo fila existente');
     });
 
-    await at('saveCompanyInfo(): DataService.getAll rechaza en el upsert → NO lanza, localStorage ya quedó guardado', async function () {
+    await at('saveCompanyInfo(): DataService.getAll rechaza en el upsert → la promesa RECHAZA, pero el espejo local ya quedó escrito', async function () {
         const env = freshEnv({ getAll: { reject: new Error('Sin conexión con la base de datos') } });
-        const value = await env.CompanyInfo.saveCompanyInfo({ nombre: 'Resiliente' });
-        assert.deepStrictEqual(value, { nombre: 'Resiliente' });
+        await assert.rejects(
+            env.CompanyInfo.saveCompanyInfo({ nombre: 'Resiliente' }),
+            /Sin conexión con la base de datos/
+        );
+        // El espejo en localStorage y la cache en memoria se escriben ANTES del
+        // upsert remoto, así que quedan guardados aunque la promesa rechace
+        // (revisión final Sprint M1, hallazgo 1: settings.js es quien debe
+        // atrapar este rechazo y avisar al usuario — ver saveCompanyInfo() en
+        // src/shared/company-info.js).
         assert.deepStrictEqual(JSON.parse(env.ls.getItem('mazelab_company_info')), { nombre: 'Resiliente' });
+        assert.deepStrictEqual(env.CompanyInfo.getCompanyInfoSync(), { nombre: 'Resiliente' });
+    });
+
+    await at('saveCompanyInfo(): DataService.update rechaza (RLS sin permiso de escritura) → la promesa RECHAZA con ese error', async function () {
+        const env = freshEnv({
+            getAll: [{ id: 'company_info', key: 'company_info', value: { nombre: 'Vieja' } }],
+            update: { reject: new Error('new row violates row-level security policy for table "config"') }
+        });
+        await assert.rejects(
+            env.CompanyInfo.saveCompanyInfo({ nombre: 'Comercial intenta guardar' }),
+            /row-level security/
+        );
+        assert.deepStrictEqual(JSON.parse(env.ls.getItem('mazelab_company_info')), { nombre: 'Comercial intenta guardar' });
     });
 
     console.log('\n' + pass + ' OK, ' + fail + ' FAIL');
