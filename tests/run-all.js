@@ -18,7 +18,8 @@ const SUITES = [
     'verify-schema-sql.js',
     'verify-adapter.js',
     'verify-auth.js',
-    'verify-config-helper.js'
+    'verify-config-helper.js',
+    'verify-migrate-backup.js'
 ];
 
 const SUMMARY_RE = /(\d+)\s*OK,\s*(\d+)\s*FAIL/;
