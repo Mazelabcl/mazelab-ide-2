@@ -177,6 +177,7 @@ const EXPECTED_NUMERIC_FIELDS = {
 const EXPECTED_POLICY_MATRIX = {
     ventas_select_authenticated:       { USING: 'any' },
     ventas_write_comercial:            { USING: ['comercial', 'socio', 'superadmin'], 'WITH CHECK': ['comercial', 'socio', 'superadmin'] },
+    ventas_update_operaciones:         { USING: ['operaciones'], 'WITH CHECK': ['operaciones'] },
     facturas_select_authenticated:     { USING: 'any' },
     facturas_write_comercial:          { USING: ['comercial', 'socio', 'superadmin'], 'WITH CHECK': ['comercial', 'socio', 'superadmin'] },
     cotizaciones_select_authenticated: { USING: 'any' },

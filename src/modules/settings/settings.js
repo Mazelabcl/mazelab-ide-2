@@ -416,7 +416,8 @@ window.Mazelab.Modules.SettingsModule = (function () {
                 var roleLabel = roleLabels[u.role] || u.role;
                 var roleSelect = isSelf
                     ? '<span class="badge badge-info">' + escapeHtml(roleLabel) + '</span>'
-                    : '<select class="form-control users-role-select" data-id="' + u.id + '" style="font-size:12px;padding:2px 6px;width:auto;">' +
+                    : '<select class="form-control users-role-select" data-id="' + u.id + '" style="font-size:12px;padding:2px 6px;width:auto;"' +
+                      (isSuperAdmin ? '' : ' disabled title="Solo el superadmin cambia roles"') + '>' +
                       '<option value="operaciones"' + (u.role === 'operaciones' ? ' selected' : '') + '>Operaciones</option>' +
                       '<option value="comercial"' + (u.role === 'comercial' ? ' selected' : '') + '>Comercial</option>' +
                       '<option value="socio"' + (u.role === 'socio' ? ' selected' : '') + '>Socio</option>' +
@@ -1446,7 +1447,7 @@ window.Mazelab.Modules.SettingsModule = (function () {
                 var deleteBtn = e.target.closest('.users-delete-btn');
                 if (deleteBtn) {
                     var userId2 = deleteBtn.getAttribute('data-id');
-                    if (!confirm('Eliminar este usuario permanentemente?')) return;
+                    if (!confirm('¿Desactivar este usuario? No se elimina de forma permanente — el borrado definitivo de auth.users se hace desde el panel de Supabase.')) return;
                     try {
                         await window.Mazelab.Auth.deleteUser(userId2);
                     } catch (err) {

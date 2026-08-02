@@ -2,14 +2,16 @@
 // (B1, I1-I5, M1-M2) — carga el código REAL en Node con fetch/DOM mockeados.
 // Correr con: node verify-e-fixes.js
 //
-// NOTA (Sprint M1, Lote M1-B): src/shared/supabase.js se reescribió sobre
-// @supabase/supabase-js (createClient de un CDN global), no sobre fetch a
-// /api/db — ya no existe un "fetch mockeable" dentro de ese archivo. Los
-// escenarios (a)/(b) de esta suite prueban data-service.js (readOnly/cache/sin
-// fallback), no el transporte de Supabase, así que en vez de requerir el
-// supabase.js real se instala un shim local que replica el contrato EXTERNO
-// viejo (mismas 6 funciones, basado en fetch, mismos mensajes de error) —
-// mismo patrón que tenía supabase.js antes de M1-B. Ninguna aserción cambió.
+// NOTA (Sprint M1, Lote M1-B, actualizada en el fix round — hallazgo I9): los
+// escenarios (a)/(b) probaban data-service.js contra un shim local que
+// replicaba el contrato EXTERNO viejo (fetch a /api/db) — "teatro" que no
+// ejercitaba src/shared/supabase.js real. Ahora cargan supabase.js REAL con
+// window.supabase.createClient mockeado (mismo patrón que tests/verify-adapter.js:
+// query builder encadenable que registra llamadas y resuelve según un guion
+// tabla+método). Ninguna aserción de (a)/(b) cambió de intención — solo el
+// mecanismo de scripting (antes fetch, ahora el cliente mockeado). Los
+// escenarios (c),(d),(e) construyen su propio window.Mazelab.DataService
+// inline y nunca pasaron por el shim — quedan intactos.
 'use strict';
 const assert = require('assert');
 const fs = require('fs');
@@ -18,87 +20,49 @@ const { JSDOM } = require('jsdom');
 
 const REPO = path.join(__dirname, '..');
 const DS_PATH        = path.join(REPO, 'src/shared/data-service.js');
+const SUPABASE_PATH  = path.join(REPO, 'src/shared/supabase.js');
 const MONEY_PATH     = path.join(REPO, 'src/shared/money.js');
 const PAYABLES_PATH  = path.join(REPO, 'src/modules/payables/payables.js');
 const PAGOS_PATH     = path.join(REPO, 'src/modules/pagos/pagos.js');
 const SALES_PATH     = path.join(REPO, 'src/modules/sales/sales.js');
 
-// Réplica exacta (pre-M1-B) del adaptador fetch-based — ver nota de cabecera.
-function installLegacyFetchSupabaseShim() {
-    const BASE = '/api/db';
-    let isConnected = false;
+// Mock de supabase-js — copiado del patrón de tests/verify-adapter.js: query
+// builder encadenable mínimo que registra las llamadas hechas (tabla, método,
+// args) y resuelve según un guion configurable por tabla+método.
+function makeMockSupabaseClient(script) {
+    const calls = [];
 
-    async function testConnection() {
-        try {
-            const res = await fetch(BASE + '/ventas?limit=1');
-            isConnected = res.ok;
-            return isConnected;
-        } catch {
-            isConnected = false;
-            return false;
-        }
+    function makeBuilder(table) {
+        const state = { table: table, method: null, args: [] };
+        const builder = {
+            select: function (col, opts) {
+                state.selectArgs = [col, opts];
+                if (state.method === null) state.method = 'select';
+                return builder;
+            },
+            insert: function (record) { state.method = 'insert'; state.args = [record]; return builder; },
+            update: function (updates) { state.method = 'update'; state.args = [updates]; return builder; },
+            upsert: function (records, opts) { state.method = 'upsert'; state.args = [records, opts]; return builder; },
+            delete: function () { state.method = 'delete'; return builder; },
+            eq: function (col, val) { state.eq = { col: col, val: val }; return builder; },
+            order: function (col) { state.order = col; return builder; },
+            limit: function (n) { state.limitArgs = n; return builder; },
+            single: function () { state.single = true; return resolveFor(state); },
+            then: function (resolve, reject) { return resolveFor(state).then(resolve, reject); }
+        };
+        return builder;
     }
 
-    async function fetchAll(table) {
-        const res = await fetch(BASE + '/' + table);
-        if (!res.ok) {
-            const errText = await res.text().catch(function () { return String(res.status); });
-            throw new Error('Error al leer ' + table + ' (HTTP ' + res.status + '): ' + errText);
-        }
-        const data = await res.json();
-        return Array.isArray(data) ? data : (data.rows || data.data || []);
+    function resolveFor(state) {
+        calls.push({ table: state.table, method: state.method, args: state.args, eq: state.eq, order: state.order, limitArgs: state.limitArgs, single: !!state.single, selectArgs: state.selectArgs });
+        const key = state.table + '.' + state.method;
+        const scripted = script[key];
+        const result = typeof scripted === 'function' ? scripted(state) : (scripted || { data: null, error: null });
+        return Promise.resolve(result);
     }
 
-    async function insert(table, record) {
-        const res = await fetch(BASE + '/' + table, {
-            method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(record)
-        });
-        if (!res.ok) {
-            const errText = await res.text().catch(function () { return String(res.status); });
-            throw new Error('Error al guardar en ' + table + ' (HTTP ' + res.status + '): ' + errText);
-        }
-        return await res.json();
-    }
-
-    async function update(table, id, updates) {
-        const res = await fetch(BASE + '/' + table + '/' + id, {
-            method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(updates)
-        });
-        if (!res.ok) {
-            const errText = await res.text().catch(function () { return String(res.status); });
-            throw new Error('Error al actualizar en ' + table + ' (HTTP ' + res.status + '): ' + errText);
-        }
-        return await res.json();
-    }
-
-    async function remove(table, id) {
-        const res = await fetch(BASE + '/' + table + '/' + id, { method: 'DELETE' });
-        if (!res.ok) {
-            const errText = await res.text().catch(function () { return String(res.status); });
-            throw new Error('Error al eliminar en ' + table + ' (HTTP ' + res.status + '): ' + errText);
-        }
-        return true;
-    }
-
-    async function upsertMany(table, records) {
-        const BATCH_SIZE = 100;
-        const results = [];
-        for (let i = 0; i < records.length; i += BATCH_SIZE) {
-            const batch = records.slice(i, i + BATCH_SIZE);
-            const res = await fetch(BASE + '/' + table + '/upsert', {
-                method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(batch)
-            });
-            if (!res.ok) {
-                const errText = await res.text().catch(function () { return String(res.status); });
-                throw new Error('Error al importar "' + table + '" (lote ' + Math.floor(i / BATCH_SIZE + 1) + '): HTTP ' + res.status + ' — ' + errText);
-            }
-            const data = await res.json().catch(function () { return []; });
-            if (Array.isArray(data)) results.push(...data);
-        }
-        return results;
-    }
-
-    global.window.Mazelab.Supabase = { testConnection, isConnected: () => isConnected, fetchAll, insert, update, remove, upsertMany };
+    const client = { from: function (table) { return makeBuilder(table); } };
+    return { client: client, calls: calls };
 }
 
 // ---- Reloj congelado — 2026-07-26T12:00:00 hora local ----
@@ -151,9 +115,11 @@ function fakeStorageService(seed) {
 
 // Mismo patrón que verify-lote-e.js: simula una carga de página nueva para
 // supabase.js/data-service.js (limpia su require cache y reconstruye window.Mazelab).
+// opts.script: guion tabla.método -> respuesta, para el cliente supabase-js mockeado.
 function freshDSEnv(opts) {
     opts = opts || {};
     delete require.cache[require.resolve(DS_PATH)];
+    delete require.cache[require.resolve(SUPABASE_PATH)];
 
     global.window = {};
     global.window.location = { search: opts.search || '' };
@@ -177,40 +143,39 @@ function freshDSEnv(opts) {
             CotizacionesService: fakeStorageService()
         }
     };
-    global.fetch = opts.fetch || function () { return Promise.reject(new Error('fetch no mockeado en este escenario')); };
 
-    installLegacyFetchSupabaseShim();
+    var mock = makeMockSupabaseClient(opts.script || {});
+    global.window.supabase = { createClient: function () { return mock.client; } };
+
+    require(SUPABASE_PATH);
     require(DS_PATH);
 
-    return { window: global.window, uiCalls: uiCalls, DS: global.window.Mazelab.DataService, Supabase: global.window.Mazelab.Supabase };
+    return { window: global.window, uiCalls: uiCalls, DS: global.window.Mazelab.DataService, Supabase: global.window.Mazelab.Supabase, calls: mock.calls };
 }
 
 (async function () {
 
     // ================= (a) importMany en readOnly lanza sin tocar red (B1) =================
-    await at('(a) importMany en modo readOnly lanza ANTES de tocar la red', async function () {
-        var env = freshDSEnv({ fetch: function () { throw new Error('NO debió llamarse a fetch'); } });
+    await at('(a) importMany en modo readOnly lanza ANTES de tocar el cliente Supabase', async function () {
+        var env = freshDSEnv({});
         env.window.Mazelab.Supabase.testConnection = function () { return Promise.resolve(false); };
         await env.DS.init();
         assert.strictEqual(env.DS.readOnly, true, 'readOnly debe quedar activo tras fallo de conexión inicial');
         await assertRejects(env.DS.importMany('sales', [{ id: 'x' }]), /solo lectura/);
+        assert.strictEqual(env.calls.length, 0, 'importMany no debió tocar el cliente Supabase real estando en readOnly');
     });
 
     // ================= (b) getAll ANTES de init() no cae a localStorage en silencio (I1) =================
     await at('(b) getAll() llamado ANTES de init() no lee localStorage en silencio (useSupabase default = true)', async function () {
         var localCalled = false;
-        var fetchCalls = 0;
-        var env = freshDSEnv({ fetch: function () {
-            fetchCalls++;
-            return Promise.resolve({ ok: true, status: 200, json: function () { return Promise.resolve([{ id: 'server-1' }]); } });
-        }});
+        var env = freshDSEnv({ script: { 'ventas.select': { data: [{ id: 'server-1' }], error: null } } });
         env.window.Mazelab.Storage.SalesService.getAll = function () { localCalled = true; return [{ id: 'local-fantasma' }]; };
         // A propósito: NO se llama env.DS.init() — simula un getAll() disparado antes
         // de que el bootstrap de la app corra init() (I1: mina latente por orden de llamadas).
         var result = await env.DS.getAll('sales');
         assert.deepStrictEqual(result, [{ id: 'server-1' }], 'debe leer del servidor, no del localStorage fantasma');
         assert.strictEqual(localCalled, false, 'NO debió leer localStorage en silencio antes de init()');
-        assert.ok(fetchCalls > 0, 'debió intentar el servidor (useSupabase default = true)');
+        assert.ok(env.calls.length > 0, 'debió intentar el servidor (useSupabase default = true)');
     });
 
     // ================= (c) delete de payables fallando → toast de error (I2) =================

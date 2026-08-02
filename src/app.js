@@ -248,11 +248,41 @@ window.Mazelab.Modules = window.Mazelab.Modules || {};
             return;
         }
 
+        // I2: ?localdev=1 es una vía de escape EXPLÍCITA para desarrollo local —
+        // nunca implícita, nunca un fallback de error. Antes el gate exigía una
+        // sesión real de Supabase incluso en este modo (roto si no había red o
+        // proyecto configurado); ahora salta la autenticación por completo e
+        // inyecta un usuario local superadmin en el cache síncrono de Auth.
+        // data-service.js ya maneja el modo local de forma independiente (su
+        // propio init() detecta el mismo parámetro y usa localStorage).
+        var urlParams = new URLSearchParams(window.location.search);
+        if (urlParams.get('localdev') === '1') {
+            if (typeof Auth._setLocalDevUser === 'function') {
+                Auth._setLocalDevUser({ id: 'localdev', email: 'localdev@local', name: 'Modo Prueba', role: 'superadmin' });
+            } else {
+                console.warn('Auth._setLocalDevUser no está disponible — ?localdev=1 no pudo inyectar un usuario local.');
+            }
+            await initApp();
+            return;
+        }
+
         // Restaura la sesión (si existe) y puebla el cache síncrono de Auth
         // (getUser/isLoggedIn/canAccess) ANTES de decidir login vs app — de lo
         // contrario isLoggedIn() vería el cache todavía vacío aunque exista una
         // sesión válida en Supabase.
-        await Auth.init();
+        //
+        // I1: si Auth.init() lanza (ej. el CDN de supabase-js no cargó, o la
+        // red falla de una forma que el propio init() no atrapó), antes esto
+        // dejaba una excepción sin manejar en el listener de DOMContentLoaded
+        // y la app quedaba en blanco sin ningún mensaje — ahora se bloquea con
+        // un error visible, igual que las otras ramas de este gate.
+        try {
+            await Auth.init();
+        } catch (e) {
+            console.error('Auth.init() lanzó inesperadamente:', e);
+            showFatalAuthError('No se pudo cargar el sistema de autenticacion' + (e && e.message ? ': ' + e.message : '.') + ' Recarga la pagina o contacta al administrador.');
+            return;
+        }
 
         // If not logged in, show login screen
         if (!Auth.isLoggedIn()) {

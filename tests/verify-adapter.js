@@ -52,6 +52,7 @@ function makeMockSupabaseClient(script) {
             delete: function () { state.method = 'delete'; return builder; },
             eq: function (col, val) { state.eq = { col: col, val: val }; return builder; },
             order: function (col) { state.order = col; return builder; },
+            limit: function (n) { state.limitArgs = n; return builder; },
             single: function () {
                 state.single = true;
                 return resolveFor(state);
@@ -66,7 +67,7 @@ function makeMockSupabaseClient(script) {
     }
 
     function resolveFor(state) {
-        calls.push({ table: state.table, method: state.method, args: state.args, eq: state.eq, order: state.order, single: !!state.single, selectArgs: state.selectArgs });
+        calls.push({ table: state.table, method: state.method, args: state.args, eq: state.eq, order: state.order, limitArgs: state.limitArgs, single: !!state.single, selectArgs: state.selectArgs });
         const key = state.table + '.' + state.method;
         const scripted = script[key];
         const result = typeof scripted === 'function' ? scripted(state) : (scripted || { data: null, error: null });
@@ -93,14 +94,18 @@ function freshSupabaseEnv(script) {
 (async function () {
 
     // ================= testConnection() =================
-    await at('testConnection(): éxito → true, usa .from("ventas").select("id",{head:true,count:"exact"})', async function () {
-        const env = freshSupabaseEnv({ 'ventas.select': { data: null, error: null, count: 5 } });
+    // I3: HEAD nunca ejecuta la query real (algunos proxies delante de
+    // PostgREST responden HEAD sin reenviarlo) — ahora es un GET real:
+    // .select("id").limit(1).
+    await at('testConnection(): éxito → true, usa .from("ventas").select("id").limit(1) — GET real, no HEAD', async function () {
+        const env = freshSupabaseEnv({ 'ventas.select': { data: [{ id: '1' }], error: null } });
         const ok = await env.Supabase.testConnection();
         assert.strictEqual(ok, true);
         assert.strictEqual(env.Supabase.isConnected(), true);
         const call = env.calls.find(function (c) { return c.table === 'ventas' && c.method === 'select'; });
         assert.ok(call, 'debe haber llamado .from("ventas").select(...)');
-        assert.deepStrictEqual(call.selectArgs, ['id', { head: true, count: 'exact' }]);
+        assert.deepStrictEqual(call.selectArgs, ['id', undefined]);
+        assert.strictEqual(call.limitArgs, 1, 'debe usar .limit(1) — un GET real que fuerza la ejecución completa de la query');
     });
 
     await at('testConnection(): error de supabase-js → false, JAMÁS lanza', async function () {
@@ -178,8 +183,11 @@ function freshSupabaseEnv(script) {
     });
 
     // ================= remove() =================
-    await at('remove(): éxito → true, usa .delete().eq("id",id)', async function () {
-        const env = freshSupabaseEnv({ 'ventas.delete': { data: null, error: null } });
+    // I4: un DELETE sin .select() puede devolver éxito con 0 filas afectadas
+    // (RLS filtró la fila en silencio) — ahora pide .select("id") de vuelta y
+    // lanza si viene vacío, en vez de reportar un borrado que nunca ocurrió.
+    await at('remove(): éxito → true, usa .delete().eq("id",id).select("id"), la fila SÍ existía', async function () {
+        const env = freshSupabaseEnv({ 'ventas.delete': { data: [{ id: 'v1' }], error: null } });
         const result = await env.Supabase.remove('ventas', 'v1');
         assert.strictEqual(result, true);
         const call = env.calls.find(function (c) { return c.table === 'ventas' && c.method === 'delete'; });
@@ -190,6 +198,12 @@ function freshSupabaseEnv(script) {
         const env = freshSupabaseEnv({ 'ventas.delete': { data: null, error: { message: 'foreign key constraint' } } });
         const err = await assertRejects(env.Supabase.remove('ventas', 'v1'));
         assert.strictEqual(err.message, 'Error al eliminar en ventas: foreign key constraint');
+    });
+
+    await at('remove(): RLS bloquea en silencio (sin error, 0 filas afectadas) → lanza "no existe o no tienes permiso" (I4)', async function () {
+        const env = freshSupabaseEnv({ 'ventas.delete': { data: [], error: null } });
+        const err = await assertRejects(env.Supabase.remove('ventas', 'v1'));
+        assert.ok(/no existe o no tienes permiso/.test(err.message), 'mensaje real: ' + err.message);
     });
 
     // ================= upsertMany() =================

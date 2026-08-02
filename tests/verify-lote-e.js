@@ -2,14 +2,21 @@
 // (src/shared/data-service.js, src/modules/finance/finance.js) en Node con
 // fetch/window/DOM mockeados. Correr con: node verify-lote-e.js
 //
-// NOTA (Sprint M1, Lote M1-B): src/shared/supabase.js se reescribió sobre
-// @supabase/supabase-js (createClient de un CDN global), no sobre fetch a
-// /api/db — ya no existe un "fetch mockeable" dentro de ese archivo. Esta
-// suite prueba data-service.js (cache/readOnly/sin fallback), no el
-// transporte de Supabase, así que en vez de requerir el supabase.js real se
-// instala un shim local que replica el contrato EXTERNO viejo (mismas 6
-// funciones, basado en fetch, mismos mensajes de error) — mismo patrón que
-// tenía supabase.js antes de M1-B. Ninguna aserción de este archivo cambió.
+// NOTA (Sprint M1, Lote M1-B, actualizada en el fix round — hallazgo I9): esta
+// suite probaba data-service.js contra un shim local que replicaba el
+// contrato EXTERNO viejo (fetch a /api/db) — "teatro" que no ejercitaba el
+// src/shared/supabase.js real en absoluto. Ahora carga supabase.js REAL con
+// window.supabase.createClient mockeado (mismo patrón que tests/verify-adapter.js:
+// un query builder encadenable que registra las llamadas y resuelve según un
+// guion configurable por tabla+método). Los tests (1) y (2) citaban el
+// formato viejo de mensaje de error ("HTTP 500", literal de red) — se
+// actualizaron al contrato nuevo de supabase.js ("Error al leer/actualizar
+// <tabla>: <mensaje>"), conservando la intención (update lanza en error;
+// fetchAll lanza en error). Los tests (3)-(5) solo cambian el MECANISMO de
+// scripting (antes fetch, ahora el cliente mockeado); su intención y
+// aserciones de comportamiento no cambiaron. Los tests (6a)/(6b) construyen
+// su propio window.Mazelab.DataService inline y nunca pasaron por el shim —
+// quedan intactos.
 'use strict';
 const assert = require('assert');
 const path = require('path');
@@ -17,85 +24,47 @@ const { JSDOM } = require('jsdom');
 
 const REPO = path.join(__dirname, '..');
 const DS_PATH       = path.join(REPO, 'src/shared/data-service.js');
+const SUPABASE_PATH = path.join(REPO, 'src/shared/supabase.js');
 const FINANCE_PATH  = path.join(REPO, 'src/modules/finance/finance.js');
 const MONEY_PATH    = path.join(REPO, 'src/shared/money.js');
 
-// Réplica exacta (pre-M1-B) del adaptador fetch-based — ver nota de cabecera.
-function installLegacyFetchSupabaseShim(win) {
-    const BASE = '/api/db';
-    let isConnected = false;
+// Mock de supabase-js — copiado del patrón de tests/verify-adapter.js: query
+// builder encadenable mínimo que registra las llamadas hechas (tabla, método,
+// args) y resuelve según un guion configurable por tabla+método.
+function makeMockSupabaseClient(script) {
+    const calls = [];
 
-    async function testConnection() {
-        try {
-            const res = await fetch(BASE + '/ventas?limit=1');
-            isConnected = res.ok;
-            return isConnected;
-        } catch {
-            isConnected = false;
-            return false;
-        }
+    function makeBuilder(table) {
+        const state = { table: table, method: null, args: [] };
+        const builder = {
+            select: function (col, opts) {
+                state.selectArgs = [col, opts];
+                if (state.method === null) state.method = 'select';
+                return builder;
+            },
+            insert: function (record) { state.method = 'insert'; state.args = [record]; return builder; },
+            update: function (updates) { state.method = 'update'; state.args = [updates]; return builder; },
+            upsert: function (records, opts) { state.method = 'upsert'; state.args = [records, opts]; return builder; },
+            delete: function () { state.method = 'delete'; return builder; },
+            eq: function (col, val) { state.eq = { col: col, val: val }; return builder; },
+            order: function (col) { state.order = col; return builder; },
+            limit: function (n) { state.limitArgs = n; return builder; },
+            single: function () { state.single = true; return resolveFor(state); },
+            then: function (resolve, reject) { return resolveFor(state).then(resolve, reject); }
+        };
+        return builder;
     }
 
-    async function fetchAll(table) {
-        const res = await fetch(BASE + '/' + table);
-        if (!res.ok) {
-            const errText = await res.text().catch(function () { return String(res.status); });
-            throw new Error('Error al leer ' + table + ' (HTTP ' + res.status + '): ' + errText);
-        }
-        const data = await res.json();
-        return Array.isArray(data) ? data : (data.rows || data.data || []);
+    function resolveFor(state) {
+        calls.push({ table: state.table, method: state.method, args: state.args, eq: state.eq, order: state.order, limitArgs: state.limitArgs, single: !!state.single, selectArgs: state.selectArgs });
+        const key = state.table + '.' + state.method;
+        const scripted = script[key];
+        const result = typeof scripted === 'function' ? scripted(state) : (scripted || { data: null, error: null });
+        return Promise.resolve(result);
     }
 
-    async function insert(table, record) {
-        const res = await fetch(BASE + '/' + table, {
-            method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(record)
-        });
-        if (!res.ok) {
-            const errText = await res.text().catch(function () { return String(res.status); });
-            throw new Error('Error al guardar en ' + table + ' (HTTP ' + res.status + '): ' + errText);
-        }
-        return await res.json();
-    }
-
-    async function update(table, id, updates) {
-        const res = await fetch(BASE + '/' + table + '/' + id, {
-            method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(updates)
-        });
-        if (!res.ok) {
-            const errText = await res.text().catch(function () { return String(res.status); });
-            throw new Error('Error al actualizar en ' + table + ' (HTTP ' + res.status + '): ' + errText);
-        }
-        return await res.json();
-    }
-
-    async function remove(table, id) {
-        const res = await fetch(BASE + '/' + table + '/' + id, { method: 'DELETE' });
-        if (!res.ok) {
-            const errText = await res.text().catch(function () { return String(res.status); });
-            throw new Error('Error al eliminar en ' + table + ' (HTTP ' + res.status + '): ' + errText);
-        }
-        return true;
-    }
-
-    async function upsertMany(table, records) {
-        const BATCH_SIZE = 100;
-        const results = [];
-        for (let i = 0; i < records.length; i += BATCH_SIZE) {
-            const batch = records.slice(i, i + BATCH_SIZE);
-            const res = await fetch(BASE + '/' + table + '/upsert', {
-                method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(batch)
-            });
-            if (!res.ok) {
-                const errText = await res.text().catch(function () { return String(res.status); });
-                throw new Error('Error al importar "' + table + '" (lote ' + Math.floor(i / BATCH_SIZE + 1) + '): HTTP ' + res.status + ' — ' + errText);
-            }
-            const data = await res.json().catch(function () { return []; });
-            if (Array.isArray(data)) results.push(...data);
-        }
-        return results;
-    }
-
-    win.Mazelab.Supabase = { testConnection, isConnected: () => isConnected, fetchAll, insert, update, remove, upsertMany };
+    const client = { from: function (table) { return makeBuilder(table); } };
+    return { client: client, calls: calls };
 }
 
 let pass = 0, fail = 0;
@@ -130,9 +99,12 @@ function fakeStorageService(seed) {
 // Simula una carga de página nueva: limpia el require cache de supabase.js/data-service.js
 // y reconstruye window.Mazelab desde cero, para que cada escenario parta con el mismo
 // estado inicial (initialized=false, useSupabase=false, readOnly=false).
+// opts.script: guion tabla.método -> respuesta, para el cliente supabase-js mockeado
+// (ver makeMockSupabaseClient arriba) — reemplaza al viejo opts.fetch.
 function freshEnv(opts) {
     opts = opts || {};
     delete require.cache[require.resolve(DS_PATH)];
+    delete require.cache[require.resolve(SUPABASE_PATH)];
 
     global.window = {};
     global.window.location = { search: opts.search || '' };
@@ -156,42 +128,45 @@ function freshEnv(opts) {
             CotizacionesService: fakeStorageService()
         }
     };
-    global.fetch = opts.fetch || function () { return Promise.reject(new Error('fetch no mockeado en este escenario')); };
 
-    installLegacyFetchSupabaseShim(global.window);
+    var mock = makeMockSupabaseClient(opts.script || {});
+    global.window.supabase = { createClient: function () { return mock.client; } };
+
+    require(SUPABASE_PATH);
     require(DS_PATH);
 
     return {
         window: global.window,
         uiCalls: uiCalls,
         DS: global.window.Mazelab.DataService,
-        Supabase: global.window.Mazelab.Supabase
+        Supabase: global.window.Mazelab.Supabase,
+        calls: mock.calls
     };
 }
 
 (async function () {
 
-    // ================= (1) update con servidor 500 → lanza (ya no null) =================
-    await at('(1) Supabase.update lanza en HTTP 500, ya no devuelve null', async function () {
-        var env = freshEnv({ fetch: function () {
-            return Promise.resolve({ ok: false, status: 500, text: function () { return Promise.resolve('boom'); } });
-        }});
-        var err = await assertRejects(env.Supabase.update('ventas', '1', { foo: 1 }), /HTTP 500/);
+    // ================= (1) update en error → lanza (ya no null) =================
+    // Contrato nuevo de supabase.js (I9): "Error al actualizar en <tabla>: <mensaje>"
+    // — reemplaza al viejo "HTTP 500". La intención se conserva: update() lanza en error.
+    await at('(1) Supabase.update lanza en error, ya no devuelve null', async function () {
+        var env = freshEnv({ script: { 'ventas.update': { data: null, error: { message: 'internal server error' } } } });
+        var err = await assertRejects(env.Supabase.update('ventas', '1', { foo: 1 }), /^Error al actualizar en ventas: internal server error$/);
         assert.notStrictEqual(err, null);
     });
 
     // ================= (2) fetchAll con red caída → lanza (ya no []) =================
+    // Contrato nuevo de supabase.js (I9): "Error al leer <tabla>: <mensaje>" —
+    // reemplaza al viejo literal de red. La intención se conserva: fetchAll() lanza en error.
     await at('(2) Supabase.fetchAll lanza si la red está caída, ya no devuelve []', async function () {
-        var env = freshEnv({ fetch: function () { return Promise.reject(new Error('ECONNREFUSED')); } });
-        await assertRejects(env.Supabase.fetchAll('ventas'), /ECONNREFUSED/);
+        var env = freshEnv({ script: { 'ventas.select': { data: null, error: { message: 'ECONNREFUSED' } } } });
+        await assertRejects(env.Supabase.fetchAll('ventas'), /^Error al leer ventas: ECONNREFUSED$/);
     });
 
     // ================= (3) getAll con servidor OK y tabla vacía → [] SIN caer a localStorage =================
     await at('(3) getAll: servidor OK + tabla vacía devuelve [] SIN fallback a localStorage', async function () {
         var localCalled = false;
-        var env = freshEnv({ fetch: function () {
-            return Promise.resolve({ ok: true, status: 200, json: function () { return Promise.resolve([]); } });
-        }});
+        var env = freshEnv({ script: { 'ventas.select': { data: [], error: null } } });
         env.window.Mazelab.Storage.SalesService.getAll = function () { localCalled = true; return [{ id: 'no-debiera-verse' }]; };
         await env.DS.init();
         assert.strictEqual(env.DS.isUsingSupabase(), true);
@@ -201,8 +176,8 @@ function freshEnv(opts) {
     });
 
     // ================= (4) readOnly activo → create lanza ANTES de tocar red =================
-    await at('(4) readOnly activo: create lanza ANTES de llamar a fetch', async function () {
-        var env = freshEnv({ fetch: function () { throw new Error('NO debió llamarse a fetch'); } });
+    await at('(4) readOnly activo: create lanza ANTES de llamar al cliente Supabase', async function () {
+        var env = freshEnv({});
         // Conexión inicial falla → init() debe activar readOnly y mostrar el banner offline
         env.window.Mazelab.Supabase.testConnection = function () { return Promise.resolve(false); };
         await env.DS.init();
@@ -212,15 +187,12 @@ function freshEnv(opts) {
         await assertRejects(env.DS.create('sales', { foo: 1 }), /solo lectura/);
         await assertRejects(env.DS.update('sales', 'x', { foo: 1 }), /solo lectura/);
         await assertRejects(env.DS.remove('sales', 'x'), /solo lectura/);
+        assert.strictEqual(env.calls.length, 0, 'ningún CRUD debió tocar el cliente Supabase real estando en readOnly');
     });
 
     // ================= (5) ?localdev=1 → modo localStorage + banner de prueba =================
-    await at('(5) ?localdev=1 activa modo local, llama showTestModeBanner, y NO toca la red', async function () {
-        var fetchCalls = 0;
-        var env = freshEnv({
-            search: '?localdev=1',
-            fetch: function () { fetchCalls++; return Promise.resolve({ ok: true, json: function () { return Promise.resolve([]); } }); }
-        });
+    await at('(5) ?localdev=1 activa modo local, llama showTestModeBanner, y NO toca el cliente Supabase', async function () {
+        var env = freshEnv({ search: '?localdev=1' });
         env.window.Mazelab.Storage.SalesService = fakeStorageService([{ id: 's1' }]);
         await env.DS.init();
         assert.strictEqual(env.DS.isUsingSupabase(), false, 'en localdev NO debe usar el servidor');
@@ -230,13 +202,14 @@ function freshEnv(opts) {
 
         var all = await env.DS.getAll('sales');
         assert.deepStrictEqual(all, [{ id: 's1' }]);
-        assert.strictEqual(fetchCalls, 0, 'localdev no debe llamar a fetch en ningún momento');
+        assert.strictEqual(env.calls.length, 0, 'localdev no debe llamar al cliente Supabase en ningún momento');
 
         // Y create/update/remove deben escribir en localStorage (modo prueba explícito, no fallback)
         var created = await env.DS.create('sales', { id: 's2', amount: 100 });
         assert.ok(created);
         var again = await env.DS.getAll('sales');
         assert.strictEqual(again.length, 2);
+        assert.strictEqual(env.calls.length, 0, 'localdev tampoco debe tocar el cliente Supabase en create/getAll subsecuentes');
     });
 
     // ================= (6) compensación de crearFacturaYCerrarResidual (I7) =================

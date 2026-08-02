@@ -50,9 +50,14 @@ window.Mazelab = window.Mazelab || {};
     }
 
     async function testConnection() {
+        // I3: un HEAD nunca ejecuta la query real contra Postgres — con RLS/
+        // esquema roto puede devolver 200 igual (algunos proxies/CDNs delante
+        // de PostgREST responden HEAD sin reenviarlo). Un GET real con
+        // .limit(1) sí fuerza la ejecución completa: si la tabla/columna no
+        // existe o RLS la bloquea de una forma que rompe la query, viene error.
         try {
             var client = getClient();
-            var res = await client.from('ventas').select('id', { head: true, count: 'exact' });
+            var res = await client.from('ventas').select('id').limit(1);
             isConnected = !res.error;
             return isConnected;
         } catch (e) {
@@ -99,11 +104,18 @@ window.Mazelab = window.Mazelab || {};
 
     async function remove(table, id) {
         // Mismo patrón que insert(): lanza en vez de devolver false.
+        // I4: un DELETE sin .select() devuelve 200/sin error incluso cuando RLS
+        // filtra la fila y el borrado real afecta 0 filas — remove() reportaba
+        // éxito de un borrado que nunca ocurrió. .select('id') pide de vuelta
+        // las filas efectivamente borradas: si viene vacío, no se borró nada.
         assertValidTable(table);
         var client = getClient();
-        var res = await client.from(table).delete().eq('id', id);
+        var res = await client.from(table).delete().eq('id', id).select('id');
         if (res.error) {
             throw new Error('Error al eliminar en ' + table + ': ' + res.error.message);
+        }
+        if (!res.data || res.data.length === 0) {
+            throw new Error('Error al eliminar en ' + table + ': el registro no existe o no tienes permiso');
         }
         return true;
     }

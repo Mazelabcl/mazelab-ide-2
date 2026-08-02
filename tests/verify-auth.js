@@ -68,8 +68,8 @@ function makeMockClient(opts) {
             calls.auth.push({ method: 'updateUser', args: fields });
             return opts.updateUser ? opts.updateUser(fields) : { data: {}, error: null };
         },
-        resetPasswordForEmail: async function (email) {
-            calls.auth.push({ method: 'resetPasswordForEmail', args: email });
+        resetPasswordForEmail: async function (email, options) {
+            calls.auth.push({ method: 'resetPasswordForEmail', args: email, options: options });
             return opts.resetPasswordForEmail ? opts.resetPasswordForEmail(email) : { data: {}, error: null };
         },
         wasSignedOut: function () { return signedOut; }
@@ -107,13 +107,16 @@ function freshAuthEnv(clientOpts) {
     delete require.cache[require.resolve(AUTH_PATH)];
     const mock = makeMockClient(clientOpts);
     global.window = {
-        Mazelab: { Supabase: { _client: mock.client } }
+        Mazelab: { Supabase: { _client: mock.client } },
+        // I7: getRedirectTo() lee window.location.origin/pathname — se define
+        // aquí para poder verificar que resetPasswordForEmail() lo manda.
+        location: { origin: 'http://localhost:3000', pathname: '/' }
     };
     require(AUTH_PATH);
     return { Auth: global.window.Mazelab.Auth, client: mock.client, calls: mock.calls, authMock: mock.authMock };
 }
 
-const PROFILE_ROW = { id: 'u-1', email: 'comercial@mazelab.cl', name: 'Vale', role: 'comercial', active: true };
+const PROFILE_ROW = { id: 'u-1', email: 'comercial@mazelab.cl', name: 'Vale', role: 'comercial', active: true, created_at: '2026-01-15T10:00:00.000Z' };
 
 (async function () {
 
@@ -341,6 +344,7 @@ const PROFILE_ROW = { id: 'u-1', email: 'comercial@mazelab.cl', name: 'Vale', ro
         assert.strictEqual(ok, true);
         const rpCall = env.calls.auth.find(function (c) { return c.method === 'resetPasswordForEmail'; });
         assert.strictEqual(rpCall.args, 'target@mazelab.cl');
+        assert.strictEqual(rpCall.options && rpCall.options.redirectTo, 'http://localhost:3000/', 'I7: debe mandar redirectTo explícito (sin él, Supabase manda a la Site URL del proyecto, no necesariamente esta app)');
     });
 
     await at('requestPasswordReset(email): self-service para la pantalla de login, sin requerir sesión ni permisos', async function () {
@@ -350,17 +354,19 @@ const PROFILE_ROW = { id: 'u-1', email: 'comercial@mazelab.cl', name: 'Vale', ro
         const ok = await env.Auth.requestPasswordReset('Yo@Mazelab.cl');
         assert.strictEqual(ok, true);
         const rpCall = env.calls.auth.find(function (c) { return c.method === 'resetPasswordForEmail'; });
+        assert.strictEqual(rpCall.options && rpCall.options.redirectTo, 'http://localhost:3000/', 'I7: requestPasswordReset() también debe mandar redirectTo explícito');
         assert.strictEqual(rpCall.args, 'yo@mazelab.cl', 'debe normalizar el email a minúsculas/trim');
     });
 
     // ================= getAllUsers() =================
-    await at('getAllUsers(): lee profiles y mapea la forma esperada', async function () {
+    await at('getAllUsers(): lee profiles y mapea la forma esperada (incluye created_at — M5)', async function () {
         const env = freshAuthEnv({
-            from: { 'profiles.select': { data: [PROFILE_ROW, { id: 'u-2', email: 'a@mazelab.cl', name: 'A', role: 'operaciones', active: false }], error: null } }
+            from: { 'profiles.select': { data: [PROFILE_ROW, { id: 'u-2', email: 'a@mazelab.cl', name: 'A', role: 'operaciones', active: false, created_at: '2026-02-01T08:30:00.000Z' }], error: null } }
         });
         const users = await env.Auth.getAllUsers();
         assert.strictEqual(users.length, 2);
-        assert.deepStrictEqual(users[0], { id: 'u-1', email: 'comercial@mazelab.cl', name: 'Vale', role: 'comercial', active: true });
+        assert.deepStrictEqual(users[0], { id: 'u-1', email: 'comercial@mazelab.cl', name: 'Vale', role: 'comercial', active: true, created_at: '2026-01-15T10:00:00.000Z' });
+        assert.deepStrictEqual(users[1], { id: 'u-2', email: 'a@mazelab.cl', name: 'A', role: 'operaciones', active: false, created_at: '2026-02-01T08:30:00.000Z' });
     });
 
     // ================= hashPassword() — obsoleto =================
@@ -408,6 +414,78 @@ const PROFILE_ROW = { id: 'u-1', email: 'comercial@mazelab.cl', name: 'Vale', ro
         await env.Auth.init();
         const subscribeCalls = env.calls.auth.filter(function (c) { return c.method === 'onAuthStateChange'; });
         assert.strictEqual(subscribeCalls.length, 1, 'onAuthStateChange debe suscribirse una sola vez sin importar cuántas veces se llame init()');
+    });
+
+    // ================= B1 (fix round): onAuthStateChange ANTES de getSession =================
+    await at('B1: onAuthStateChange se suscribe ANTES de getSession() (orden verificable en calls.auth)', async function () {
+        const env = freshAuthEnv({
+            getSession: function () { return { data: { session: null }, error: null }; }
+        });
+        await env.Auth.init();
+        const subscribeIdx  = env.calls.auth.findIndex(function (c) { return c.method === 'onAuthStateChange'; });
+        const getSessionIdx = env.calls.auth.findIndex(function (c) { return c.method === 'getSession'; });
+        assert.notStrictEqual(subscribeIdx, -1, 'debe haberse suscrito a onAuthStateChange');
+        assert.notStrictEqual(getSessionIdx, -1, 'debe haber llamado getSession');
+        assert.ok(subscribeIdx < getSessionIdx,
+            'onAuthStateChange debe registrarse ANTES de getSession() — con el SDK real (2.111.0) el evento ' +
+            'PASSWORD_RECOVERY puede emitirse durante/antes de esa primera llamada; suscribirse después lo pierde para siempre');
+    });
+
+    // ================= B1 (fix round): evento PASSWORD_RECOVERY dispara el flujo real =================
+    await at('B1: evento PASSWORD_RECOVERY invoca el flujo de recuperación (prompt + auth.updateUser)', async function () {
+        const env = freshAuthEnv({
+            getSession: function () { return { data: { session: null }, error: null }; }
+        });
+        await env.Auth.init();
+        assert.strictEqual(typeof env.authMock._subscriber, 'function', 'el mock debe haber capturado el callback suscrito');
+
+        global.window.prompt = function () { return 'nuevaClave123'; };
+        global.window.alert = function () {};
+
+        env.authMock._subscriber('PASSWORD_RECOVERY', { user: { id: 'u-1' } });
+        await new Promise(function (r) { setTimeout(r, 20); }); // handlePasswordRecovery() no se espera dentro del suscriptor (fire-and-forget)
+
+        const updateCall = env.calls.auth.find(function (c) { return c.method === 'updateUser'; });
+        assert.ok(updateCall, 'el evento PASSWORD_RECOVERY debe haber disparado auth.updateUser() con la nueva contraseña');
+        assert.deepStrictEqual(updateCall.args, { password: 'nuevaClave123' });
+    });
+
+    await at('B1: si el usuario cancela el prompt de recuperación, se cierra la sesión y NO se llama updateUser', async function () {
+        const env = freshAuthEnv({
+            getSession: function () { return { data: { session: null }, error: null }; }
+        });
+        await env.Auth.init();
+
+        global.window.prompt = function () { return null; }; // Cancelar
+        global.window.alert = function () {};
+
+        env.authMock._subscriber('PASSWORD_RECOVERY', { user: { id: 'u-1' } });
+        await new Promise(function (r) { setTimeout(r, 20); });
+
+        const updateCall = env.calls.auth.find(function (c) { return c.method === 'updateUser'; });
+        assert.ok(!updateCall, 'cancelar el prompt NO debe llamar updateUser()');
+        assert.strictEqual(env.authMock.wasSignedOut(), true, 'cancelar el prompt debe cerrar la sesión de recuperación (no debe quedar viva)');
+    });
+
+    // ================= I5 (fix round): SIGNED_OUT en caliente limpia cache Y re-muestra login =================
+    await at('SIGNED_OUT (evento en caliente) limpia el cache Y vuelve a mostrar el login (I5)', async function () {
+        const env = freshAuthEnv({
+            getSession: function () { return { data: { session: null }, error: null }; },
+            signInWithPassword: function () { return { data: { user: { id: 'u-1' }, session: {} }, error: null }; },
+            from: { 'profiles.select.id=u-1': { data: PROFILE_ROW, error: null } }
+        });
+        await env.Auth.init(); // registra el suscriptor
+        await env.Auth.login('comercial@mazelab.cl', 'x');
+        assert.strictEqual(env.Auth.isLoggedIn(), true, 'precondición: debe haber una sesión cacheada antes del evento');
+
+        var shown = false;
+        global.window.Mazelab.AuthUI = { show: function () { shown = true; } };
+
+        env.authMock._subscriber('SIGNED_OUT', null);
+
+        assert.strictEqual(env.Auth.getUser(), null, 'SIGNED_OUT debe limpiar el cache síncrono');
+        assert.strictEqual(env.Auth.isLoggedIn(), false);
+        assert.strictEqual(shown, true, 'I5: SIGNED_OUT debe volver a mostrar el login (AuthUI.show())');
     });
 
     console.log('\n' + pass + ' OK, ' + fail + ' FAIL');

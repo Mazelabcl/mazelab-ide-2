@@ -280,12 +280,20 @@ CREATE TABLE IF NOT EXISTS public.cotizaciones (
 -- ============================================================================
 
 CREATE TABLE IF NOT EXISTS public.profiles (
-    "id"      UUID PRIMARY KEY REFERENCES auth.users(id) ON DELETE CASCADE,
-    "email"   TEXT UNIQUE,
-    "name"    TEXT DEFAULT '',
-    "role"    TEXT DEFAULT 'operaciones',
-    "active"  BOOLEAN DEFAULT true
+    "id"          UUID PRIMARY KEY REFERENCES auth.users(id) ON DELETE CASCADE,
+    "email"       TEXT UNIQUE,
+    "name"        TEXT DEFAULT '',
+    "role"        TEXT DEFAULT 'operaciones',
+    "active"      BOOLEAN DEFAULT true,
+    "created_at"  TIMESTAMPTZ DEFAULT NOW()
 );
+
+-- Hallazgo M4: proyectos donde profiles ya existia ANTES de este campo no
+-- reciben la columna solo con el CREATE TABLE IF NOT EXISTS de arriba (la
+-- tabla ya existe, Postgres lo ignora) — este ALTER es lo que de verdad la
+-- agrega en esos entornos. Idempotente: ADD COLUMN IF NOT EXISTS no falla si
+-- ya esta presente (proyectos nuevos donde el CREATE TABLE ya la trajo).
+ALTER TABLE public.profiles ADD COLUMN IF NOT EXISTS "created_at" TIMESTAMPTZ DEFAULT NOW();
 
 CREATE TABLE IF NOT EXISTS public.config (
     -- Contrato del adaptador generico: TODAS las tablas se operan por "id"
@@ -403,6 +411,63 @@ CREATE TRIGGER profiles_protect_columns
     BEFORE UPDATE ON public.profiles
     FOR EACH ROW EXECUTE FUNCTION public.protect_profile_columns();
 
+-- ---------------------------------------------------------------------------
+-- protect_ventas_operational_columns: mismo patron que protect_profile_columns
+-- (RLS decide QUIEN puede hacer UPDATE via USING/WITH CHECK, no ve columnas
+-- individuales — este trigger es quien restringe QUE columnas). La politica
+-- ventas_update_operaciones (seccion 5) le abre UPDATE a operaciones porque el
+-- kanban lo necesita (mover tarjetas, marcar checklist, asignar equipos,
+-- completar traspaso) — pero operaciones NUNCA debe poder tocar columnas
+-- comerciales/financieras (amount, status, clientName, staffId, etc.), que
+-- siguen siendo terreno exclusivo de ventas_write_comercial (superadmin,
+-- socio, comercial). Si el rol no es operaciones, el trigger no hace nada
+-- (esos roles ya pasaron por ventas_write_comercial sin esta restriccion).
+-- ---------------------------------------------------------------------------
+CREATE OR REPLACE FUNCTION public.protect_ventas_operational_columns()
+RETURNS TRIGGER
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+BEGIN
+    IF (SELECT public.get_role()) IS DISTINCT FROM 'operaciones' THEN
+        RETURN NEW;
+    END IF;
+
+    IF NEW."id" IS DISTINCT FROM OLD."id"
+       OR NEW."sourceId" IS DISTINCT FROM OLD."sourceId"
+       OR NEW."clientId" IS DISTINCT FROM OLD."clientId"
+       OR NEW."clientName" IS DISTINCT FROM OLD."clientName"
+       OR NEW."eventName" IS DISTINCT FROM OLD."eventName"
+       OR NEW."eventDate" IS DISTINCT FROM OLD."eventDate"
+       OR NEW."closingDate" IS DISTINCT FROM OLD."closingDate"
+       OR NEW."serviceIds" IS DISTINCT FROM OLD."serviceIds"
+       OR NEW."serviceNames" IS DISTINCT FROM OLD."serviceNames"
+       OR NEW."jornadas" IS DISTINCT FROM OLD."jornadas"
+       OR NEW."amount" IS DISTINCT FROM OLD."amount"
+       OR NEW."costAmount" IS DISTINCT FROM OLD."costAmount"
+       OR NEW."utility" IS DISTINCT FROM OLD."utility"
+       OR NEW."refundAmount" IS DISTINCT FROM OLD."refundAmount"
+       OR NEW."comisionPct" IS DISTINCT FROM OLD."comisionPct"
+       OR NEW."staffId" IS DISTINCT FROM OLD."staffId"
+       OR NEW."staffName" IS DISTINCT FROM OLD."staffName"
+       OR NEW."status" IS DISTINCT FROM OLD."status"
+       OR NEW."comments" IS DISTINCT FROM OLD."comments"
+       OR NEW."hasIssue" IS DISTINCT FROM OLD."hasIssue"
+       OR NEW."createdAt" IS DISTINCT FROM OLD."createdAt"
+       OR NEW."updatedAt" IS DISTINCT FROM OLD."updatedAt" THEN
+        RAISE EXCEPTION 'Tu rol (operaciones) solo puede actualizar los campos operativos del board (checklist, boardColumn, boardOrder, encargado, kanbanNotes, traspaso, equiposAsignados y los campos traspaso_*) — no puedes modificar datos comerciales ni financieros de la venta';
+    END IF;
+
+    RETURN NEW;
+END;
+$$;
+
+DROP TRIGGER IF EXISTS ventas_protect_operational_columns ON public.ventas;
+CREATE TRIGGER ventas_protect_operational_columns
+    BEFORE UPDATE ON public.ventas
+    FOR EACH ROW EXECUTE FUNCTION public.protect_ventas_operational_columns();
+
 -- ============================================================================
 -- 4. ROW LEVEL SECURITY — habilitar en las 10 tablas
 -- ============================================================================
@@ -447,6 +512,21 @@ CREATE POLICY "ventas_write_comercial" ON public.ventas
     FOR ALL TO authenticated
     USING ((SELECT public.get_role()) IN ('superadmin', 'socio', 'comercial'))
     WITH CHECK ((SELECT public.get_role()) IN ('superadmin', 'socio', 'comercial'));
+
+-- Decision de producto (orquestador, Sprint M1 fix round): operaciones NO
+-- puede escribir en ventas via ventas_write_comercial (no esta en la lista de
+-- roles), pero el kanban operativo SI necesita que operaciones mueva
+-- tarjetas, marque checklist, asigne equipos y complete el traspaso. Esta
+-- politica adicional (permissiva, se OR-ea con ventas_write_comercial) le
+-- abre UPDATE a operaciones; el trigger protect_ventas_operational_columns
+-- (abajo, seccion 3) es quien de verdad limita QUE columnas puede tocar —
+-- sin ese trigger, operaciones podria editar amount/status/clientName, que
+-- es terreno exclusivo de superadmin/socio/comercial.
+DROP POLICY IF EXISTS "ventas_update_operaciones" ON public.ventas;
+CREATE POLICY "ventas_update_operaciones" ON public.ventas
+    FOR UPDATE TO authenticated
+    USING ((SELECT public.get_role()) = 'operaciones')
+    WITH CHECK ((SELECT public.get_role()) = 'operaciones');
 
 DROP POLICY IF EXISTS "facturas_select_authenticated" ON public.facturas;
 CREATE POLICY "facturas_select_authenticated" ON public.facturas

@@ -90,11 +90,26 @@ window.Mazelab = window.Mazelab || {};
     // redirige a la app con una sesión de tipo PASSWORD_RECOVERY activa. Sin
     // pantalla dedicada en este sprint — se pide la contraseña nueva por
     // prompt() y se aplica con updateUser(). (M2: pantalla propia.)
+    //
+    // Fix round: si el usuario cancela el prompt (o lo deja vacío), la sesión
+    // de recuperación NO debe quedar viva — sin esto, el navegador queda
+    // autenticado con una sesión de recuperación a medias que nadie completó.
+    // Se cierra la sesión y se avisa que puede volver a pedir el correo.
     async function handlePasswordRecovery() {
         var newPassword = (typeof window.prompt === 'function')
             ? window.prompt('Ingresa tu nueva contraseña (mínimo 6 caracteres):')
             : null;
-        if (!newPassword) return;
+        if (!newPassword) {
+            if (typeof window.alert === 'function') {
+                window.alert('No se cambió la contraseña. Puedes volver a pedir el correo de recuperación cuando quieras.');
+            }
+            try {
+                var clientCancel = getClient();
+                await clientCancel.auth.signOut();
+            } catch (e) { /* best-effort */ }
+            _cachedUser = null;
+            return;
+        }
         if (newPassword.length < 6) {
             if (typeof window.alert === 'function') window.alert('La contraseña debe tener al menos 6 caracteres. Vuelve a abrir el link del correo para intentar de nuevo.');
             return;
@@ -109,44 +124,65 @@ window.Mazelab = window.Mazelab || {};
         }
     }
 
+    // Heurísticas de clasificación de errores de Supabase Auth (I6) — separadas
+    // de login() para poder testearlas y para no repetir la lógica si algún día
+    // otro flujo (ej. reset) necesita distinguir "sin red" de "credenciales".
+    function isNetworkAuthError(err) {
+        if (!err) return false;
+        if (err.name === 'AuthRetryableFetchError') return true; // @supabase/auth-js 2.111.0: fetch/red
+        var msg = (err.message || '').toLowerCase();
+        return /failed to fetch|network|econnrefused|enotfound|fetcherror/.test(msg);
+    }
+
+    function isEmailNotConfirmedError(err) {
+        if (!err) return false;
+        if (err.code === 'email_not_confirmed') return true;
+        return /email not confirmed/i.test(err.message || '');
+    }
+
+    // Detección del link de recuperación en la URL (belt-and-suspenders de B1):
+    // implicit flow -> #access_token=...&type=recovery ; PKCE flow -> ?code=...
+    function isRecoveryUrl() {
+        var hash = (typeof window !== 'undefined' && window.location && window.location.hash) || '';
+        var search = (typeof window !== 'undefined' && window.location && window.location.search) || '';
+        return /type=recovery/.test(hash) || /[?&]code=/.test(search);
+    }
+
     // init() — restaura la sesión (si existe), carga el profile propio en el
     // cache síncrono, y se suscribe a onAuthStateChange para mantenerlo al día.
     // Idempotente: llamadas repetidas reusan la misma promesa (no vuelve a
     // suscribirse dos veces). app.js debe esperar esta promesa ANTES de decidir
     // login vs app — de lo contrario getUser()/isLoggedIn() verían el cache
     // todavía vacío aunque exista una sesión válida.
+    //
+    // B1 (fix round): la suscripción a onAuthStateChange va ANTES de
+    // getSession() — verificado contra @supabase/supabase-js 2.111.0 real: el
+    // SDK procesa la URL de recuperación (#access_token=...&type=recovery o
+    // ?code=...) y puede emitir PASSWORD_RECOVERY durante esa primera llamada
+    // o incluso antes. Suscribirse DESPUÉS (como estaba) pierde el evento para
+    // siempre — no hay forma de "re-emitirlo". Como cinturón adicional, si la
+    // URL trae la marca de recuperación y el evento no llegó a tiempo, se
+    // dispara handlePasswordRecovery() explícitamente tras confirmar la sesión.
     async function init() {
         if (_initPromise) return _initPromise;
         _initPromise = (async function () {
             var client = getClient();
-
-            try {
-                var sessionRes = await client.auth.getSession();
-                var session = sessionRes && sessionRes.data ? sessionRes.data.session : null;
-                if (session && session.user) {
-                    var profile = await loadProfileIntoCache(session.user);
-                    if (!profile || profile.active === false) {
-                        // Sesión restaurada pero sin perfil válido o desactivado —
-                        // no debe quedar una sesión "viva" en localStorage mientras
-                        // la app trata al usuario como deslogueado.
-                        try { await client.auth.signOut(); } catch (e) { /* best-effort */ }
-                        _cachedUser = null;
-                    }
-                } else {
-                    _cachedUser = null;
-                }
-            } catch (e) {
-                console.error('Auth.init(): error obteniendo la sesión:', e);
-                _cachedUser = null;
-            }
+            var recoveryHandled = false;
 
             try {
                 client.auth.onAuthStateChange(function (event, session) {
                     if (event === 'SIGNED_OUT') {
                         _cachedUser = null;
+                        // I5: un SIGNED_OUT en caliente (expiración de sesión, logout
+                        // en otra pestaña) debe volver a mostrar el login — antes se
+                        // limpiaba el cache pero la pantalla de la app seguía visible.
+                        if (window.Mazelab.AuthUI && typeof window.Mazelab.AuthUI.show === 'function') {
+                            window.Mazelab.AuthUI.show();
+                        }
                         return;
                     }
                     if (event === 'PASSWORD_RECOVERY') {
+                        recoveryHandled = true;
                         handlePasswordRecovery();
                         return;
                     }
@@ -159,8 +195,43 @@ window.Mazelab = window.Mazelab || {};
             } catch (e) {
                 console.error('Auth.init(): no se pudo suscribir a onAuthStateChange:', e);
             }
+
+            var cameFromRecoveryUrl = isRecoveryUrl();
+
+            try {
+                var sessionRes = await client.auth.getSession();
+                var session = sessionRes && sessionRes.data ? sessionRes.data.session : null;
+                if (session && session.user) {
+                    var profile = await loadProfileIntoCache(session.user);
+                    if (!profile || profile.active === false) {
+                        // Sesión restaurada pero sin perfil válido o desactivado —
+                        // no debe quedar una sesión "viva" en localStorage mientras
+                        // la app trata al usuario como deslogueado.
+                        try { await client.auth.signOut(); } catch (e) { /* best-effort */ }
+                        _cachedUser = null;
+                    } else if (cameFromRecoveryUrl && !recoveryHandled) {
+                        // Cinturón: el evento no llegó (orden de microtasks distinto
+                        // entre navegadores) pero la URL igual delata el flujo de
+                        // recuperación — dispararlo explícitamente.
+                        recoveryHandled = true;
+                        handlePasswordRecovery();
+                    }
+                } else {
+                    _cachedUser = null;
+                }
+            } catch (e) {
+                console.error('Auth.init(): error obteniendo la sesión:', e);
+                _cachedUser = null;
+            }
         })();
         return _initPromise;
+    }
+
+    // SOLO para el gate de ?localdev=1 (ver src/app.js) — inyecta un usuario
+    // local sin tocar Supabase Auth. Nunca debe invocarse fuera de ese flujo
+    // explícito de desarrollo (no hay validación de red ni de perfil real).
+    function _setLocalDevUser(user) {
+        _cachedUser = user;
     }
 
     function getUser() {
@@ -196,11 +267,35 @@ window.Mazelab = window.Mazelab || {};
 
         var client = getClient();
         var res = await client.auth.signInWithPassword({ email: email, password: password });
-        if (res.error || !res.data || !res.data.user) {
+        if (res.error) {
+            // I6(b): un fallo de red real (fetch no llega al servidor) no es lo
+            // mismo que credenciales inválidas — el mensaje debe guiar al usuario
+            // a revisar su conexión, no a dudar de su contraseña.
+            if (isNetworkAuthError(res.error)) {
+                throw new Error('No se pudo conectar — revisa tu internet.');
+            }
+            // I6(a): "Email not confirmed" es un estado real y distinto de
+            // credenciales incorrectas — el usuario existe, solo falta confirmar.
+            if (isEmailNotConfirmedError(res.error)) {
+                throw new Error('Tu correo aún no está confirmado — revisa tu bandeja o pide al administrador confirmarte.');
+            }
+            throw new Error('Email o contraseña incorrectos.');
+        }
+        if (!res.data || !res.data.user) {
             throw new Error('Email o contraseña incorrectos.');
         }
 
-        var profile = await loadProfileIntoCache(res.data.user);
+        // I6(c): un fallo de RED al cargar el profile (loadProfileIntoCache
+        // relanza si el propio select rechaza) NO debe cerrar sesión ni decir
+        // "no se encontró perfil" — el usuario sí existe, solo no pudimos
+        // confirmarlo todavía. Se distingue de "0 filas" (profile === null),
+        // que sí es un caso real de perfil ausente y mantiene su manejo previo.
+        var profile;
+        try {
+            profile = await loadProfileIntoCache(res.data.user);
+        } catch (e) {
+            throw new Error('No se pudo cargar tu perfil — reintenta.');
+        }
         if (!profile) {
             try { await client.auth.signOut(); } catch (e) { /* best-effort */ }
             throw new Error('No se encontró un perfil para este usuario. Contacta al administrador.');
@@ -229,11 +324,23 @@ window.Mazelab = window.Mazelab || {};
     // Self-service: pantalla de login (no autenticado) pide un link de reseteo
     // para su propio email. Distinto de resetPassword(userId), que es la acción
     // de un admin logueado sobre OTRO usuario.
+    // I7: sin redirectTo explícito, Supabase manda al usuario a la Site URL
+    // configurada en el proyecto (no necesariamente esta app) tras hacer clic
+    // en el link del correo — puede aterrizar en un dominio equivocado o en
+    // blanco. window.location puede no existir (harness de Node) — se omite
+    // en ese caso en vez de lanzar.
+    function getRedirectTo() {
+        if (typeof window !== 'undefined' && window.location) {
+            return window.location.origin + window.location.pathname;
+        }
+        return undefined;
+    }
+
     async function requestPasswordReset(email) {
         if (!email) throw new Error('Ingresa tu email.');
         email = email.trim().toLowerCase();
         var client = getClient();
-        var res = await client.auth.resetPasswordForEmail(email);
+        var res = await client.auth.resetPasswordForEmail(email, { redirectTo: getRedirectTo() });
         if (res.error) throw new Error('No se pudo enviar el correo: ' + res.error.message);
         return true;
     }
@@ -243,7 +350,7 @@ window.Mazelab = window.Mazelab || {};
         var res = await client.from('profiles').select('*').order('email');
         if (res.error) throw new Error('Error al leer usuarios: ' + res.error.message);
         return (res.data || []).map(function (p) {
-            return { id: p.id, email: p.email, name: p.name, role: p.role, active: p.active };
+            return { id: p.id, email: p.email, name: p.name, role: p.role, active: p.active, created_at: p.created_at };
         });
     }
 
@@ -287,7 +394,7 @@ window.Mazelab = window.Mazelab || {};
         if (res.error || !res.data || !res.data.email) {
             throw new Error('No se pudo encontrar el email del usuario.');
         }
-        var result = await client.auth.resetPasswordForEmail(res.data.email);
+        var result = await client.auth.resetPasswordForEmail(res.data.email, { redirectTo: getRedirectTo() });
         if (result.error) throw new Error('Error al enviar el correo de restablecimiento: ' + result.error.message);
         return true;
     }
@@ -298,6 +405,7 @@ window.Mazelab = window.Mazelab || {};
 
     window.Mazelab.Auth = {
         init: init,
+        _setLocalDevUser: _setLocalDevUser,
         login: login,
         register: register,
         logout: logout,
