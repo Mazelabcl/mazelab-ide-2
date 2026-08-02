@@ -7,6 +7,14 @@
 // secuenciales. El transporte cambia de fetch a supabase-js; el contrato
 // externo que consume data-service.js no cambia.
 window.Mazelab = window.Mazelab || {};
+// Bootstrap de window.Mazelab.Modules: este es el primer script propio que
+// carga (justo tras el CDN de supabase-js en index.html), antes que
+// cualquier módulo (finance.js, sales.js, etc.). Cada módulo hace
+// window.Mazelab.Modules.XModule = ... al cargar, así que el namespace debe
+// existir aquí o el primer módulo revienta con "Cannot set properties of
+// undefined". app.js ya no es quien inicializa esto (se reescribió en el
+// Sprint M1) — por eso el bootstrap vive en el primer script de la cadena.
+window.Mazelab.Modules = window.Mazelab.Modules || {};
 
 (function () {
     // Proyecto Supabase (URL + anon key públicos — la anon key SIEMPRE va
