@@ -1,4 +1,7 @@
-// Auth UI — Login/Register screen
+// Auth UI — Sprint M1, Lote M1-B: pantalla de login sobre Supabase Auth.
+// El formulario de registro se retira (auto-registro cerrado — Auth.register()
+// lanza explícitamente). Se agrega "¿Olvidaste tu contraseña?" (self-service,
+// vía Auth.requestPasswordReset).
 window.Mazelab = window.Mazelab || {};
 
 (function () {
@@ -12,22 +15,18 @@ window.Mazelab = window.Mazelab || {};
                 '</div>' +
                 '<div id="login-error" style="display:none;background:rgba(231,76,60,0.15);color:var(--danger);padding:8px 12px;border-radius:8px;font-size:13px;margin-bottom:12px;"></div>' +
                 '<form id="login-form">' +
-                    '<div id="login-name-group" style="display:none;margin-bottom:12px;">' +
-                        '<label style="display:block;font-size:12px;font-weight:600;color:var(--text-secondary);margin-bottom:4px;text-transform:uppercase;letter-spacing:0.05em;">Nombre</label>' +
-                        '<input type="text" id="login-name" class="form-control" placeholder="Tu nombre" style="width:100%;box-sizing:border-box;">' +
-                    '</div>' +
                     '<div style="margin-bottom:12px;">' +
                         '<label style="display:block;font-size:12px;font-weight:600;color:var(--text-secondary);margin-bottom:4px;text-transform:uppercase;letter-spacing:0.05em;">Email</label>' +
                         '<input type="email" id="login-email" class="form-control" placeholder="tu@email.cl" required style="width:100%;box-sizing:border-box;">' +
                     '</div>' +
                     '<div style="margin-bottom:16px;">' +
                         '<label style="display:block;font-size:12px;font-weight:600;color:var(--text-secondary);margin-bottom:4px;text-transform:uppercase;letter-spacing:0.05em;">Contrasena</label>' +
-                        '<input type="password" id="login-password" class="form-control" placeholder="Min. 6 caracteres" required style="width:100%;box-sizing:border-box;">' +
+                        '<input type="password" id="login-password" class="form-control" placeholder="Tu contraseña" required style="width:100%;box-sizing:border-box;">' +
                     '</div>' +
                     '<button type="submit" id="login-submit" class="btn btn-primary" style="width:100%;padding:10px;font-size:14px;font-weight:600;">Iniciar sesion</button>' +
                 '</form>' +
                 '<div style="text-align:center;margin-top:16px;">' +
-                    '<span id="login-toggle" style="color:var(--accent-primary);cursor:pointer;font-size:13px;">No tienes cuenta? Registrate</span>' +
+                    '<span id="login-forgot" style="color:var(--accent-primary);cursor:pointer;font-size:13px;">Olvidaste tu contrasena?</span>' +
                 '</div>' +
             '</div>' +
         '</div>';
@@ -44,38 +43,43 @@ window.Mazelab = window.Mazelab || {};
         var appContainer = document.querySelector('.app-container');
         if (appContainer) appContainer.style.display = 'none';
 
-        var isRegister = false;
         var form = document.getElementById('login-form');
-        var toggle = document.getElementById('login-toggle');
-        var nameGroup = document.getElementById('login-name-group');
+        var forgotLink = document.getElementById('login-forgot');
         var submitBtn = document.getElementById('login-submit');
         var errorEl = document.getElementById('login-error');
 
-        toggle.addEventListener('click', function () {
-            isRegister = !isRegister;
-            nameGroup.style.display = isRegister ? 'block' : 'none';
-            submitBtn.textContent = isRegister ? 'Crear cuenta' : 'Iniciar sesion';
-            toggle.textContent = isRegister ? 'Ya tienes cuenta? Inicia sesion' : 'No tienes cuenta? Registrate';
+        forgotLink.addEventListener('click', async function () {
+            var emailInput = document.getElementById('login-email');
+            var email = (emailInput && emailInput.value ? emailInput.value : '').trim();
+            if (!email && typeof window.prompt === 'function') {
+                email = (window.prompt('Ingresa tu email para enviarte el link de restablecimiento:') || '').trim();
+            }
+            if (!email) return;
+
             errorEl.style.display = 'none';
+            try {
+                await window.Mazelab.Auth.requestPasswordReset(email);
+                if (typeof window.alert === 'function') {
+                    window.alert('Si el correo existe, te enviamos un link para restablecer tu contrasena.');
+                }
+            } catch (err) {
+                errorEl.textContent = err.message || 'No se pudo enviar el correo.';
+                errorEl.style.display = 'block';
+            }
         });
 
         form.addEventListener('submit', async function (e) {
             e.preventDefault();
             var email = document.getElementById('login-email').value.trim();
             var password = document.getElementById('login-password').value;
-            var name = document.getElementById('login-name').value.trim();
 
             errorEl.style.display = 'none';
             submitBtn.disabled = true;
-            submitBtn.textContent = isRegister ? 'Creando cuenta...' : 'Ingresando...';
+            submitBtn.textContent = 'Ingresando...';
 
             try {
                 var Auth = window.Mazelab.Auth;
-                if (isRegister) {
-                    await Auth.register(email, password, name);
-                } else {
-                    await Auth.login(email, password);
-                }
+                await Auth.login(email, password);
 
                 // Success — show app
                 var loginScreen = document.getElementById('login-screen');
@@ -83,7 +87,9 @@ window.Mazelab = window.Mazelab || {};
                 var appC = document.querySelector('.app-container');
                 if (appC) appC.style.display = '';
 
-                // Initialize the app
+                // Initialize the app — Auth.login() ya dejó el cache de Auth
+                // (getUser/isLoggedIn/canAccess) poblado de forma síncrona
+                // ANTES de resolver, así que initApp() puede leerlo de inmediato.
                 if (window.Mazelab.initApp) {
                     await window.Mazelab.initApp();
                 }
@@ -91,7 +97,7 @@ window.Mazelab = window.Mazelab || {};
                 errorEl.textContent = err.message || 'Error desconocido';
                 errorEl.style.display = 'block';
                 submitBtn.disabled = false;
-                submitBtn.textContent = isRegister ? 'Crear cuenta' : 'Iniciar sesion';
+                submitBtn.textContent = 'Iniciar sesion';
             }
         });
 

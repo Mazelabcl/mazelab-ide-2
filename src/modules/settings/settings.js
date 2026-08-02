@@ -1433,27 +1433,34 @@ window.Mazelab.Modules.SettingsModule = (function () {
                         refreshTabContent();
                     } catch (err) { alert(err.message); }
                 }
-                // Delete
+                // Delete (desactivación lógica — el borrado definitivo de auth.users
+                // se hace desde el panel de Supabase, ver Auth.deleteUser())
                 var deleteBtn = e.target.closest('.users-delete-btn');
                 if (deleteBtn) {
                     var userId2 = deleteBtn.getAttribute('data-id');
                     if (!confirm('Eliminar este usuario permanentemente?')) return;
                     try {
                         await window.Mazelab.Auth.deleteUser(userId2);
+                    } catch (err) {
+                        // deleteUser() SIEMPRE lanza (explica el límite: desactiva
+                        // pero no borra auth.users) — igual refrescamos la lista
+                        // porque la desactivación sí se aplicó antes del throw.
+                        alert(err.message);
+                    } finally {
                         usersData = await window.Mazelab.Auth.getAllUsers();
                         refreshTabContent();
-                    } catch (err) { alert(err.message); }
+                    }
                 }
-                // Reset password
+                // Reset password — ya no recibe una contraseña nueva: dispara el
+                // correo de restablecimiento de Supabase Auth al email del usuario.
                 var resetBtn = e.target.closest('.users-reset-pwd-btn');
                 if (resetBtn) {
                     var resetUserId = resetBtn.getAttribute('data-id');
                     var userName = resetBtn.getAttribute('data-name');
-                    var newPwd = prompt('Nueva contraseña para ' + userName + ' (min 6 caracteres):');
-                    if (!newPwd) return;
+                    if (!confirm('Enviar correo de restablecimiento de contraseña a ' + userName + '?')) return;
                     try {
-                        await window.Mazelab.Auth.resetPassword(resetUserId, newPwd);
-                        alert('Contraseña actualizada para ' + userName);
+                        await window.Mazelab.Auth.resetPassword(resetUserId);
+                        alert('Correo de restablecimiento enviado a ' + userName);
                     } catch (err) { alert(err.message); }
                 }
             });

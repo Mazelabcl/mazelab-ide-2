@@ -1,6 +1,15 @@
 // Verificación de los hallazgos de la revisión adversarial sobre db17baa/e17ef86
 // (B1, I1-I5, M1-M2) — carga el código REAL en Node con fetch/DOM mockeados.
 // Correr con: node verify-e-fixes.js
+//
+// NOTA (Sprint M1, Lote M1-B): src/shared/supabase.js se reescribió sobre
+// @supabase/supabase-js (createClient de un CDN global), no sobre fetch a
+// /api/db — ya no existe un "fetch mockeable" dentro de ese archivo. Los
+// escenarios (a)/(b) de esta suite prueban data-service.js (readOnly/cache/sin
+// fallback), no el transporte de Supabase, así que en vez de requerir el
+// supabase.js real se instala un shim local que replica el contrato EXTERNO
+// viejo (mismas 6 funciones, basado en fetch, mismos mensajes de error) —
+// mismo patrón que tenía supabase.js antes de M1-B. Ninguna aserción cambió.
 'use strict';
 const assert = require('assert');
 const fs = require('fs');
@@ -8,12 +17,89 @@ const path = require('path');
 const { JSDOM } = require('jsdom');
 
 const REPO = path.join(__dirname, '..');
-const SUPABASE_PATH  = path.join(REPO, 'src/shared/supabase.js');
 const DS_PATH        = path.join(REPO, 'src/shared/data-service.js');
 const MONEY_PATH     = path.join(REPO, 'src/shared/money.js');
 const PAYABLES_PATH  = path.join(REPO, 'src/modules/payables/payables.js');
 const PAGOS_PATH     = path.join(REPO, 'src/modules/pagos/pagos.js');
 const SALES_PATH     = path.join(REPO, 'src/modules/sales/sales.js');
+
+// Réplica exacta (pre-M1-B) del adaptador fetch-based — ver nota de cabecera.
+function installLegacyFetchSupabaseShim() {
+    const BASE = '/api/db';
+    let isConnected = false;
+
+    async function testConnection() {
+        try {
+            const res = await fetch(BASE + '/ventas?limit=1');
+            isConnected = res.ok;
+            return isConnected;
+        } catch {
+            isConnected = false;
+            return false;
+        }
+    }
+
+    async function fetchAll(table) {
+        const res = await fetch(BASE + '/' + table);
+        if (!res.ok) {
+            const errText = await res.text().catch(function () { return String(res.status); });
+            throw new Error('Error al leer ' + table + ' (HTTP ' + res.status + '): ' + errText);
+        }
+        const data = await res.json();
+        return Array.isArray(data) ? data : (data.rows || data.data || []);
+    }
+
+    async function insert(table, record) {
+        const res = await fetch(BASE + '/' + table, {
+            method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(record)
+        });
+        if (!res.ok) {
+            const errText = await res.text().catch(function () { return String(res.status); });
+            throw new Error('Error al guardar en ' + table + ' (HTTP ' + res.status + '): ' + errText);
+        }
+        return await res.json();
+    }
+
+    async function update(table, id, updates) {
+        const res = await fetch(BASE + '/' + table + '/' + id, {
+            method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(updates)
+        });
+        if (!res.ok) {
+            const errText = await res.text().catch(function () { return String(res.status); });
+            throw new Error('Error al actualizar en ' + table + ' (HTTP ' + res.status + '): ' + errText);
+        }
+        return await res.json();
+    }
+
+    async function remove(table, id) {
+        const res = await fetch(BASE + '/' + table + '/' + id, { method: 'DELETE' });
+        if (!res.ok) {
+            const errText = await res.text().catch(function () { return String(res.status); });
+            throw new Error('Error al eliminar en ' + table + ' (HTTP ' + res.status + '): ' + errText);
+        }
+        return true;
+    }
+
+    async function upsertMany(table, records) {
+        const BATCH_SIZE = 100;
+        const results = [];
+        for (let i = 0; i < records.length; i += BATCH_SIZE) {
+            const batch = records.slice(i, i + BATCH_SIZE);
+            const res = await fetch(BASE + '/' + table + '/upsert', {
+                method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(batch)
+            });
+            if (!res.ok) {
+                const errText = await res.text().catch(function () { return String(res.status); });
+                throw new Error('Error al importar "' + table + '" (lote ' + Math.floor(i / BATCH_SIZE + 1) + '): HTTP ' + res.status + ' — ' + errText);
+            }
+            const data = await res.json().catch(function () { return []; });
+            if (Array.isArray(data)) results.push(...data);
+        }
+        return results;
+    }
+
+    global.window.Mazelab.Supabase = { testConnection, isConnected: () => isConnected, fetchAll, insert, update, remove, upsertMany };
+}
 
 // ---- Reloj congelado — 2026-07-26T12:00:00 hora local ----
 // El escenario (e) usa una venta con eventDate "2026-08-01" para verificar el
@@ -67,7 +153,6 @@ function fakeStorageService(seed) {
 // supabase.js/data-service.js (limpia su require cache y reconstruye window.Mazelab).
 function freshDSEnv(opts) {
     opts = opts || {};
-    delete require.cache[require.resolve(SUPABASE_PATH)];
     delete require.cache[require.resolve(DS_PATH)];
 
     global.window = {};
@@ -94,7 +179,7 @@ function freshDSEnv(opts) {
     };
     global.fetch = opts.fetch || function () { return Promise.reject(new Error('fetch no mockeado en este escenario')); };
 
-    require(SUPABASE_PATH);
+    installLegacyFetchSupabaseShim();
     require(DS_PATH);
 
     return { window: global.window, uiCalls: uiCalls, DS: global.window.Mazelab.DataService, Supabase: global.window.Mazelab.Supabase };

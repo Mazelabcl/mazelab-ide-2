@@ -208,24 +208,62 @@ window.Mazelab.Modules = window.Mazelab.Modules || {};
         _modalMouseDownInside = false;
     }, true);
 
+    // Bloquea el acceso con un mensaje visible — usado cuando Auth/AuthUI no
+    // cargaron. Nunca se debe entrar a la app sin poder verificar login/rol
+    // (Sprint M1, Lote M1-B: antes esto entraba sin login si AuthUI fallaba).
+    function showFatalAuthError(message) {
+        var appContainer = document.querySelector('.app-container');
+        if (appContainer) appContainer.style.display = 'none';
+        var el = document.createElement('div');
+        el.id = 'fatal-auth-error';
+        el.style.cssText = 'position:fixed;inset:0;z-index:9999;display:flex;align-items:center;justify-content:center;' +
+            'background:var(--bg-primary,#0b0b12);color:var(--text-primary,#fff);font-family:Inter,system-ui,sans-serif;padding:2rem;';
+        el.innerHTML = '<div style="max-width:420px;text-align:center;">' +
+            '<h2 style="margin:0 0 8px;font-size:1.3rem;">Error critico</h2>' +
+            '<p style="margin:0;color:var(--text-secondary,#9a9aa8);font-size:0.9rem;">' + message + '</p>' +
+        '</div>';
+        document.body.appendChild(el);
+    }
+
     document.addEventListener('DOMContentLoaded', async () => {
         var Auth = window.Mazelab.Auth;
 
+        if (!Auth) {
+            // Sin el módulo de Auth no hay forma segura de verificar sesión/rol —
+            // bloquear siempre, nunca entrar a la app directamente.
+            console.error('Auth module not available — bloqueando el acceso.');
+            showFatalAuthError('No se pudo cargar el modulo de autenticacion. Recarga la pagina o contacta al administrador.');
+            return;
+        }
+
+        // Restaura la sesión (si existe) y puebla el cache síncrono de Auth
+        // (getUser/isLoggedIn/canAccess) ANTES de decidir login vs app — de lo
+        // contrario isLoggedIn() vería el cache todavía vacío aunque exista una
+        // sesión válida en Supabase.
+        await Auth.init();
+
         // If not logged in, show login screen
-        if (!Auth || !Auth.isLoggedIn()) {
+        if (!Auth.isLoggedIn()) {
             if (window.Mazelab.AuthUI) {
                 var appContainer = document.querySelector('.app-container');
                 if (appContainer) appContainer.style.display = 'none';
                 window.Mazelab.AuthUI.show();
             } else {
-                // AuthUI not loaded — skip auth and show app directly
-                console.warn('AuthUI not available, skipping login screen.');
-                await initApp();
+                // AuthUI no disponible — bloquear con error visible. Antes esto
+                // entraba a la app sin login; con Supabase Auth + RLS reales, un
+                // ingreso sin sesión no vería datos igual (o vería datos anónimos
+                // que RLS no debería exponer), así que el bypass silencioso ya no
+                // es una degradación aceptable — debe fallar de forma visible.
+                console.error('AuthUI not available — bloqueando el acceso (no se puede mostrar el login).');
+                showFatalAuthError('No se pudo cargar la pantalla de inicio de sesion. Recarga la pagina o contacta al administrador.');
             }
             return;
         }
 
-        // Already logged in — init app directly
+        // Ya había sesión activa (restaurada por Auth.init()) — init app directo.
+        // DataService.init() (y su testConnection) solo se llama DENTRO de
+        // initApp(), que solo se alcanza tras pasar este gate — nunca corre
+        // antes de tener una sesión autenticada.
         await initApp();
     });
 })();
