@@ -23,3 +23,7 @@ branding/
 diff.txt
 test.txt
 *.png
+
+# Secretos locales (Sprint M1) — JAMAS commitear
+.env
+.env.*
