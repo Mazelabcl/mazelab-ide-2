@@ -11,14 +11,30 @@
 //   2. Lectura de browser (Playwright, e2e-superadmin): qué muestran realmente
 //      el Dashboard y la página CXC contra el deploy vivo.
 //
-// Contexto crítico (memoria de proyecto, 2026-07-25): "por cobrar" medido a mano
-// ese día fue ~$210,7M (88 docs: 40 sin facturar $125,0M + 48 facturas $85,8M)
-// contra $200,4M que mostraba el dashboard de ESE entonces (gap de $10,3M por NC
-// descontada dos veces, bug ya corregido). Hoy (rama feature/e2e-bank, tras Sprint
-// M1 migración a Supabase) el dashboard muestra ~$30,8M/19 docs — una caída mucho
-// mayor a lo que el fix de NC podría explicar (esa corrección debería subir el
-// número, no bajarlo). Este experimento DIAGNOSTICA la brecha con evidencia, sin
-// tocar código ni datos.
+// Contexto histórico (memoria de proyecto, 2026-07-25): "por cobrar" medido a mano
+// ese día fue ~$210,7M (88 docs) contra $200,4M que mostraba el dashboard de
+// ESE entonces (gap por NC descontada dos veces, corregido en Sprint 1). Esta
+// misma corrida diagnosticó un SEGUNDO bug, real y en vivo en ese momento:
+// src/shared/supabase.js fetchAll() hacía `.select('*').order('id')` SIN
+// `.range()` — PostgREST trunca a 1000 filas por defecto sin paginación
+// explícita, así que fetchAll() escondía en silencio cualquier fila más allá de
+// la 1000 (facturas: 1150 filas reales, costos: 3615). CORREGIDO en
+// master@2bf5524 ("fix: fetchAll pagina de verdad") y mergeado a esta rama —
+// fetchAll() pagina de verdad con un loop de `.range()` hasta agotar la tabla.
+//
+// CONTRATO ACTUAL (tras el fix, reescrito — los asserts viejos comparaban la
+// app contra un cálculo QUE REPRODUCÍA A PROPÓSITO el truncamiento de 1000
+// filas; con fetchAll() ya corregido esa comparación queda en FAIL perpetuo
+// por diseño apenas una tabla supera 1000 filas, sin que sea un bug real):
+//   (a) Dashboard vivo (browser) vs cálculo directo paginado (mismo
+//       computeKPIs real) → diff $0 en "Ventas Totales" y "Por Cobrar (CXC)".
+//   (b) Página CXC (browser) vs el mismo cálculo directo → diff $0 en
+//       "TOTAL POR COBRAR" y "LO QUE ES MIO".
+//   (c) UNA línea informativa (nunca un assert) que reporta el comportamiento
+//       crudo de PostgREST (select sin .range() trunca a 1000 filas) como
+//       recordatorio permanente del límite — no es una falla de hoy, es una
+//       propiedad de la plataforma que cualquier código nuevo debe recordar.
+// Resultado esperado con estos tres puntos: Experimento L 100% verde.
 //
 // Uso:
 //   node tests/e2e/reconciliacion-kpi.js
@@ -60,6 +76,13 @@ function check(name, cond, detail) {
         console.log('FAIL');
         if (detail) console.log('      ' + detail);
     }
+}
+
+// Línea INFORMATIVA — no suma a pass/fail, no puede tumbar el experimento.
+// Se usa para dejar constancia de un comportamiento estructural de la
+// plataforma (límite por defecto de PostgREST) que no es un bug de la app.
+function note(msg) {
+    console.log('  [nota] ' + msg);
 }
 
 async function step(name, pageForEvidence, fn) {
@@ -211,21 +234,19 @@ async function main() {
     const ventas = raw.ventas, facturas = raw.facturas, costos = raw.costos, clientes = raw.clientes;
     console.log('');
 
-    check(
-        'fetchAll() real (sin .range()) NO trunca "facturas" — src/shared/supabase.js:82',
-        truncatedCounts.facturas >= exactCounts.facturas,
-        'BUG EN VIVO: fetchAll(\'facturas\') devuelve ' + truncatedCounts.facturas + ' de ' + exactCounts.facturas +
-        ' filas reales (faltan ' + (exactCounts.facturas - truncatedCounts.facturas) + '). Límite por defecto de PostgREST/Supabase ' +
-        '(1000 filas) sin `.range()`/paginación en fetchAll(). Afecta a TODA la app (dashboard, CXC, CXP, comisiones) ' +
-        'para cualquier tabla que supere 1000 filas — no es específico de este experimento.'
-    );
-    check(
-        'fetchAll() real (sin .range()) NO trunca "costos" — src/shared/supabase.js:82',
-        truncatedCounts.costos >= exactCounts.costos,
-        'BUG EN VIVO: fetchAll(\'costos\') devuelve ' + truncatedCounts.costos + ' de ' + exactCounts.costos +
-        ' filas reales (faltan ' + (exactCounts.costos - truncatedCounts.costos) + ', ' +
-        Math.round((1 - truncatedCounts.costos / exactCounts.costos) * 100) + '% de la tabla invisible para la app). ' +
-        'Mismo bug que en facturas — CXP ("Por Pagar") está calculado sobre una fracción de los costos reales.'
+    // (c) Línea INFORMATIVA (no assert) — recordatorio permanente del límite
+    // estructural de PostgREST/Supabase: cualquier `.select()` sin `.range()`
+    // trunca a 1000 filas en silencio (sin error, sin warning). fetchAll()
+    // (src/shared/supabase.js) YA pagina de verdad hoy — este número mide el
+    // comportamiento CRUDO de la plataforma, no el de la app, y sirve para
+    // detectar a futuro si alguna llamada nueva se agrega sin `.range()`.
+    note(
+        'comportamiento crudo de PostgREST (sin .range(), límite por defecto 1000 filas/respuesta): ' +
+        'facturas ' + truncatedCounts.facturas + '/' + exactCounts.facturas + ' filas' +
+        (truncatedCounts.facturas < exactCounts.facturas ? ' (truncaría ' + (exactCounts.facturas - truncatedCounts.facturas) + ')' : ' (no trunca hoy, tabla <1000)') +
+        ', costos ' + truncatedCounts.costos + '/' + exactCounts.costos + ' filas' +
+        (truncatedCounts.costos < exactCounts.costos ? ' (truncaría ' + (exactCounts.costos - truncatedCounts.costos) + ', ' + Math.round((1 - truncatedCounts.costos / exactCounts.costos) * 100) + '%)' : ' (no trunca hoy, tabla <1000)') +
+        ' — fetchAll() real (src/shared/supabase.js) pagina con .range() y NO sufre esto; queda como recordatorio para cualquier query nueva que se agregue sin paginar.'
     );
 
     check(
@@ -347,10 +368,10 @@ async function main() {
     console.log('  TOTAL:         directo ' + directoDocsPendientes + ' docs / ' + fmtCLP(directoPorCobrar) + '   vs   naive ' + naiveDocs + ' docs / ' + fmtCLP(naiveTotal));
     console.log('  "en_gestión" (parqueado en CXC Kanban, invisible a AMBOS totales de arriba): ' + enGestion.count + ' docs / ' + fmtCLP(enGestion.monto) + ' (monto bruto sin ajustar NC/IVA)');
 
-    console.log('\n--- Impacto del truncamiento silencioso de fetchAll() (facturas: ' + exactCounts.facturas + ' filas reales, la app solo lee las primeras 1000 por id) ---');
-    console.log('  computeKPIs() con las 1000 filas que SÍ ve la app hoy: ' + fmtCLP(truncadoPorCobrar) + '  (' + truncadoDocs + ' docs)');
-    console.log('  computeKPIs() con las ' + exactCounts.facturas + ' filas reales (paginado completo):    ' + fmtCLP(directoPorCobrar) + '  (' + directoDocsPendientes + ' docs)');
-    console.log('  Diferencia atribuible SOLO al truncamiento: ' + fmtCLP(directoPorCobrar - truncadoPorCobrar) + '  (' + (directoDocsPendientes - truncadoDocs) + ' docs)');
+    console.log('\n--- Referencia histórica (ya NO representa a la app — fetchAll() pagina de verdad hoy): qué mostraría el mismo cálculo si algo leyera "facturas" (' + exactCounts.facturas + ' filas reales) con el límite crudo de PostgREST (primeras 1000 por id, sin .range()) ---');
+    console.log('  computeKPIs() con solo las primeras 1000 filas (simulación del límite crudo, NO lo que hace la app): ' + fmtCLP(truncadoPorCobrar) + '  (' + truncadoDocs + ' docs)');
+    console.log('  computeKPIs() con las ' + exactCounts.facturas + ' filas reales (paginado completo — esto SÍ es lo que hace la app hoy):    ' + fmtCLP(directoPorCobrar) + '  (' + directoDocsPendientes + ' docs)');
+    console.log('  Diferencia atribuible SOLO a ese límite hipotético (si nadie paginara): ' + fmtCLP(directoPorCobrar - truncadoPorCobrar) + '  (' + (directoDocsPendientes - truncadoDocs) + ' docs)');
 
     // =========================================================================
     // 5. LECTURA DE BROWSER (Playwright, e2e-superadmin) — solo lectura
@@ -433,135 +454,86 @@ async function main() {
     const cxcDocsTotal = (isNaN(cxcSinFacturaCount) ? 0 : cxcSinFacturaCount) + cxcFacturadoPendCount;
 
     console.log('  Cálculo directo COMPLETO (paginado, ' + exactCounts.facturas + ' facturas reales):  ' + fmtCLP(directoPorCobrar) + '   (' + directoDocsPendientes + ' docs)');
-    console.log('  Cálculo replicando el truncamiento de fetchAll() (1000 filas):  ' + fmtCLP(truncadoPorCobrar) + '   (' + truncadoDocs + ' docs)');
+    console.log('  Referencia histórica — límite crudo de PostgREST sin paginar (ya NO representa a la app):  ' + fmtCLP(truncadoPorCobrar) + '   (' + truncadoDocs + ' docs)');
     console.log('  Dashboard "Por Cobrar (CXC)"  (browser, deploy vivo):           ' + (dashboardPorCobrarCard ? fmtCLP(dashboardPorCobrarVal) : 'N/D') + '   (' + (isNaN(dashboardDocs) ? 'N/D' : dashboardDocs) + ' docs)');
     console.log('  CXC "TOTAL POR COBRAR"        (browser, deploy vivo):           ' + (cxcTotalCard ? fmtCLP(cxcTotalVal) : 'N/D') + '   (' + cxcDocsTotal + ' docs)');
-    console.log('  Contexto julio 2026 (medición manual, memoria):                 ' + fmtCLP(210700000) + '  (88 docs: 40 sin facturar $125,0M + 48 facturas $85,8M)');
+    console.log('  Contexto histórico julio 2026 (medición manual, memoria, PRE-fix):  ' + fmtCLP(210700000) + '  (88 docs: 40 sin facturar $125,0M + 48 facturas $85,8M)');
     console.log('');
-    console.log('  Diff cálculo completo vs dashboard: ' + fmtCLP((dashboardPorCobrarVal || 0) - directoPorCobrar));
-    console.log('  Diff cálculo completo vs CXC:       ' + fmtCLP((cxcTotalVal || 0) - directoPorCobrar));
-    console.log('  Diff cálculo completo vs truncado (impacto puro del bug de paginación): ' + fmtCLP(directoPorCobrar - truncadoPorCobrar));
+    console.log('  Diff cálculo completo vs dashboard (contrato (a) — se espera $0): ' + fmtCLP((dashboardPorCobrarVal || 0) - directoPorCobrar));
+    console.log('  Diff cálculo completo vs CXC       (contrato (b) — se espera $0): ' + fmtCLP((cxcTotalVal || 0) - directoPorCobrar));
+    console.log('  Diff cálculo completo vs el límite crudo hipotético (solo referencia, no assert): ' + fmtCLP(directoPorCobrar - truncadoPorCobrar));
     console.log('');
     console.log('LO QUE ES MIO — directo: ' + fmtCLP(directoLoQueEsMio) + '   vs   CXC (browser): ' + (cxcMioCard ? fmtCLP(cxcMioVal) : 'N/D'));
     console.log('VENTAS TOTALES — directo: ' + fmtCLP(totalVentasBruto) + ' bruto / ' + fmtCLP(totalVentasNeto) + ' neto   vs   Dashboard (browser): ' + (dashboardVentasCard ? dashboardVentasCard.value : 'N/D') + '  (' + (dashboardVentasCard ? dashboardVentasCard.sub : '') + ')');
     console.log(line('='));
 
+    // ---- (a) Dashboard vivo vs cálculo directo paginado — diff $0 ----
     check(
-        'Dashboard y CXC muestran EXACTAMENTE el mismo número entre sí (ambos delegan en computeKPIs sobre los mismos datos truncados)',
+        '(a) Dashboard "Ventas Totales" (browser) == cálculo directo paginado (bruto, sin filtro de fecha)',
+        !isNaN(dashboardVentasCard ? parseCLP(dashboardVentasCard.value) : NaN) && Math.abs(parseCLP((dashboardVentasCard || {}).value) - totalVentasBruto) <= 1,
+        'dashboard=' + (dashboardVentasCard ? dashboardVentasCard.value : 'N/D') + ' cálculo-directo=' + fmtCLP(totalVentasBruto) +
+        ' diff=' + fmtCLP((dashboardVentasCard ? parseCLP(dashboardVentasCard.value) : 0) - totalVentasBruto)
+    );
+    check(
+        '(a) Dashboard "Por Cobrar (CXC)" (browser) == cálculo directo paginado (computeKPIs real, ' + exactCounts.facturas + ' facturas completas)',
+        !isNaN(dashboardPorCobrarVal) && Math.abs(dashboardPorCobrarVal - directoPorCobrar) <= 1,
+        'dashboard=' + (isNaN(dashboardPorCobrarVal) ? 'N/D' : fmtCLP(dashboardPorCobrarVal)) + ' cálculo-directo=' + fmtCLP(directoPorCobrar) +
+        ' diff=' + fmtCLP((dashboardPorCobrarVal || 0) - directoPorCobrar)
+    );
+
+    // ---- (b) Página CXC vs el mismo cálculo directo — diff $0 ----
+    check(
+        '(b) CXC "TOTAL POR COBRAR" (browser) == cálculo directo paginado',
+        !isNaN(cxcTotalVal) && Math.abs(cxcTotalVal - directoPorCobrar) <= 1,
+        'CXC=' + (isNaN(cxcTotalVal) ? 'N/D' : fmtCLP(cxcTotalVal)) + ' cálculo-directo=' + fmtCLP(directoPorCobrar) +
+        ' diff=' + fmtCLP((cxcTotalVal || 0) - directoPorCobrar)
+    );
+    check(
+        '(b) CXC "LO QUE ES MIO" (browser) == cálculo directo paginado',
+        !isNaN(cxcMioVal) && Math.abs(cxcMioVal - directoLoQueEsMio) <= 1,
+        'CXC=' + (isNaN(cxcMioVal) ? 'N/D' : fmtCLP(cxcMioVal)) + ' cálculo-directo=' + fmtCLP(directoLoQueEsMio) +
+        ' diff=' + fmtCLP((cxcMioVal || 0) - directoLoQueEsMio)
+    );
+
+    // ---- Bonus (no forma parte del contrato (a)/(b)/(c), pero es una
+    // verificación barata de consistencia interna): Dashboard y CXC deben
+    // coincidir entre sí, ya que ambos delegan en el mismo computeKPIs() con
+    // los mismos datos completos. ----
+    check(
+        'Bonus: Dashboard y CXC muestran EXACTAMENTE el mismo número entre sí (ambos delegan en el mismo computeKPIs sobre datos completos)',
         !isNaN(dashboardPorCobrarVal) && !isNaN(cxcTotalVal) && Math.abs(dashboardPorCobrarVal - cxcTotalVal) <= 1,
         'dashboard=' + (isNaN(dashboardPorCobrarVal) ? 'N/D' : fmtCLP(dashboardPorCobrarVal)) + ' CXC=' + (isNaN(cxcTotalVal) ? 'N/D' : fmtCLP(cxcTotalVal))
     );
-    check(
-        'Lo que muestra la app hoy == cálculo con el MISMO truncamiento que sufre fetchAll() (replica el bug, no lo esconde)',
-        !isNaN(dashboardPorCobrarVal) && Math.abs(dashboardPorCobrarVal - truncadoPorCobrar) <= 1,
-        'app (browser)=' + (isNaN(dashboardPorCobrarVal) ? 'N/D' : fmtCLP(dashboardPorCobrarVal)) + ' cálculo-replicando-truncamiento=' + fmtCLP(truncadoPorCobrar)
-    );
-    check(
-        'CRÍTICO: "Por Cobrar" completo (paginado, ' + exactCounts.facturas + ' facturas reales) == lo que muestra la app (' + truncatedCounts.facturas + ' facturas, truncada)',
-        Math.abs(directoPorCobrar - truncadoPorCobrar) <= 1 && directoDocsPendientes === truncadoDocs,
-        'FALLA ESPERADA si el truncamiento de fetchAll() esconde documentos pendientes: completo=' + fmtCLP(directoPorCobrar) +
-        ' (' + directoDocsPendientes + ' docs) vs app-truncada=' + fmtCLP(truncadoPorCobrar) + ' (' + truncadoDocs + ' docs). ' +
-        'Diferencia=' + fmtCLP(directoPorCobrar - truncadoPorCobrar) + ' / ' + (directoDocsPendientes - truncadoDocs) + ' doc(s) — ' +
-        'dentro de las 150 filas de "facturas" que fetchAll() nunca trae porque supera el límite de 1000 de PostgREST sin `.range()`.'
-    );
-    check(
-        '"LO QUE ES MIO" CXC (browser, truncado) == cálculo con el mismo truncamiento',
-        !isNaN(cxcMioVal) && Math.abs(cxcMioVal - kpisTruncado.totalLoQueEsMio) <= 1,
-        'CXC=' + (isNaN(cxcMioVal) ? 'N/D' : fmtCLP(cxcMioVal)) + ' cálculo-truncado=' + fmtCLP(kpisTruncado.totalLoQueEsMio) +
-        ' (cálculo COMPLETO real=' + fmtCLP(directoLoQueEsMio) + ')'
-    );
 
     // =========================================================================
-    // 7. DIAGNÓSTICO NARRATIVO
+    // 7. CIERRE — estado actual (post-fix), no un diagnóstico de brecha
     // =========================================================================
-    const facturasFaltantes = exactCounts.facturas - truncatedCounts.facturas;
-    const costosFaltantes = exactCounts.costos - truncatedCounts.costos;
-    const truncamientoExplicaTodo = Math.abs(directoPorCobrar - truncadoPorCobrar) < 1;
+    // La brecha de julio 2026 (~$210,7M medido a mano vs lo que mostraba
+    // entonces el dashboard) ya se investigó y se explicó en corridas
+    // anteriores de este experimento: (1) NC descontada dos veces — corregido
+    // Sprint 1, B3; (2) fetchAll() sin `.range()` truncando a 1000 filas por el
+    // límite por defecto de PostgREST — corregido en master@2bf5524 ("fix:
+    // fetchAll pagina de verdad"). Con ambos fixes mergeados, el contrato de
+    // este experimento pasó de "diagnosticar la brecha" a "verificar que hoy
+    // no hay brecha" (sección 6, checks (a)/(b)) — ese es el resultado que
+    // importa en cada corrida futura, no un relato histórico que quedaría
+    // desactualizado apenas cambien los datos.
     const menosFilasQueMigracion = ventas.length < BACKUP_ROW_COUNTS.ventas || facturas.length < BACKUP_ROW_COUNTS.facturas;
-
     console.log('\n' + line('='));
-    console.log('DIAGNÓSTICO — brecha $30,8M/19 docs (hoy) vs ~$210,7M/88 docs (julio 2026)');
+    console.log('CIERRE — estado actual de los datos (informativo)');
     console.log(line('='));
     console.log([
-        'HALLAZGO PRINCIPAL (nuevo, encontrado en esta corrida — no estaba en la',
-        'auditoría de julio porque en julio la base vivía en Replit/Postgres directo,',
-        'sin PostgREST de por medio): src/shared/supabase.js fetchAll() hace',
-        '`.select(\'*\').order(\'id\')` SIN `.range()`. Supabase/PostgREST limita cada',
-        'respuesta a 1000 filas por defecto cuando no hay paginación explícita, así',
-        'que fetchAll() trunca EN SILENCIO — sin error, sin warning — cualquier tabla',
-        'que supere 1000 filas. Esto es un bug EN VIVO, hoy, no específico de este',
-        'experimento:',
-        '  - facturas: ' + exactCounts.facturas + ' filas reales, la app solo lee ' + truncatedCounts.facturas + ' (' +
-            'faltan ' + facturasFaltantes + ').',
-        '  - costos:   ' + exactCounts.costos + ' filas reales, la app solo lee ' + truncatedCounts.costos + ' (' +
-            'faltan ' + costosFaltantes + ', ' + Math.round(costosFaltantes / exactCounts.costos * 100) + '% de la tabla INVISIBLE — "Por Pagar (CXP)" está',
-        '              calculado sobre menos de un tercio de los costos reales).',
-        '  - ventas y clientes están bajo 1000 filas hoy, así que no truncan — pero',
-        '    ventas superará 1000 filas pronto al ritmo actual de crecimiento, momento',
-        '    en que el mismo bug empezará a afectar también "Ventas Totales" y CXP por evento.',
+        'Filas reales hoy (paginado completo, count exacto de Postgres): ventas=' + exactCounts.ventas +
+            ', facturas=' + exactCounts.facturas + ', costos=' + exactCounts.costos + ', clientes=' + exactCounts.clientes + '.',
+        'Referencia de la migración desde Replit (comentario en supabase/schema.sql, 2026-07-25/26): ' +
+            'ventas=' + BACKUP_ROW_COUNTS.ventas + ', facturas=' + BACKUP_ROW_COUNTS.facturas + '.',
+        menosFilasQueMigracion
+            ? '  -> hay MENOS filas hoy que en la migración — coherente con limpieza manual de duplicados\n     ya facturados/pagados (memoria: auditoria-2026-07-estado.md), no es pérdida accidental por sí sola.'
+            : '  -> el conteo no bajó respecto a la migración.',
         '',
-        'Impacto medido en "Por Cobrar" específicamente (arriba, sección "Impacto del',
-        'truncamiento"): ' + (truncamientoExplicaTodo
-            ? 'en esta corrida, las 150 filas de facturas fuera de alcance NO cambian el total\n' +
-              '  de "Por Cobrar" (ninguna de las 150 filas ausentes está en estado pendiente hoy) —\n' +
-              '  el bug es real y grave para CXP/costos, pero NO es la explicación completa de\n' +
-              '  la brecha de $180M en "Por Cobrar" específicamente.'
-            : 'el total COMPLETO (paginado) difiere del que muestra la app hoy en ' +
-              fmtCLP(directoPorCobrar - truncadoPorCobrar) + ' (' + (directoDocsPendientes - truncadoDocs) + ' documento(s)) —\n' +
-              '  parte de la brecha reportada SÍ es este bug, no solo actividad de negocio.'),
-        '',
-        'Con eso descartado/acotado como explicación de "Por Cobrar", el resto de la',
-        'brecha de ~$210,7M (julio) a ' + fmtCLP(directoPorCobrar) + ' (hoy, cálculo COMPLETO) se explica por:',
-        '',
-        '  a) La dirección del fix de NC (Sprint 1, B3 — "NC descontada una sola vez") va',
-        '     en sentido CONTRARIO al observado: en julio, restar la NC dos veces hacía que',
-        '     el dashboard de ENTONCES mostrara MENOS ($200,4M) que el cálculo directo de',
-        '     ese momento ($210,7M). Arreglar ese bug empuja el número hacia ARRIBA, no',
-        '     explica una caída — queda descartado como causa de la caída a $30,8M.',
-        '',
-        '  b) classifyData() excluye "pagada"/"anulada"/"nc" de ambos KPIs por diseño (así',
-        '     debe ser). En esta corrida hay ' + (buckets.pagada ? buckets.pagada.count : 0) + ' facturas "pagada" (' +
-            fmtCLP(buckets.pagada ? buckets.pagada.monto : 0) + ' bruto) y ' + (buckets.anulada ? buckets.anulada.count : 0),
-        '     "anulada" (' + fmtCLP(buckets.anulada ? buckets.anulada.monto : 0) + ') — volumen consistente con casi un',
-        '     año calendario de facturación ya resuelta, NO con datos faltantes.',
-        '',
-        '  c) "en_gestión" (estado nuevo del CXC Kanban, no existía en julio): ' + enGestion.count + ' fila(s)',
-        '     por ' + fmtCLP(enGestion.monto) + ' en esta corrida — hoy NO es la explicación (0 o casi 0 filas',
-        '     parqueadas), pero es un mecanismo real de "desaparición" a vigilar a futuro',
-        '     porque classifyData() lo excluye de AMBOS KPIs sin avisar.',
-        '',
-        '  d) Filas: hoy (paginado completo, cuenta exacta de Postgres) hay ventas=' + exactCounts.ventas + ',',
-        '     facturas=' + exactCounts.facturas + '. La migración (comentario en supabase/schema.sql) documentó',
-        '     ventas=' + BACKUP_ROW_COUNTS.ventas + ', facturas=' + BACKUP_ROW_COUNTS.facturas + ' el 25-jul.',
-        (menosFilasQueMigracion
-            ? '     HAY MENOS FILAS HOY QUE LAS MIGRADAS — coherente con el plan aprobado por Aldo\n' +
-              '     de limpiar a mano duplicados ya facturados/pagados tras el fix de "+ Nueva\n' +
-              '     Factura" (memoria: auditoria-2026-07-estado.md). No hay evidencia de pérdida\n' +
-              '     accidental — el conteo BAJÓ, no quedó por debajo de forma inexplicable.'
-            : '     El conteo de filas NO bajó respecto a la migración (' + exactCounts.ventas + '>=' + BACKUP_ROW_COUNTS.ventas +
-              ' ventas, ' + exactCounts.facturas + (exactCounts.facturas >= BACKUP_ROW_COUNTS.facturas ? '>=' : '<') + BACKUP_ROW_COUNTS.facturas + ' facturas) —\n' +
-              '     la caída de $210,7M a ' + fmtCLP(directoPorCobrar) + ' NO es por filas borradas, es por CLASIFICACIÓN\n' +
-              '     (estado real de cada fila) y/o 8 días reales de cobranza/facturación entre el\n' +
-              '     25-jul y hoy sobre la copia de pruebas en paralelo (Replit sigue siendo el\n' +
-              '     sistema de verdad — Vercel/Supabase es la copia donde se está iterando).'),
-        '',
-        line('-'),
-        'CONCLUSIÓN:',
-        '1) Bug real y accionable, hoy: fetchAll() (src/shared/supabase.js:82) trunca en',
-        '   silencio cualquier tabla >1000 filas. HOY afecta más a "costos" (72% de la',
-        '   tabla invisible, CXP subestimado en TODA la app) que a "facturas" (150 filas',
-        '   fuera de alcance, pero ' + (truncamientoExplicaTodo ? 'sin impacto medido en "Por Cobrar" en esta corrida' : 'con impacto medido de ' + fmtCLP(directoPorCobrar - truncadoPorCobrar) + ' en "Por Cobrar"') + ').',
-        '   Se recomienda agregar paginación real (`.range()` en loop, como hace este',
-        '   mismo experimento) a fetchAll() — no se corrige aquí por alcance del experimento.',
-        '',
-        '2) El número "$' + Math.round(directoPorCobrar / 1000000) + 'M / ' + directoDocsPendientes + ' docs" que reporta este experimento como',
-        '   "cálculo directo completo" (paginado, sin el bug de truncamiento) es la cifra',
-        '   MÁS CONFIABLE de "Por Cobrar" disponible hoy — pero AÚN diverge fuerte de los',
-        '   $210,7M de julio, y esa parte de la brecha es de DATOS (facturas pagadas/',
-        '   anuladas/limpiadas + 8 días de operación real), no de fórmula ni de bug de',
-        '   paginación. No se puede cerrar del todo sin que Aldo confirme qué pasó',
-        '   puntualmente con los 40 eventos sin facturar ($125,0M) y 48 facturas',
-        '   ($85,8M) de la medición de julio.'
+        '"Por Cobrar" hoy (cálculo directo, paginado, fuente de verdad de este experimento): ' + fmtCLP(directoPorCobrar) + ' (' + directoDocsPendientes + ' docs).',
+        '"en_gestión" (CXC Kanban, invisible a AMBOS KPIs por diseño de classifyData): ' + enGestion.count + ' fila(s) / ' + fmtCLP(enGestion.monto) + ' — mecanismo real de "desaparición" a vigilar, no un bug.',
+        'Facturas "pagada": ' + (buckets.pagada ? buckets.pagada.count : 0) + ' (' + fmtCLP(buckets.pagada ? buckets.pagada.monto : 0) + ') · "anulada": ' + (buckets.anulada ? buckets.anulada.count : 0) + ' (' + fmtCLP(buckets.anulada ? buckets.anulada.monto : 0) + ') — excluidas de ambos KPIs por diseño (correcto).'
     ].join('\n'));
     console.log(line('='));
 

@@ -195,6 +195,38 @@ async function readKpiCards(page) {
 function findCard(cards, label) { return cards.find(function (c) { return c.label === label; }); }
 
 // =============================================================================
+// DIAGNÓSTICO EXPERIMENTO K (banco tanda 2, ver evidencia en el reporte): el
+// toggle "Mostrar todos"/"Mostrar pendientes" fallaba 2/2 en la corrida
+// original — reproducido con logs de consola/red del navegador contra el
+// deploy vivo. NO es un bug de la app (cero errores de consola/JS en toda la
+// sesión, cero red fallida): sales.js:init() y finance.js:loadAndRender()
+// bindean sus listeners (search, toggle) recién DESPUÉS de resolver un
+// Promise.all de varias tablas — "costos" tiene 3615 filas reales y pagina en
+// 4 llamadas (.range() en loop), lo que en el deploy vivo puede tardar bien
+// por sobre los 400ms fijos que gotoRoute()/salesSearch() esperaban antes de
+// clickear el toggle. Con la app aún cargando, el click cae en un botón SIN
+// listener bindeado todavía — no pasa nada, ni error ni cambio de clase — y
+// el fill() posterior tampoco dispara nada. Confirmado con una repro
+// instrumentada: click+400ms fijo -> toggle NO queda activo (0 filas en la
+// tabla en ese instante); esperando a que la tabla tenga filas reales antes
+// de clickear -> el toggle SÍ queda activo, siempre. Fix: reemplazar la
+// espera fija por una espera explícita de re-render + verificación (con
+// reintento) de la clase "active" del botón antes de seguir — nunca confiar
+// en un timeout fijo para un init() async cuya duración depende de cuántas
+// páginas tenga que traer costos/facturas ese día.
+// =============================================================================
+async function ensureToggleActive(page, toggleSel) {
+    const btn = page.locator(toggleSel);
+    for (let attempt = 1; attempt <= 8; attempt++) {
+        const isActive = await btn.evaluate(function (el) { return el.classList.contains('active'); }).catch(function () { return false; });
+        if (isActive) return true;
+        await btn.click().catch(function () { /* el botón puede no estar listo aún en el primer intento */ });
+        await page.waitForTimeout(attempt <= 2 ? 250 : 600);
+    }
+    return await btn.evaluate(function (el) { return el.classList.contains('active'); }).catch(function () { return false; });
+}
+
+// =============================================================================
 // SALES (Ventas) UI HELPERS
 // =============================================================================
 async function clickAndWaitModalActive(page, clickSel, modalSel) {
@@ -255,8 +287,17 @@ async function salesSearch(page, text) {
     // status guardado sea 'pendiente') — una venta E2E creada con eventDate=hoy
     // queda excluida de "Mostrar pendientes" por diseño. "Mostrar todos" evita ese
     // falso negativo sin depender de qué eventDate haya usado cada experimento.
+    //
+    // ensureToggleActive (ver diagnóstico Experimento K arriba) reemplaza el click
+    // único + timeout fijo: espera de verdad a que sales.js:init() termine de
+    // bindear sus listeners (evidenciado por la clase "active" tomando efecto) en
+    // vez de asumir que 400ms alcanzan siempre — en el deploy vivo, init() puede
+    // tardar más que eso mientras pagina "costos" (3615 filas, 4 páginas).
     const todosBtn = page.locator('.toggle-option[data-filter="todas"]');
-    if (await todosBtn.count() > 0) await todosBtn.click();
+    if (await todosBtn.count() > 0) {
+        const activo = await ensureToggleActive(page, '.toggle-option[data-filter="todas"]');
+        if (!activo) throw new Error('salesSearch: el toggle "Mostrar todos" no quedó activo tras reintentos — ver diagnóstico Experimento K (banco tanda 2)');
+    }
     await page.fill('#sales-search', text);
     await page.waitForTimeout(400);
 }
@@ -287,8 +328,15 @@ async function financeSearch(page, text) {
     // cubre/supera el pendiente pasa a 'pagada' aunque el status guardado siga
     // siendo 'pendiente_pago' (getRealTimeStatus la recalcula en vivo). Sin
     // "Mostrar todos", una fila recién sobre-pagada desaparece de la búsqueda.
+    //
+    // Mismo endurecimiento que salesSearch (diagnóstico Experimento K): finance.js
+    // también bindea sus listeners tras un Promise.all async — ensureToggleActive
+    // espera de verdad el re-render en vez de un timeout fijo.
     const todosBtn = page.locator('#finance-pending-toggle .toggle-option[data-pending="false"]');
-    if (await todosBtn.count() > 0) await todosBtn.click();
+    if (await todosBtn.count() > 0) {
+        const activo = await ensureToggleActive(page, '#finance-pending-toggle .toggle-option[data-pending="false"]');
+        if (!activo) throw new Error('financeSearch: el toggle "Mostrar todos" no quedó activo tras reintentos');
+    }
     await page.fill('#finance-search', text);
     await page.waitForTimeout(500);
 }
@@ -1215,5 +1263,51 @@ if (require.main === module) {
         process.exit(1);
     });
 } else {
-    module.exports = { main: main };
+    // Bundle reutilizable para archivos hermanos del banco (tests/e2e/tanda2.e2e.js
+    // y sucesores) — evita reimplementar login/navegación/CRUD por UI ya probados
+    // aquí. loadConfig() debe llamarse una vez antes de usar cualquier helper que
+    // dependa de `admin`/CREDS (todos los que hablan con Supabase o hacen login).
+    module.exports = {
+        main: main,
+        loadConfig: loadConfig,
+        getAdmin: function () { return admin; },
+        getMainEnv: function () { return mainEnv; },
+        getE2eEnv: function () { return e2eEnv; },
+        CREDS: CREDS,
+        PREFIX: PREFIX,
+        Money: Money,
+        NAV_TIMEOUT: NAV_TIMEOUT,
+        ACTION_TIMEOUT: ACTION_TIMEOUT,
+        BASE_URL: BASE_URL,
+        SUPABASE_ANON_KEY: SUPABASE_ANON_KEY,
+        tag: tag,
+        fmtCLP: fmtCLP,
+        parseCLP: parseCLP,
+        todayISO: todayISO,
+        sleep: sleep,
+        findVentaByEventName: findVentaByEventName,
+        findFacturasBySaleId: findFacturasBySaleId,
+        findCostosByEventId: findCostosByEventId,
+        findVentaById: findVentaById,
+        deleteRows: deleteRows,
+        findStaffByName: findStaffByName,
+        newLoggedInPage: newLoggedInPage,
+        gotoRoute: gotoRoute,
+        readKpiCards: readKpiCards,
+        findCard: findCard,
+        ensureToggleActive: ensureToggleActive,
+        clickAndWaitModalActive: clickAndWaitModalActive,
+        createSaleViaUI: createSaleViaUI,
+        salesSearch: salesSearch,
+        editSaleViaUI: editSaleViaUI,
+        financeSearch: financeSearch,
+        clickFacturar: clickFacturar,
+        clickNuevaFactura: clickNuevaFactura,
+        clickNC: clickNC,
+        clickAbono: clickAbono,
+        createCostoViaUI: createCostoViaUI,
+        createStaffViaUI: createStaffViaUI,
+        runExperiment: runExperiment,
+        getExperimentResults: function () { return experimentResults; }
+    };
 }
