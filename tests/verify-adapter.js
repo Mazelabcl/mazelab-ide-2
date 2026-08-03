@@ -53,6 +53,7 @@ function makeMockSupabaseClient(script) {
             eq: function (col, val) { state.eq = { col: col, val: val }; return builder; },
             order: function (col) { state.order = col; return builder; },
             limit: function (n) { state.limitArgs = n; return builder; },
+            range: function (from, to) { state.rangeArgs = [from, to]; return builder; },
             single: function () {
                 state.single = true;
                 return resolveFor(state);
@@ -67,7 +68,7 @@ function makeMockSupabaseClient(script) {
     }
 
     function resolveFor(state) {
-        calls.push({ table: state.table, method: state.method, args: state.args, eq: state.eq, order: state.order, limitArgs: state.limitArgs, single: !!state.single, selectArgs: state.selectArgs });
+        calls.push({ table: state.table, method: state.method, args: state.args, eq: state.eq, order: state.order, limitArgs: state.limitArgs, rangeArgs: state.rangeArgs, single: !!state.single, selectArgs: state.selectArgs });
         const key = state.table + '.' + state.method;
         const scripted = script[key];
         const result = typeof scripted === 'function' ? scripted(state) : (scripted || { data: null, error: null });
@@ -125,7 +126,7 @@ function freshSupabaseEnv(script) {
     });
 
     // ================= fetchAll() =================
-    await at('fetchAll(): éxito → array, usa .select("*").order("id")', async function () {
+    await at('fetchAll(): éxito → array, usa .select("*").order("id").range(0,999)', async function () {
         const rows = [{ id: '2' }, { id: '1' }];
         const env = freshSupabaseEnv({ 'ventas.select': { data: rows, error: null } });
         const result = await env.Supabase.fetchAll('ventas');
@@ -133,6 +134,7 @@ function freshSupabaseEnv(script) {
         const call = env.calls.find(function (c) { return c.table === 'ventas' && c.method === 'select'; });
         assert.deepStrictEqual(call.selectArgs, ['*', undefined]);
         assert.strictEqual(call.order, 'id');
+        assert.deepStrictEqual(call.rangeArgs, [0, 999]);
     });
 
     await at('fetchAll(): data null del servidor → [] (nunca null)', async function () {
@@ -145,6 +147,65 @@ function freshSupabaseEnv(script) {
         const env = freshSupabaseEnv({ 'facturas.select': { data: null, error: { message: 'permission denied for table facturas' } } });
         const err = await assertRejects(env.Supabase.fetchAll('facturas'));
         assert.strictEqual(err.message, 'Error al leer facturas: permission denied for table facturas');
+    });
+
+    // ---- Paginación real: PostgREST trunca a 1000 filas por página EN SILENCIO
+    // (200 OK, sin error, sin indicador de truncamiento) — fetchAll() debe
+    // seguir pidiendo páginas vía .range() hasta que una venga incompleta.
+    await at('fetchAll(): 2 páginas (1000 + 500) → devuelve 1500 filas, pide .range(0,999) y luego .range(1000,1999)', async function () {
+        const page1 = [];
+        for (let i = 0; i < 1000; i++) page1.push({ id: 'r' + i });
+        const page2 = [];
+        for (let i = 1000; i < 1500; i++) page2.push({ id: 'r' + i });
+
+        const env = freshSupabaseEnv({
+            'costos.select': function (state) {
+                const from = state.rangeArgs[0];
+                if (from === 0) return { data: page1, error: null };
+                if (from === 1000) return { data: page2, error: null };
+                throw new Error('range inesperado en el mock: ' + JSON.stringify(state.rangeArgs));
+            }
+        });
+
+        const result = await env.Supabase.fetchAll('costos');
+        assert.strictEqual(result.length, 1500, 'debe acumular las 2 páginas — la truncación silenciosa de PostgREST es exactamente el bug que esto corrige');
+        assert.deepStrictEqual(result[0], { id: 'r0' });
+        assert.deepStrictEqual(result[1499], { id: 'r1499' });
+
+        const selectCalls = env.calls.filter(function (c) { return c.table === 'costos' && c.method === 'select'; });
+        assert.strictEqual(selectCalls.length, 2, 'debe hacer exactamente 2 consultas — una por página');
+        assert.deepStrictEqual(selectCalls[0].rangeArgs, [0, 999]);
+        assert.deepStrictEqual(selectCalls[1].rangeArgs, [1000, 1999]);
+        selectCalls.forEach(function (c) { assert.strictEqual(c.order, 'id', 'cada página debe mantener el mismo order("id") — si el orden cambiara entre páginas podrían duplicarse o saltarse filas'); });
+    });
+
+    await at('fetchAll(): primera página con < 1000 filas → UNA sola consulta (no pagina de más)', async function () {
+        const rows = [];
+        for (let i = 0; i < 300; i++) rows.push({ id: 'r' + i });
+        const env = freshSupabaseEnv({ 'ventas.select': { data: rows, error: null } });
+
+        const result = await env.Supabase.fetchAll('ventas');
+        assert.strictEqual(result.length, 300);
+
+        const selectCalls = env.calls.filter(function (c) { return c.table === 'ventas' && c.method === 'select'; });
+        assert.strictEqual(selectCalls.length, 1, 'una página con menos de 1000 filas es la señal de "no hay más" — no debe pedir una segunda página');
+    });
+
+    await at('fetchAll(): error en la página 2 → lanza con prefijo "Error al leer " exacto (la página 1 sí se pidió)', async function () {
+        const page1 = [];
+        for (let i = 0; i < 1000; i++) page1.push({ id: 'r' + i });
+        let callNum = 0;
+        const env = freshSupabaseEnv({
+            'costos.select': function () {
+                callNum++;
+                if (callNum === 1) return { data: page1, error: null };
+                return { data: null, error: { message: 'statement timeout' } };
+            }
+        });
+
+        const err = await assertRejects(env.Supabase.fetchAll('costos'));
+        assert.strictEqual(err.message, 'Error al leer costos: statement timeout');
+        assert.strictEqual(callNum, 2, 'debe haber intentado la página 2 antes de fallar');
     });
 
     // ================= insert() =================
