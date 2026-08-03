@@ -383,9 +383,16 @@ async function expT2_2(browser) {
 
 // =============================================================================
 // T2-3 — Facturar parcial -> borrar esa factura -> ¿se reconstruye el residual?
+//
+// FIX VERIFICADO (2026-08-02, commit 5f1599a en master): deleteReceivable()
+// ahora reconcilia — al borrar una factura con venta vinculada, su neto vuelve
+// a la fila residual sin_factura (o la crea si no existe). Este experimento ya
+// NO documenta el agujero: ASSERTA que la reconstrucción ocurre y que la
+// invariante "residual + facturas = venta" se sostiene en todo momento,
+// incluyendo poder re-facturar el monto original tras el borrado.
 // =============================================================================
 async function expT2_3(browser) {
-    return runExperiment('T2-3', 'Facturar -> borrar factura -> re-facturar (¿se reconstruye el residual?)', async function (ctx) {
+    return runExperiment('T2-3', 'Facturar -> borrar factura -> re-facturar (se reconstruye el residual)', async function (ctx) {
         const eventName = tag('T2-3-evento');
         const clientName = tag('T2-3-cliente');
         const AMOUNT = 1000000;
@@ -406,56 +413,80 @@ async function expT2_3(browser) {
             ctx.check('paso 1 (API): residual $400k + factura $600k, suma = venta ($1.000.000)', sumaInicial === AMOUNT,
                 'residual=' + fmtCLP(residual1 ? residual1.montoNeto : 0) + ' factura=' + fmtCLP(factura1 ? factura1.montoNeto : 0) + ' suma=' + fmtCLP(sumaInicial));
 
-            // Paso 2: borrar la FACTURA (no el residual) desde CXC.
+            // Paso 2: borrar la FACTURA (no el residual) desde CXC. El confirm() debe
+            // avisar explícitamente que el monto neto vuelve al saldo por facturar
+            // (requisito de UX del fix — el usuario no debe descubrirlo recién en los KPIs).
             await financeSearch(page, eventName);
-            await clickDeleteFacturaCXC(page, factura1.id);
+            const dialogMsgBorrado = await clickDeleteFacturaCXC(page, factura1.id);
+            ctx.check('paso 2: el confirm() de borrado avisa que el neto de la factura vuelve al saldo por facturar',
+                !!dialogMsgBorrado && dialogMsgBorrado.indexOf('volverá al saldo por facturar') !== -1 && dialogMsgBorrado.indexOf(fmtCLP(600000)) !== -1,
+                'dialogo=' + JSON.stringify(dialogMsgBorrado));
+
             const step2 = await findFacturasBySaleId(venta.id);
             const residual2 = step2.find(function (f) { return f.status === 'sin_factura'; });
             const sumaTrasBorrado = step2.reduce(function (s, f) { return s + Number(f.montoNeto || 0); }, 0);
             ctx.note('tras borrar la factura de $600.000: quedan ' + step2.length + ' fila(s), suma=' + fmtCLP(sumaTrasBorrado) +
                 ' (residual=' + fmtCLP(residual2 ? residual2.montoNeto : 0) + ')');
 
-            // HALLAZGO: la invariante "residual + facturas == venta" debe sostenerse
-            // SIEMPRE — si no, hay un agujero de plata que la app ya no rastrea en
-            // ninguna parte. deleteReceivable() (finance.js:2530) solo hace
-            // DS.remove() de la fila — no existe lógica que reconstruya el residual.
+            // FIX: la invariante "residual + facturas == venta" se sostiene — la
+            // factura borrada devolvió su neto ($600.000) a la fila residual, que
+            // vuelve a valer el total de la venta ($1.000.000).
             ctx.check(
-                'HALLAZGO (BUG si falla): tras borrar una factura parcial, la suma residual+facturas SIGUE siendo igual a la venta ($1.000.000) — o si no, se documenta el agujero exacto',
+                'paso 2 (API): tras borrar la factura de $600.000, el residual se reconstruye a $1.000.000 (vuelve a valer el total de la venta)',
+                !!residual2 && Number(residual2.montoNeto || 0) === AMOUNT,
+                'residual2=' + fmtCLP(residual2 ? residual2.montoNeto : 0) + ' vs venta=' + fmtCLP(AMOUNT)
+            );
+            ctx.check(
+                'paso 2 (API): la suma residual+facturas SIGUE siendo igual a la venta ($1.000.000) — sin agujero',
                 sumaTrasBorrado === AMOUNT,
-                'suma tras borrar la factura de $600.000 = ' + fmtCLP(sumaTrasBorrado) + ' vs venta=' + fmtCLP(AMOUNT) +
-                ' — AGUJERO=' + fmtCLP(AMOUNT - sumaTrasBorrado) + '. deleteReceivable() (finance.js) borra la fila sin reconstruir nada: ' +
-                'el residual NO se reconstruye a $1.000.000, se queda tal cual estaba ($400.000) — los $600.000 que representaba la factura ' +
-                'borrada desaparecen de todo libro (Por Cobrar, Lo Que Es Mío) sin dejar rastro ni NC ni ajuste. Es un BUG de integridad financiera: ' +
-                'borrar una CXC facturada dejando su venta viva SIEMPRE debe reconciliarse con el residual, y hoy no lo hace.'
+                'suma tras borrar la factura de $600.000 = ' + fmtCLP(sumaTrasBorrado) + ' vs venta=' + fmtCLP(AMOUNT)
             );
 
-            // Paso 3: intentar re-facturar los $600.000 originales sobre lo que quedó
-            // ($400.000 de residual) — el propio guard de la UI debería bloquearlo
-            // porque 600.000 > 400.000 (netoTotal del residual actual).
+            // Paso 3 (guard, sigue vigente): facturar POR ENCIMA del residual
+            // reconstruido ($1.000.000) debe seguir bloqueado — probamos con
+            // $1.100.000 para no confundir este guard con el paso 4 (re-facturar
+            // exactamente los $600.000 originales, que ahora SÍ debe funcionar).
             if (residual2) {
                 await financeSearch(page, eventName);
-                const attempt = await attemptFacturarOverLimit(page, residual2.id, { number: tag('T2-3-F2-blocked'), amount: 600000, tipo: 'F' });
-                ctx.check('paso 3: la UI bloquea con alert al intentar re-facturar $600.000 sobre un residual de solo $400.000 (no deja crear una factura inconsistente)',
+                const attempt = await attemptFacturarOverLimit(page, residual2.id, { number: tag('T2-3-F2-blocked'), amount: 1100000, tipo: 'F' });
+                ctx.check('paso 3: la UI sigue bloqueando con alert al intentar facturar por encima del residual reconstruido ($1.100.000 > $1.000.000)',
                     !!attempt.dialogMsg && attempt.dialogMsg.indexOf('no puede superar') !== -1,
-                    'dialogo=' + JSON.stringify(attempt.dialogMsg) + ' — CONSECUENCIA DEL HALLAZGO ANTERIOR: como el residual quedó en $400.000 en vez de $1.000.000, ' +
-                    'ya NO es posible recuperar por UI un estado facturado por el monto original ($600.000) sin editar la venta a mano primero.');
+                    'dialogo=' + JSON.stringify(attempt.dialogMsg));
                 const step2b = await findFacturasBySaleId(venta.id);
                 ctx.check('paso 3 (API): el intento bloqueado NO creó ninguna fila nueva', step2b.length === step2.length, 'antes=' + step2.length + ' despues=' + step2b.length);
 
-                // Paso 4: re-facturar lo que SÍ cabe ($400.000, el 100% del residual actual)
-                // para dejar el evento en un estado facturado sin filas huérfanas — aunque
-                // el total ya no sea $1.000.000 (ver hallazgo).
+                // Paso 4: re-facturar el monto ORIGINAL de $600.000 sobre el residual
+                // reconstruido — antes del fix esto quedaba bloqueado (el residual se
+                // había quedado en $400.000); ahora debe funcionar sin fricción.
                 await financeSearch(page, eventName);
                 const invoiceNumber2 = tag('T2-3-F2');
-                await clickFacturar(page, residual2.id, { number: invoiceNumber2, amount: 400000, tipo: 'F' });
+                await clickFacturar(page, residual2.id, { number: invoiceNumber2, amount: 600000, tipo: 'F' });
+                const step3 = await findFacturasBySaleId(venta.id);
+                const residual3 = step3.find(function (f) { return f.status === 'sin_factura'; });
+                const factura2 = step3.find(function (f) { return f.tipoDoc === 'F' && f.invoiceNumber === invoiceNumber2; });
+                const sumaTrasRefacturar = step3.reduce(function (s, f) { return s + Number(f.montoNeto || 0); }, 0);
+                ctx.check('paso 4 (API): re-facturar los $600.000 originales sobre el residual reconstruido SÍ funciona (factura creada por $600.000)',
+                    !!factura2 && Number(factura2.montoNeto || 0) === 600000,
+                    'factura2=' + JSON.stringify(factura2 ? { montoNeto: factura2.montoNeto, invoiceNumber: factura2.invoiceNumber } : null));
+                ctx.check('paso 4 (API): el residual queda en $400.000 (1.000.000 - 600.000) y la invariante se sostiene',
+                    !!residual3 && Number(residual3.montoNeto || 0) === 400000 && sumaTrasRefacturar === AMOUNT,
+                    'residual3=' + fmtCLP(residual3 ? residual3.montoNeto : 0) + ' suma=' + fmtCLP(sumaTrasRefacturar) + ' vs venta=' + fmtCLP(AMOUNT));
+
+                // Paso 5: facturar el remanente ($400.000) para cerrar el evento sin
+                // fila sin_factura huérfana — el estado final debe volver a ser
+                // exactamente el mismo que si nunca se hubiera borrado nada.
+                await financeSearch(page, eventName);
+                const invoiceNumber3 = tag('T2-3-F3');
+                await clickFacturar(page, residual3.id, { number: invoiceNumber3, amount: 400000, tipo: 'F' });
                 const step4 = await findFacturasBySaleId(venta.id);
                 const sumaFinal = step4.reduce(function (s, f) { return s + Number(f.montoNeto || 0); }, 0);
-                ctx.check('paso 4 (API): tras re-facturar los $400.000 que sí quedaban, no hay residual sin_factura huérfano', !step4.find(function (f) { return f.status === 'sin_factura'; }));
-                ctx.note('ESTADO FINAL del evento T2-3: ' + step4.length + ' fila(s) CXC, suma=' + fmtCLP(sumaFinal) + ' vs venta original=' + fmtCLP(AMOUNT) +
-                    ' — los $600.000 de la primera factura (borrada en el paso 2) quedaron permanentemente fuera de todo libro. Este es el estado final ' +
-                    'que ve el dueño si borra una factura parcial desde CXC sin tocar la venta.');
+                ctx.check('paso 5 (API): tras re-facturar el remanente, no hay residual sin_factura huérfano', !step4.find(function (f) { return f.status === 'sin_factura'; }));
+                ctx.check('paso 5 (API): la suma final de todas las facturas = venta original ($1.000.000) — invariante sostenida en todo momento',
+                    sumaFinal === AMOUNT, 'sumaFinal=' + fmtCLP(sumaFinal) + ' vs venta=' + fmtCLP(AMOUNT));
+                ctx.note('ESTADO FINAL del evento T2-3: ' + step4.length + ' fila(s) CXC, suma=' + fmtCLP(sumaFinal) + ' = venta original (' + fmtCLP(AMOUNT) + '). ' +
+                    'Ciclo completo verificado: facturar parcial -> borrar factura -> reconstrucción del residual -> re-facturar el monto original -> cerrar el remanente, sin agujero en ningún paso.');
             } else {
-                ctx.check('paso 3/4 omitidos: no quedó residual sobre el cual reintentar facturar (ver nota del paso 2)', false, 'residual2=null');
+                ctx.check('paso 3/4/5 omitidos: no quedó residual reconstruido sobre el cual reintentar facturar (regresión del fix)', false, 'residual2=null');
             }
             // OJO: a diferencia de T2-1/T2-2, este experimento NUNCA borra la venta
             // (solo manipula sus CXC) — "venta" debe seguir con valor para que el
