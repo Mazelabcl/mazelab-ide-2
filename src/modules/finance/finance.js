@@ -2527,21 +2527,118 @@ window.Mazelab.Modules.FinanceModule = (function () {
         });
     }
 
+    // Quita las propiedades transitorias (_ncOffset, _realStatus, _daysOverdue,
+    // _refundAmount...) que loadAndRender/computeKPIs escriben en las filas de
+    // allReceivables en memoria. Necesario antes de reinsertar una fila como
+    // compensaci\u00f3n: esos campos no son parte del registro persistido.
+    function stripTransient(obj) {
+        var clean = {};
+        Object.keys(obj).forEach(function (k) {
+            if (k.charAt(0) !== '_') clean[k] = obj[k];
+        });
+        return clean;
+    }
+
     async function deleteReceivable(id) {
         var rec = allReceivables.find(function (r) { return r.id === id; });
         if (!rec) return;
 
-        if (!confirm('\u00bfEliminar este registro?\n\n' + (rec.clientName || '') + ' - ' + (rec.eventName || '') + '\n' + (rec.invoiceNumber || 'Sin factura') + '\n\nEsta acci\u00f3n no se puede deshacer.')) {
+        // Mismo criterio isFactura que sales.js (isFacturaCXC) para distinguir una
+        // FACTURA real de una fila residual (sin_factura/pendiente_factura) o una NC.
+        // Solo borrar una FACTURA dispara la reconciliaci\u00f3n: su neto ya facturado
+        // debe volver al saldo por facturar del evento (hallazgo T2-3, banco E2E) \u2014
+        // NC y residuales mantienen el comportamiento actual (solo remove).
+        var esNC = rec.tipoDoc === 'NC' || rec.status === 'nc' || rec.status === 'nc_aplicada';
+        var esFactura = !esNC && rec.status !== 'sin_factura' && rec.status !== 'pendiente_factura' &&
+            (rec.sourceType === 'factura' ||
+             Number(rec.invoicedAmount) > 0 ||
+             !!(rec.invoiceNumber && String(rec.invoiceNumber).trim() !== ''));
+        var tieneVentaVinculada = !!(rec.saleId || rec.sourceId);
+        var netoADevolver = (esFactura && tieneVentaVinculada) ? getMonto(rec) : 0;
+        var totalPagado = getTotalPagado(rec);
+        var reconciliar = netoADevolver > 0;
+
+        var msg;
+        if (reconciliar) {
+            msg = 'Se eliminar\u00e1 la factura N\u00b0 ' + (rec.invoiceNumber || '(sin n\u00famero)') + '.\n' +
+                  'Su monto neto (' + formatCLP(netoADevolver) + ') volver\u00e1 al saldo por facturar del evento.';
+            if (totalPagado > 0) {
+                var numPagos = Array.isArray(rec.payments) ? rec.payments.length : 0;
+                msg += '\n\nAdem\u00e1s se perder\u00e1 el historial de ' + numPagos + ' pago(s) por ' + formatCLP(totalPagado) + '.';
+            }
+            msg += '\n\nEsta acci\u00f3n no se puede deshacer.';
+        } else {
+            msg = '\u00bfEliminar este registro?\n\n' + (rec.clientName || '') + ' - ' + (rec.eventName || '') + '\n' + (rec.invoiceNumber || 'Sin factura') + '\n\nEsta acci\u00f3n no se puede deshacer.';
+        }
+
+        if (!confirm(msg)) {
             return;
         }
 
         try {
             await window.Mazelab.DataService.remove('receivables', rec.id);
-            await loadAndRender();
         } catch (err) {
             console.error('Error deleting receivable:', err);
             alert('Error al eliminar: ' + err.message);
+            return;
         }
+
+        if (reconciliar) {
+            try {
+                var sale = (cachedSales || []).find(function (s) {
+                    return (rec.saleId && (String(s.id) === String(rec.saleId) || String(s.sourceId) === String(rec.saleId))) ||
+                           (rec.sourceId && String(s.sourceId) === String(rec.sourceId));
+                }) || null;
+                var residual = findResidualSinFactura(sale, rec.saleId || rec.sourceId);
+                if (residual) {
+                    var netoResidualActual = getMonto(residual);
+                    await window.Mazelab.DataService.update('receivables', residual.id, {
+                        monto_venta:    netoResidualActual + netoADevolver,
+                        montoNeto:      netoResidualActual + netoADevolver,
+                        amount:         netoResidualActual + netoADevolver,
+                        invoicedAmount: 0,
+                        status:         'sin_factura'
+                    });
+                } else {
+                    await window.Mazelab.DataService.create('receivables', {
+                        id:             window.Mazelab.Storage.generateId(),
+                        eventName:      rec.eventName  || (sale && sale.eventName)  || '',
+                        eventDate:      rec.eventDate  || (sale && sale.eventDate)  || '',
+                        clientName:     rec.clientName || (sale && sale.clientName) || '',
+                        monto_venta:    netoADevolver,
+                        montoNeto:      netoADevolver,
+                        amount:         netoADevolver,
+                        invoicedAmount: 0,
+                        status:         'sin_factura',
+                        saleId:         rec.saleId   || (sale && sale.id) || '',
+                        sourceId:       rec.sourceId || (sale && sale.sourceId) || '',
+                        sourceType:     'auto',
+                        payments:       []
+                    });
+                }
+            } catch (reconErr) {
+                // Mitigaci\u00f3n de no-atomicidad (mismo patr\u00f3n que crearFacturaYCerrarResidual,
+                // hallazgo I7): la factura ya se borr\u00f3 pero devolver su neto al saldo por
+                // facturar fall\u00f3. Intentamos recrear la factura para no dejar el neto
+                // evaporado \u2014 si tampoco se puede, avisamos exactamente qu\u00e9 qued\u00f3 a medias.
+                var restored = false;
+                try {
+                    await window.Mazelab.DataService.create('receivables', stripTransient(rec));
+                    restored = true;
+                } catch (restoreErr) {
+                    restored = false;
+                }
+                if (restored) {
+                    alert('No se pudo actualizar el saldo por facturar del evento \u2014 se restaur\u00f3 la factura, no se aplic\u00f3 ning\u00fan cambio. Detalle: ' + reconErr.message);
+                } else {
+                    alert('ATENCI\u00d3N: la factura se elimin\u00f3 pero su monto neto (' + formatCLP(netoADevolver) + ') no se pudo devolver al saldo por facturar ni se pudo restaurar la factura. Revisa el evento "' + (rec.eventName || '') + '" manualmente. Detalle: ' + reconErr.message);
+                }
+                await loadAndRender();
+                return;
+            }
+        }
+
+        await loadAndRender();
     }
 
     // =========================================================================
