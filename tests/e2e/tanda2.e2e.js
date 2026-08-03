@@ -321,6 +321,14 @@ async function expT2_1c(browser) {
 
 // =============================================================================
 // T2-2 — Caza-zombie: borrar residual a mano -> "+ Nueva Factura" -> borrar factura
+//
+// FIX VERIFICADO (commit 5f1599a en master): el paso 4 documentaba el mismo
+// agujero que T2-3 (la venta seguía viva, su neto desaparecía de todo libro),
+// solo que llegado por un camino más retorcido — al borrar la residual a mano
+// antes de facturar, deleteReceivable() no tenía ninguna fila residual que
+// reducir/reconstruir, así que hoy la CREA desde cero. "0 filas CXC" ya NO es
+// el resultado correcto (era el síntoma del bug): ahora se asserta que queda
+// 1 fila residual reconstruida por el monto completo.
 // =============================================================================
 async function expT2_2(browser) {
     return runExperiment('T2-2', 'Caza-zombie (borrar residual a mano + Nueva Factura + borrar factura)', async function (ctx) {
@@ -358,15 +366,22 @@ async function expT2_2(browser) {
                 'facturas=' + JSON.stringify(step3.map(function (f) { return { id: f.id, status: f.status, tipoDoc: f.tipoDoc, monto: f.montoNeto }; })));
             if (!facturaNueva) throw new Error('no se encontró la factura nueva de T2-2 — no se puede continuar al paso 4');
 
-            // Paso 4: borrar esa factura también, desde CXC.
+            // Paso 4: borrar esa factura también, desde CXC. La venta sigue viva y su
+            // neto ($800.000) no puede evaporarse — al no existir ya ninguna residual
+            // (se borró a mano en el paso 2), deleteReceivable() la RECREA desde cero
+            // por el monto completo de la factura borrada.
             await financeSearch(page, eventName);
             const delDialog2 = await clickDeleteFacturaCXC(page, facturaNueva.id);
             ctx.check('paso 4: diálogo de confirmación de borrado de la factura apareció y se aceptó', !!delDialog2, 'dialogo=' + JSON.stringify(delDialog2));
             const step4 = await findFacturasBySaleId(venta.id);
-            ctx.check('paso 4 (API): 0 filas CXC — nada quedó colgado tras borrar residual + facturar + borrar factura', step4.length === 0, 'quedan=' + step4.length);
-
-            venta = null; // limpio, no queda nada que borrar salvo la venta misma
-            await deleteRows('ventas', [(await findVentaByEventName(eventName) || {}).id].filter(Boolean));
+            const residualReconstruida = step4.find(function (f) { return f.status === 'sin_factura'; });
+            ctx.check('paso 4 (API): tras borrar la factura sin residual previa, se RECONSTRUYE 1 fila residual por el monto completo ($800.000) — sin agujero pese al camino retorcido',
+                step4.length === 1 && !!residualReconstruida && Number(residualReconstruida.montoNeto || 0) === AMOUNT,
+                'facturas=' + JSON.stringify(step4.map(function (f) { return { id: f.id, status: f.status, monto: f.montoNeto }; })));
+            // OJO: a diferencia de la versión anterior de este experimento, ahora SÍ
+            // queda una fila CXC colgando (la residual reconstruida) — no poner
+            // venta=null aquí; cleanupVenta() en el finally debe limpiarla junto con
+            // la venta (mismo motivo documentado en T2-3/T2-5).
         } catch (e) {
             await ctx.screenshot(page, 'excepcion');
             throw e;
