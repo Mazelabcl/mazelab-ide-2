@@ -74,16 +74,36 @@ window.Mazelab.Modules = window.Mazelab.Modules || {};
         }
     }
 
+    // PostgREST (la API REST que expone Supabase) impone un máximo de filas por
+    // respuesta — 1000 por defecto — y lo aplica en SILENCIO: una tabla con más
+    // filas que el límite responde 200 OK con exactamente 1000 filas, sin error
+    // y sin ningún indicador de truncamiento en el payload. Sin paginación
+    // explícita vía .range(), fetchAll() devolvía solo las primeras 1000 filas
+    // ordenadas por id — en producción esto truncó "facturas" (1150 filas) y
+    // "costos" (3615 filas, ~72% invisible) sin que ningún error lo delatara,
+    // inflando/rompiendo KPIs y dejando guards (p. ej. "no borrar venta con
+    // costos") ciegos a los registros fuera de la primera página.
+    var FETCH_PAGE_SIZE = 1000;
+
     async function fetchAll(table) {
         // Lanza en error de red o de servidor — un array vacío devuelto aquí antes se
         // trataba como "sin datos legítimo" y disparaba fallback silencioso a localStorage.
         assertValidTable(table);
         var client = getClient();
-        var res = await client.from(table).select('*').order('id');
-        if (res.error) {
-            throw new Error('Error al leer ' + table + ': ' + res.error.message);
+        var allRows = [];
+        var from = 0;
+        for (;;) {
+            var to = from + FETCH_PAGE_SIZE - 1;
+            var res = await client.from(table).select('*').order('id').range(from, to);
+            if (res.error) {
+                throw new Error('Error al leer ' + table + ': ' + res.error.message);
+            }
+            var page = res.data || [];
+            allRows.push.apply(allRows, page);
+            if (page.length < FETCH_PAGE_SIZE) break;
+            from += FETCH_PAGE_SIZE;
         }
-        return res.data || [];
+        return allRows;
     }
 
     async function insert(table, record) {

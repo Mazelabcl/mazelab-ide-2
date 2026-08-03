@@ -47,6 +47,7 @@ function makeMockSupabaseClient(script) {
             eq: function (col, val) { state.eq = { col: col, val: val }; return builder; },
             order: function (col) { state.order = col; return builder; },
             limit: function (n) { state.limitArgs = n; return builder; },
+            range: function (from, to) { state.rangeArgs = [from, to]; return builder; },
             single: function () { state.single = true; return resolveFor(state); },
             then: function (resolve, reject) { return resolveFor(state).then(resolve, reject); }
         };
@@ -54,7 +55,7 @@ function makeMockSupabaseClient(script) {
     }
 
     function resolveFor(state) {
-        calls.push({ table: state.table, method: state.method, args: state.args, eq: state.eq, order: state.order, limitArgs: state.limitArgs, single: !!state.single, selectArgs: state.selectArgs });
+        calls.push({ table: state.table, method: state.method, args: state.args, eq: state.eq, order: state.order, limitArgs: state.limitArgs, rangeArgs: state.rangeArgs, single: !!state.single, selectArgs: state.selectArgs });
         const key = state.table + '.' + state.method;
         const scripted = script[key];
         const result = typeof scripted === 'function' ? scripted(state) : (scripted || { data: null, error: null });
